@@ -5,6 +5,7 @@ import { QueryCondition } from './query-conditions';
 import { ASTToSPARQLConverter, type SPARQLQuery } from './ast-to-sparql';
 import { ComunicaSPARQLExecutor, SolidSPARQLExecutor } from './sparql-executor';
 import { TypeIndexManager, TypeIndexEntry, TypeIndexConfig, DiscoveredTable } from './typeindex-manager';
+import type { SelectQueryPlan } from './select-plan';
 
 // Inrupt Session类型定义
 export interface InruptSession {
@@ -45,6 +46,17 @@ export interface PodOperation {
   }>;
   distinct?: boolean;
 }
+
+type TableResourceDescriptor =
+  | {
+      mode: 'ldp';
+      containerUrl: string;
+      resourceUrl: string;
+    }
+  | {
+      mode: 'sparql';
+      endpoint: string;
+    };
 
 export class PodDialect {
   static readonly [entityKind] = 'PodDialect';
@@ -336,36 +348,134 @@ export class PodDialect {
     return '';
   }
 
-  private resolveTableUrls(table: PodTable): { containerUrl: string; resourceUrl: string } {
-    const containerPath = table.config.containerPath || '/data/';
+  private resolveTableResource(table: PodTable): TableResourceDescriptor {
+    const mode =
+      typeof table.getResourceMode === 'function' ? table.getResourceMode() : (table.config.resourceMode ?? 'ldp');
 
-    if (containerPath.startsWith('http://') || containerPath.startsWith('https://')) {
-      const normalizedContainer = containerPath.endsWith('/')
-        ? containerPath
-        : `${containerPath}/`;
+    if (mode === 'sparql') {
+      const endpoint =
+        (typeof table.getSparqlEndpoint === 'function' && table.getSparqlEndpoint()) ||
+        table.config.sparqlEndpoint ||
+        table.config.containerPath;
+
+      if (!endpoint) {
+        throw new Error(`Table ${table.config.name} is configured for SPARQL access but no endpoint was provided`);
+      }
+
+      return { mode: 'sparql', endpoint };
+    }
+
+    const { containerUrl, resourceUrl } = this.resolveLdpResource(table);
+    return { mode: 'ldp', containerUrl, resourceUrl };
+  }
+
+  private resolveTableUrls(table: PodTable): { containerUrl: string; resourceUrl: string } {
+    const descriptor = this.resolveTableResource(table);
+    if (descriptor.mode !== 'ldp') {
+      throw new Error(
+        `Table ${table.config.name} is configured for SPARQL endpoint access; LDP resource URLs are not available.`
+      );
+    }
+
+    return {
+      containerUrl: descriptor.containerUrl,
+      resourceUrl: descriptor.resourceUrl
+    };
+  }
+
+  private resolveLdpResource(table: PodTable): { containerUrl: string; resourceUrl: string } {
+    const configuredPath = table.config.containerPath || '/data/';
+    const isAbsolute = configuredPath.startsWith('http://') || configuredPath.startsWith('https://');
+    const ensureTrailingSlash = (value: string): string => (value.endsWith('/') ? value : `${value}/`);
+
+    if (isAbsolute) {
+      if (configuredPath.endsWith('/')) {
+        const containerUrl = ensureTrailingSlash(configuredPath);
+        return {
+          containerUrl,
+          resourceUrl: `${containerUrl}${table.config.name}.ttl`
+        };
+      }
+
+      const normalizedResource = configuredPath;
+      const lastSlash = normalizedResource.lastIndexOf('/');
+      if (lastSlash === -1) {
+        throw new Error(`Invalid containerPath for table ${table.config.name}: ${configuredPath}`);
+      }
+      const containerUrl = ensureTrailingSlash(normalizedResource.slice(0, lastSlash + 1));
       return {
-        containerUrl: normalizedContainer,
-        resourceUrl: `${normalizedContainer}${table.config.name}.ttl`
+        containerUrl,
+        resourceUrl: normalizedResource
       };
     }
 
     const userPath = this.extractUserPathFromWebId();
-    const normalizedPath = containerPath.startsWith(userPath)
-      ? containerPath
-      : `${userPath}${containerPath.replace(/^\/+/, '')}`;
+    const trimmedPath = configuredPath.replace(/^\/+/, '');
+    const baseUrl = this.podUrl.endsWith('/') ? this.podUrl : `${this.podUrl}/`;
+    const userPrefix = userPath.replace(/^\/+/, '');
 
-    let containerUrl = this.podUrl.endsWith('/')
-      ? `${this.podUrl}${normalizedPath.replace(/^\/+/, '')}`
-      : `${this.podUrl}${normalizedPath}`;
-
-    if (!containerUrl.endsWith('/')) {
-      containerUrl += '/';
+    if (configuredPath.endsWith('/')) {
+      const relativeContainer = `${userPrefix}${trimmedPath}`;
+      const containerUrl = ensureTrailingSlash(`${baseUrl}${relativeContainer.replace(/^\/+/, '')}`);
+      return {
+        containerUrl,
+        resourceUrl: `${containerUrl}${table.config.name}.ttl`
+      };
     }
 
-    return {
-      containerUrl,
-      resourceUrl: `${containerUrl}${table.config.name}.ttl`
-    };
+    const resourceRelative = `${userPrefix}${trimmedPath}`;
+    const lastSlash = resourceRelative.lastIndexOf('/');
+    const containerRelative = lastSlash >= 0 ? resourceRelative.slice(0, lastSlash + 1) : userPrefix;
+
+    const containerUrl = ensureTrailingSlash(`${baseUrl}${containerRelative.replace(/^\/+/, '')}`);
+    const resourceUrl = `${baseUrl}${resourceRelative.replace(/^\/+/, '')}`;
+
+    return { containerUrl, resourceUrl };
+  }
+
+  private collectSelectSources(plan: SelectQueryPlan): Array<string | { type: 'sparql'; value: string }> {
+    const tables = new Set<PodTable<any>>();
+    if (plan.baseTable) {
+      tables.add(plan.baseTable);
+    }
+
+    if (Array.isArray(plan.joins)) {
+      for (const join of plan.joins) {
+        if (join?.table) {
+          tables.add(join.table);
+        }
+      }
+    }
+
+    if (plan.aliasToTable instanceof Map) {
+      for (const table of plan.aliasToTable.values()) {
+        if (table) {
+          tables.add(table);
+        }
+      }
+    }
+
+    const seen = new Set<string>();
+    const sources: Array<string | { type: 'sparql'; value: string }> = [];
+
+    for (const table of tables) {
+      const descriptor = this.resolveTableResource(table);
+      if (descriptor.mode === 'ldp') {
+        const key = `ldp:${descriptor.resourceUrl}`;
+        if (!seen.has(key)) {
+          seen.add(key);
+          sources.push(descriptor.resourceUrl);
+        }
+      } else {
+        const key = `sparql:${descriptor.endpoint}`;
+        if (!seen.has(key)) {
+          seen.add(key);
+          sources.push({ type: 'sparql', value: descriptor.endpoint });
+        }
+      }
+    }
+
+    return sources;
   }
 
   private async resourceExists(resourceUrl: string): Promise<boolean> {

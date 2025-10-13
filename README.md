@@ -191,6 +191,11 @@ await db.delete(userTable)
 - 运行策略：聚合、`JOIN`、`GROUP BY` 会先获取符合条件的行，再在内存中完成聚合/联结，避免依赖当前 CSS (Comunica v2) 缺失的 SPARQL 1.1 聚合与联结实现；后续待 CSS 升级后可切回原生支持。
 - 未覆盖：`HAVING`、窗口函数、`UNION/UNION ALL`、子查询与跨容器联结；如需这些能力，请暂时改用手写 SPARQL 或拆分查询。
 
+## 🗺️ Roadmap
+
+- **`rightJoin`/`fullJoin` 原生支持**: 完成查询构建器、SPARQL 转换与 fallback 扩展，详见[设计方案](docs/guides/right-full-join-sparql-design.md#1-支持-rightjoin--fulljoin)。
+- **SPARQL Endpoint 直连模式**: 为纯端点跳过 LDP 探测并持续支持 CRUD，详见[设计方案](docs/guides/right-full-join-sparql-design.md#2-纯-sparql-endpoint-直连模式)。
+
 ## 🔧 配置
 
 ### 自定义命名空间

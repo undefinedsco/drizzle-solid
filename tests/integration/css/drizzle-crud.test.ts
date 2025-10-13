@@ -1,4 +1,4 @@
-import { afterAll, beforeAll, describe, expect, test } from '@jest/globals';
+import { afterAll, beforeAll, describe, expect, test, jest } from '@jest/globals';
 import { drizzle } from '../../../src/driver';
 import {
   podTable,
@@ -25,6 +25,8 @@ import type { Session } from '@inrupt/solid-client-authn-node';
 import { createTestSession, ensureContainer } from './helpers';
 
 const containerPath = `/drizzle-tests/${Date.now()}/`;
+
+jest.setTimeout(60_000);
 
 const profileTable = podTable('profiles', {
   id: string('id').primaryKey(),

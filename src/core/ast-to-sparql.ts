@@ -333,6 +333,21 @@ DELETE WHERE {
       }
     });
 
+    // 生成 id 变量，方便 ORDER BY / SELECT 使用
+    patterns.push({
+      type: 'bind',
+      variable: { termType: 'Variable', value: 'id' },
+      expression: {
+        type: 'operation',
+        operator: 'replace',
+        args: [
+          { type: 'operation', operator: 'str', args: [{ termType: 'Variable', value: 'subject' }] },
+          { termType: 'Literal', value: '^.*[#/]', datatype: { termType: 'NamedNode', value: 'http://www.w3.org/2001/XMLSchema#string' }, language: '' },
+          { termType: 'Literal', value: '', datatype: { termType: 'NamedNode', value: 'http://www.w3.org/2001/XMLSchema#string' }, language: '' }
+        ]
+      }
+    } as any);
+
     // 添加 WHERE 条件过滤器
     if (ast.where) {
       const filters = this.buildFilterPatterns(ast.where, table);

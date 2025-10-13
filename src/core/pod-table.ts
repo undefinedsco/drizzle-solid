@@ -117,6 +117,8 @@ export interface PodTableOptions {
   rdfClass: string;
   namespace?: NamespaceConfig; // 默认命名空间
   autoRegister?: boolean;
+  resourceMode?: 'ldp' | 'sparql';
+  sparqlEndpoint?: string;
 }
 
 // 列类型基类
@@ -232,6 +234,8 @@ export class PodTable<TColumns extends Record<string, PodColumnBase> = Record<st
     rdfClass: string;
     namespace?: NamespaceConfig;
     autoRegister: boolean;
+    resourceMode: 'ldp' | 'sparql';
+    sparqlEndpoint?: string;
   };
   
   public columns: TColumns;
@@ -261,7 +265,9 @@ export class PodTable<TColumns extends Record<string, PodColumnBase> = Record<st
       containerPath: options.containerPath,
       rdfClass: options.rdfClass,
       namespace: options.namespace,
-      autoRegister: options.autoRegister !== false
+      autoRegister: options.autoRegister !== false,
+      resourceMode: options.resourceMode ?? 'ldp',
+      sparqlEndpoint: options.sparqlEndpoint
     };
     
     this.columns = columns;
@@ -312,6 +318,16 @@ export class PodTable<TColumns extends Record<string, PodColumnBase> = Record<st
   // 获取命名空间
   getNamespace(): NamespaceConfig | undefined {
     return this.config.namespace;
+  }
+
+  // 获取资源访问模式
+  getResourceMode(): 'ldp' | 'sparql' {
+    return this.config.resourceMode;
+  }
+
+  // 获取 SPARQL 端点（仅在 resourceMode === 'sparql' 时使用）
+  getSparqlEndpoint(): string | undefined {
+    return this.config.sparqlEndpoint;
   }
 
   // 获取所有列
