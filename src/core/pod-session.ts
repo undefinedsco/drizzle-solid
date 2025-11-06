@@ -21,13 +21,6 @@ interface ResolvedJoinCondition {
   right: ColumnReference;
 }
 
-interface ResolvedJoinDefinition {
-  type: JoinType;
-  table: PodTable<any>;
-  alias: string;
-  conditions: ResolvedJoinCondition[];
-}
-
 export class PodAsyncSession {
   static readonly [entityKind] = 'PodAsyncSession';
 
@@ -80,6 +73,16 @@ export class PodAsyncSession {
       throw new Error(`Unsupported operation type: ${operation.type}`);
     }
     
+    await this.dialect.registerTable(operation.table);
+
+    if (Array.isArray(operation.joins)) {
+      for (const join of operation.joins) {
+        if (join?.table) {
+          await this.dialect.registerTable(join.table);
+        }
+      }
+    }
+
     return await this.dialect.query(operation);
   }
 
@@ -88,7 +91,7 @@ export class PodAsyncSession {
     if (this.options.logger) {
       console.log('Executing SQL AST:', sql);
     }
-    
+    await this.dialect.registerTable(table);
     return await this.dialect.executeSql(sql, table);
   }
 
@@ -98,6 +101,7 @@ export class PodAsyncSession {
     condition: QueryCondition
   ): Promise<any[]> {
     console.log('[PodAsyncSession] Executing complex update for table:', table.config.name);
+    await this.dialect.registerTable(table);
     return await this.dialect.executeComplexUpdate(
       {
         type: 'update',
@@ -114,6 +118,7 @@ export class PodAsyncSession {
     condition: QueryCondition
   ): Promise<any[]> {
     console.log('[PodAsyncSession] Executing complex delete for table:', table.config.name);
+    await this.dialect.registerTable(table);
     return await this.dialect.executeComplexDelete(
       {
         type: 'delete',
@@ -125,22 +130,22 @@ export class PodAsyncSession {
   }
 
   // SELECT 查询构建器
-  select<TTable extends PodTable<any>>(fields?: SelectFieldMap) {
+  select<TTable extends PodTable<any>>(fields?: SelectFieldMap): SelectQueryBuilder<TTable> {
     return new SelectQueryBuilder<TTable>(this, fields);
   }
 
   // INSERT 查询构建器
-  insert<TTable extends PodTable<any>>(table: TTable) {
+  insert<TTable extends PodTable<any>>(table: TTable): InsertQueryBuilder<TTable> {
     return new InsertQueryBuilder<TTable>(this, table);
   }
 
   // UPDATE 查询构建器
-  update<TTable extends PodTable<any>>(table: TTable) {
+  update<TTable extends PodTable<any>>(table: TTable): UpdateQueryBuilder<TTable> {
     return new UpdateQueryBuilder<TTable>(this, table);
   }
 
   // DELETE 查询构建器
-  delete<TTable extends PodTable<any>>(table: TTable) {
+  delete<TTable extends PodTable<any>>(table: TTable): DeleteQueryBuilder<TTable> {
     return new DeleteQueryBuilder<TTable>(this, table);
   }
 
@@ -161,7 +166,7 @@ export class PodAsyncSession {
 }
 
 // SELECT 查询构建器 - 支持 Drizzle AST 和 JOIN
-class SelectQueryBuilder<TTable extends PodTable<any> = PodTable<any>> {
+export class SelectQueryBuilder<TTable extends PodTable<any> = PodTable<any>> {
   public selectedTable?: TTable;
   public whereConditions?: Record<string, any>;
   private conditionTree?: QueryCondition;
@@ -324,7 +329,7 @@ class SelectQueryBuilder<TTable extends PodTable<any> = PodTable<any>> {
       throw new Error('JOIN condition must be an object mapping columns');
     }
 
-    const entries = Object.entries(condition);
+    const entries = Object.entries(condition) as Array<[string, string | PodColumnBase]>;
     if (entries.length === 0) {
       throw new Error('JOIN condition cannot be empty');
     }
@@ -880,7 +885,12 @@ class SelectQueryBuilder<TTable extends PodTable<any> = PodTable<any>> {
 
       const subjectValue = row.subject as string | undefined;
       if (subjectValue) {
+        result.subject = subjectValue;
+        result['@id'] = subjectValue;
+        result.uri = subjectValue;
         result[`${alias}.subject`] = subjectValue;
+        result[`${alias}.@id`] = subjectValue;
+        result[`${alias}.uri`] = subjectValue;
         const derivedId = this.extractIdFromSubject(subjectValue);
         if (derivedId !== undefined) {
           if (result.id === undefined) {
@@ -967,7 +977,12 @@ class SelectQueryBuilder<TTable extends PodTable<any> = PodTable<any>> {
 
       const subjectValue = row.subject as string | undefined;
       if (subjectValue) {
+        normalized.subject = subjectValue;
+        normalized['@id'] = subjectValue;
+        normalized.uri = subjectValue;
         normalized[`${join.alias}.subject`] = subjectValue;
+        normalized[`${join.alias}.@id`] = subjectValue;
+        normalized[`${join.alias}.uri`] = subjectValue;
         const id = this.extractIdFromSubject(subjectValue);
         if (id !== undefined) {
           normalized[`${join.alias}.id`] = id;
@@ -1160,8 +1175,15 @@ class SelectQueryBuilder<TTable extends PodTable<any> = PodTable<any>> {
     if (!subject) {
       return undefined;
     }
-    const match = subject.match(/[^/#]+$/);
-    return match ? match[0] : subject;
+    const hasFragment = subject.includes('#');
+    if (!hasFragment) {
+      return undefined;
+    }
+    const fragment = subject.split('#').pop();
+    if (!fragment || fragment.trim().length === 0) {
+      return undefined;
+    }
+    return fragment;
   }
 
   private computeLikeMatch(value: string, pattern: string): boolean {
@@ -1180,7 +1202,7 @@ class SelectQueryBuilder<TTable extends PodTable<any> = PodTable<any>> {
 }
 
 // INSERT 查询构建器 - 支持 Drizzle AST
-class InsertQueryBuilder<TTable extends PodTable<any> = PodTable<any>> {
+export class InsertQueryBuilder<TTable extends PodTable<any> = PodTable<any>> {
   public insertValues?: InferInsertData<TTable> | InferInsertData<TTable>[];
   public sql?: SQL;
 
@@ -1225,7 +1247,7 @@ class InsertQueryBuilder<TTable extends PodTable<any> = PodTable<any>> {
 }
 
 // UPDATE 查询构建器 - 支持 Drizzle AST
-class UpdateQueryBuilder<TTable extends PodTable<any> = PodTable<any>> {
+export class UpdateQueryBuilder<TTable extends PodTable<any> = PodTable<any>> {
   public updateData?: InferUpdateData<TTable>;
   public whereConditions?: Record<string, any>;
   public sql?: SQL;
@@ -1310,7 +1332,7 @@ class UpdateQueryBuilder<TTable extends PodTable<any> = PodTable<any>> {
 }
 
 // DELETE 查询构建器 - 支持 Drizzle AST
-class DeleteQueryBuilder<TTable extends PodTable<any> = PodTable<any>> {
+export class DeleteQueryBuilder<TTable extends PodTable<any> = PodTable<any>> {
   public whereConditions?: Record<string, any>;
   public sql?: SQL;
   private conditionTree?: QueryCondition;

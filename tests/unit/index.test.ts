@@ -1,9 +1,11 @@
-import { describe, it, expect } from '@jest/globals';
+import { describe, it, expect } from 'vitest';
 
 describe('Index exports', () => {
-  it('应该导出所有主要组件', () => {
-    // 测试主要入口点
-    expect(() => require('@src/index')).not.toThrow();
+  it('应该导出所有主要组件', async () => {
+    // 测试主要入口点 - 直接导入模块
+    const indexModule = await import('@src/index');
+    expect(indexModule).toBeDefined();
+    expect(typeof indexModule).toBe('object');
   });
 
   it('应该导出核心类', async () => {
@@ -29,7 +31,8 @@ describe('Index exports', () => {
       int,
       bool,
       date,
-      COMMON_NAMESPACES,
+      namespace,
+      VCARD,
       RDF_PREDICATES,
       RDF_CLASSES
     } = await import('@src/index');
@@ -39,7 +42,8 @@ describe('Index exports', () => {
     expect(int).toBeDefined();
     expect(bool).toBeDefined();
     expect(date).toBeDefined();
-    expect(COMMON_NAMESPACES).toBeDefined();
+    expect(namespace).toBeDefined();
+    expect(VCARD).toBeDefined();
     expect(RDF_PREDICATES).toBeDefined();
     expect(RDF_CLASSES).toBeDefined();
   });

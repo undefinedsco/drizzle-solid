@@ -1,7 +1,6 @@
-import type { Session as InruptSession } from '@inrupt/solid-client-authn-node';
 import { PodDatabase } from './core/pod-database';
 import { PodAsyncSession } from './core/pod-session';
-import { PodDialect } from './core/pod-dialect';
+import { PodDialect, type SolidAuthSession } from './core/pod-dialect';
 import { type DrizzleConfig } from 'drizzle-orm/utils';
 
 // Solid Pod 数据库类型
@@ -9,7 +8,7 @@ export type SolidDatabase<TSchema extends Record<string, unknown> = Record<strin
 
 // 主要的 drizzle 函数 - 接受 Inrupt Session
 export function drizzle<TSchema extends Record<string, unknown> = Record<string, never>>(
-  session: InruptSession,
+  session: SolidAuthSession,
   config?: DrizzleConfig<TSchema>
 ): SolidDatabase<TSchema> {
   // 验证session
@@ -31,3 +30,4 @@ export function drizzle<TSchema extends Record<string, unknown> = Record<string,
 // 导出类型
 export type { PodDatabase };
 export { PodDatabase as Database };
+export type { SolidAuthSession };

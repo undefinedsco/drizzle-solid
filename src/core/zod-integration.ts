@@ -1,5 +1,5 @@
 import { z } from 'zod';
-import { PodTable, InferTableData, InferInsertData, InferUpdateData, PodColumn } from './pod-table';
+import { PodTable, InferTableData, InferInsertData, InferUpdateData, PodColumnBase } from './pod-table';
 
 /**
  * 从 PodTable 生成 Zod 模式
@@ -12,7 +12,7 @@ export function createTableSchema<TTable extends PodTable<any>>(
   const schemaFields: Record<string, z.ZodTypeAny> = {};
 
   for (const [columnName, column] of Object.entries(table.columns)) {
-    const podColumn = column as PodColumn;
+    const podColumn = column as PodColumnBase;
     const columnType = podColumn.dataType;
     const options = podColumn.options;
 
@@ -71,7 +71,7 @@ export function createInsertSchema<TTable extends PodTable<any>>(table: TTable) 
   const schemaFields: Record<string, z.ZodTypeAny> = {};
 
   for (const [columnName, column] of Object.entries(table.columns)) {
-    const podColumn = column as PodColumn;
+    const podColumn = column as PodColumnBase;
     const columnType = podColumn.dataType;
     const options = podColumn.options;
 
@@ -125,7 +125,7 @@ export function createUpdateSchema<TTable extends PodTable<any>>(table: TTable) 
   const schemaFields: Record<string, z.ZodTypeAny> = {};
 
   for (const [columnName, column] of Object.entries(table.columns)) {
-    const podColumn = column as PodColumn;
+    const podColumn = column as PodColumnBase;
     const columnType = podColumn.dataType;
 
     let zodType: z.ZodTypeAny;

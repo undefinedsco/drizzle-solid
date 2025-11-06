@@ -1,9 +1,10 @@
-import { describe, it, expect, beforeEach } from '@jest/globals';
-import { 
-  PodTable, 
-  PodColumn, 
-  PodStringColumn, 
-  PodIntegerColumn, 
+import { describe, it, expect, beforeEach } from 'vitest';
+import {
+  ColumnBuilder,
+  PodTable,
+  PodColumn,
+  PodStringColumn,
+  PodIntegerColumn,
   PodBooleanColumn,
   PodDateTimeColumn,
   PodJsonColumn,
@@ -15,10 +16,11 @@ import {
   date,
   json,
   object,
-  COMMON_NAMESPACES,
   RDF_CLASSES,
   type PodTableOptions
 } from '@src/core/pod-table';
+
+const schemaNamespace = { prefix: 'schema', uri: 'https://schema.org/' };
 
 describe('PodTable', () => {
   let table: PodTable;
@@ -34,9 +36,9 @@ describe('PodTable', () => {
     };
 
     options = {
-      containerPath: '/users/',
+      resourcePath: 'idp:///users/index.ttl',
       rdfClass: 'https://schema.org/Person',
-      namespace: COMMON_NAMESPACES.schema
+      namespace: schemaNamespace
     };
 
     table = new PodTable('users', columns, options);
@@ -52,7 +54,7 @@ describe('PodTable', () => {
     it('应该设置正确的配置', () => {
       expect(table.config.containerPath).toBe('/users/');
       expect(table.config.rdfClass).toBe('https://schema.org/Person');
-      expect(table.config.namespace).toEqual(COMMON_NAMESPACES.schema);
+      expect(table.config.namespace).toEqual(schemaNamespace);
     });
   });
 
@@ -70,7 +72,7 @@ describe('PodTable', () => {
 
   describe('getNamespace', () => {
     it('应该返回命名空间配置', () => {
-      expect(table.getNamespace()).toEqual(COMMON_NAMESPACES.schema);
+      expect(table.getNamespace()).toEqual(schemaNamespace);
     });
   });
 
@@ -117,7 +119,7 @@ describe('PodColumn', () => {
     });
 
     it('应该生成正确的谓词', () => {
-      const predicate = column.getPredicate(COMMON_NAMESPACES.schema);
+      const predicate = column.getPredicate(schemaNamespace);
       expect(predicate).toBe('https://schema.org/name');
     });
 
@@ -148,7 +150,7 @@ describe('PodColumn', () => {
     });
 
     it('应该生成正确的谓词', () => {
-      const predicate = column.getPredicate(COMMON_NAMESPACES.schema);
+      const predicate = column.getPredicate(schemaNamespace);
       expect(predicate).toBe('https://schema.org/id');
     });
   });
@@ -167,7 +169,7 @@ describe('PodColumn', () => {
     });
 
     it('应该生成正确的谓词', () => {
-      const predicate = column.getPredicate(COMMON_NAMESPACES.schema);
+      const predicate = column.getPredicate(schemaNamespace);
       expect(predicate).toBe('https://schema.org/active');
     });
   });
@@ -180,39 +182,6 @@ describe('PodColumn', () => {
       
       expect(referenceColumn.isReference()).toBe(true);
       expect(referenceColumn.getReferenceTarget()).toBe('https://schema.org/Person');
-    });
-  });
-});
-
-describe('COMMON_NAMESPACES', () => {
-  it('应该包含所有预定义的命名空间', () => {
-    expect(COMMON_NAMESPACES.schema).toEqual({
-      prefix: 'schema',
-      uri: 'https://schema.org/'
-    });
-    expect(COMMON_NAMESPACES.foaf).toEqual({
-      prefix: 'foaf',
-      uri: 'http://xmlns.com/foaf/0.1/'
-    });
-    expect(COMMON_NAMESPACES.dc).toEqual({
-      prefix: 'dc',
-      uri: 'http://purl.org/dc/terms/'
-    });
-    expect(COMMON_NAMESPACES.rdf).toEqual({
-      prefix: 'rdf',
-      uri: 'http://www.w3.org/1999/02/22-rdf-syntax-ns#'
-    });
-    expect(COMMON_NAMESPACES.rdfs).toEqual({
-      prefix: 'rdfs',
-      uri: 'http://www.w3.org/2000/01/rdf-schema#'
-    });
-    expect(COMMON_NAMESPACES.solid).toEqual({
-      prefix: 'solid',
-      uri: 'http://www.w3.org/ns/solid/terms#'
-    });
-    expect(COMMON_NAMESPACES.ldp).toEqual({
-      prefix: 'ldp',
-      uri: 'http://www.w3.org/ns/ldp#'
     });
   });
 });
@@ -266,7 +235,7 @@ describe('链式方法', () => {
   it('应该支持 reference() 方法', () => {
     const column = int('authorId').reference(RDF_CLASSES.SCHEMA_PERSON);
     expect(column.options.referenceTarget).toBe(RDF_CLASSES.SCHEMA_PERSON);
-    expect(column.isReference()).toBe(true);
+    expect(column.options.referenceTarget).toBeDefined();
   });
 
   it('应该支持链式调用', () => {
@@ -285,9 +254,9 @@ describe('类型推断', () => {
       email: string('email').notNull(),
       createdAt: date('createdAt'),
     }, {
-      containerPath: '/users/',
+      resourcePath: 'idp:///users/index.ttl',
       rdfClass: RDF_CLASSES.SCHEMA_PERSON,
-      namespace: COMMON_NAMESPACES.schema
+      namespace: schemaNamespace
     });
 
     // 测试表结构
@@ -327,9 +296,9 @@ describe('类型推断', () => {
       authorId: int('authorId').notNull().reference(RDF_CLASSES.SCHEMA_PERSON),
       createdAt: date('createdAt'),
     }, {
-      containerPath: '/posts/',
+      resourcePath: 'idp:///posts/index.ttl',
       rdfClass: RDF_CLASSES.SCHEMA_BLOG_POSTING,
-      namespace: COMMON_NAMESPACES.schema
+      namespace: schemaNamespace
     });
 
     // 测试引用字段
@@ -341,44 +310,64 @@ describe('类型推断', () => {
 describe('新的列定义函数', () => {
   it('应该支持 string() 函数', () => {
     const column = string('name');
-    expect(column).toBeInstanceOf(PodStringColumn);
+    expect(column).toBeInstanceOf(ColumnBuilder);
     expect(column.name).toBe('name');
     expect(column.dataType).toBe('string');
   });
 
   it('应该支持 int() 函数', () => {
     const column = int('id');
-    expect(column).toBeInstanceOf(PodIntegerColumn);
+    expect(column).toBeInstanceOf(ColumnBuilder);
     expect(column.name).toBe('id');
     expect(column.dataType).toBe('integer');
   });
 
   it('应该支持 bool() 函数', () => {
     const column = bool('active');
-    expect(column).toBeInstanceOf(PodBooleanColumn);
+    expect(column).toBeInstanceOf(ColumnBuilder);
     expect(column.name).toBe('active');
     expect(column.dataType).toBe('boolean');
   });
 
   it('应该支持 date() 函数', () => {
     const column = date('createdAt');
-    expect(column).toBeInstanceOf(PodDateTimeColumn);
+    expect(column).toBeInstanceOf(ColumnBuilder);
     expect(column.name).toBe('createdAt');
     expect(column.dataType).toBe('datetime');
   });
 
   it('应该支持 json() 函数', () => {
     const column = json('preferences');
-    expect(column).toBeInstanceOf(PodJsonColumn);
+    expect(column).toBeInstanceOf(ColumnBuilder);
     expect(column.name).toBe('preferences');
     expect(column.dataType).toBe('json');
   });
 
   it('应该支持 object() 函数', () => {
     const column = object('profile');
-    expect(column).toBeInstanceOf(PodObjectColumn);
+    expect(column).toBeInstanceOf(ColumnBuilder);
     expect(column.name).toBe('profile');
     expect(column.dataType).toBe('object');
+  });
+
+  it('ColumnBuilder 应该在 podTable 中转换为具体列类型', () => {
+    const table = podTable('people', {
+      name: string('name').notNull(),
+      born: date('born'),
+      active: bool('active'),
+      avatar: json('avatar'),
+      preferences: object('preferences')
+    }, {
+      resourcePath: 'idp:///people/index.ttl',
+      rdfClass: RDF_CLASSES.SCHEMA_PERSON,
+      namespace: schemaNamespace
+    });
+
+    expect(table.columns.name).toBeInstanceOf(PodStringColumn);
+    expect(table.columns.born).toBeInstanceOf(PodDateTimeColumn);
+    expect(table.columns.active).toBeInstanceOf(PodBooleanColumn);
+    expect(table.columns.avatar).toBeInstanceOf(PodJsonColumn);
+    expect(table.columns.preferences).toBeInstanceOf(PodObjectColumn);
   });
 });
 
@@ -397,7 +386,7 @@ describe('新的列类型', () => {
     });
 
     it('应该生成正确的谓词', () => {
-      const predicate = column.getPredicate(COMMON_NAMESPACES.schema);
+      const predicate = column.getPredicate(schemaNamespace);
       expect(predicate).toBe('https://schema.org/preferences');
     });
 
@@ -422,7 +411,7 @@ describe('新的列类型', () => {
     });
 
     it('应该生成正确的谓词', () => {
-      const predicate = column.getPredicate(COMMON_NAMESPACES.schema);
+      const predicate = column.getPredicate(schemaNamespace);
       expect(predicate).toBe('https://schema.org/profile');
     });
 
@@ -443,9 +432,9 @@ describe('JSON 和 Object 类型推断', () => {
       profile: object('profile'),
       createdAt: date('createdAt'),
     }, {
-      containerPath: '/users/',
+      resourcePath: 'idp:///users/index.ttl',
       rdfClass: RDF_CLASSES.SCHEMA_PERSON,
-      namespace: COMMON_NAMESPACES.schema
+      namespace: schemaNamespace
     });
 
     // 测试表结构

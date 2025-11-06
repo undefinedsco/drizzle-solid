@@ -6,13 +6,15 @@
 import { drizzle } from '@src/driver';
 import { podTable, string, int, date } from '@src/index';
 
+import { vi } from 'vitest';
+
 // Mock Session for testing
 const mockSession = {
   info: {
     isLoggedIn: true,
     webId: 'http://localhost:3000/alice/profile/card#me'
   },
-  fetch: jest.fn().mockResolvedValue({
+  fetch: vi.fn().mockResolvedValue({
     ok: true,
     status: 200,
     json: () => Promise.resolve({ 
@@ -35,16 +37,17 @@ describe('Examples Functionality Tests', () => {
   test('should support table definition and CRUD operations', () => {
     // 验证能定义表和执行CRUD操作（类似03-basic-usage的核心功能）
     const taskTable = podTable('tasks', {
-      id: string('id').primaryKey(),
-      title: string('title').notNull(),
-      description: string('description'),
-      status: string('status').notNull(),
-      priority: int('priority'),
-      createdAt: date('createdAt').notNull(),
-      updatedAt: date('updatedAt').notNull()
+      id: string('id').primaryKey().predicate('https://schema.org/identifier'),
+      title: string('title').notNull().predicate('https://schema.org/name'),
+      description: string('description').predicate('https://schema.org/description'),
+      status: string('status').notNull().predicate('https://schema.org/taskStatus'),
+      priority: int('priority').predicate('https://schema.org/priority'),
+      createdAt: date('createdAt').notNull().predicate('https://schema.org/dateCreated'),
+      updatedAt: date('updatedAt').notNull().predicate('https://schema.org/dateModified')
     }, {
-      containerPath: '/tasks/',
-      rdfClass: 'https://schema.org/Task'
+      resourcePath: 'idp:///tasks/index.ttl',
+      rdfClass: 'https://schema.org/Task',
+      namespace: { prefix: 'schema', uri: 'https://schema.org/' }
     });
 
     const db = drizzle(mockSession);
@@ -99,11 +102,12 @@ describe('Examples Functionality Tests', () => {
   test('should handle table field access', () => {
     // 验证表字段直接访问功能（修复的功能）
     const table = podTable('test', {
-      id: string('id').primaryKey(),
-      name: string('name').notNull()
+      id: string('id').primaryKey().predicate('https://schema.org/identifier'),
+      name: string('name').notNull().predicate('https://schema.org/name')
     }, {
-      containerPath: '/test/',
-      rdfClass: 'https://schema.org/Thing'
+      resourcePath: 'idp:///test/index.ttl',
+      rdfClass: 'https://schema.org/Thing',
+      namespace: { prefix: 'schema', uri: 'https://schema.org/' }
     });
 
     // 验证直接字段访问

@@ -1,10 +1,10 @@
-import { describe, it, expect, jest } from '@jest/globals';
+import { describe, it, expect, vi } from 'vitest';
 import { debounce, throttle, deepClone, formatError } from '@src/utils/helpers';
 
 describe('Helpers', () => {
   describe('debounce', () => {
     it('should debounce function calls', (done) => {
-      const mockFn = jest.fn();
+      const mockFn = vi.fn();
       const debouncedFn = debounce(mockFn, 100);
 
       debouncedFn();
@@ -22,7 +22,7 @@ describe('Helpers', () => {
 
   describe('throttle', () => {
     it('should throttle function calls', (done) => {
-      const mockFn = jest.fn();
+      const mockFn = vi.fn();
       const throttledFn = throttle(mockFn, 100);
 
       throttledFn();

@@ -130,18 +130,26 @@ export class ASTToSPARQLConverter {
     const deleteStatements: string[] = [];
     const insertTriples: string[] = [];
 
-    Object.entries(setData).forEach(([columnName, value], index) => {
+    Object.entries(setData).forEach(([columnName, originalValue], index) => {
       const column = table.columns[columnName];
       if (!column) {
         return;
       }
 
+      let value = originalValue;
+      if (typeof value === 'string') {
+        const trimmed = value.trim();
+        value = trimmed.length > 0 ? trimmed : null;
+      }
+
       const predicate = this.getPredicateForColumn(column, table);
-      const formattedValue = this.formatValue(value, column);
       const variableName = `?value${index}`;
 
       deleteStatements.push(`DELETE WHERE {\n  <${resourceUri}> <${predicate}> ${variableName} .\n}`);
-      insertTriples.push(`  <${resourceUri}> <${predicate}> ${formattedValue} .`);
+      if (value !== null && value !== undefined) {
+        const formattedValue = this.formatValue(value, column);
+        insertTriples.push(`  <${resourceUri}> <${predicate}> ${formattedValue} .`);
+      }
     });
 
     const deleteBlock = deleteStatements.length > 0
@@ -422,6 +430,37 @@ DELETE WHERE {
     const operator = (condition.operator || '=').toUpperCase();
     const rawValue = condition.value ?? condition.right?.value;
 
+    if (columnName === '@id' || columnName === 'subject') {
+      const subjectVariable = { termType: 'Variable', value: 'subject' } as any;
+      const targetValue = typeof rawValue === 'string' ? rawValue : String(rawValue ?? '');
+
+      if (!targetValue) {
+        return null;
+      }
+
+      if (operator === '=' || operator === '!=' || operator === '<>') {
+        return {
+          type: 'operation',
+          operator: operator === '<>' ? '!=' : operator,
+          args: [subjectVariable, { termType: 'NamedNode', value: targetValue } as any]
+        };
+      }
+
+      if ((operator === 'IN' || operator === 'NOT IN') && Array.isArray(rawValue)) {
+        const uris = rawValue
+          .map((value) => ({ termType: 'NamedNode', value: String(value) } as any));
+
+        const inOperator = operator === 'NOT IN' ? 'notin' : 'in';
+        return {
+          type: 'operation',
+          operator: inOperator,
+          args: [subjectVariable, uris]
+        };
+      }
+
+      return null;
+    }
+
     if (columnName === 'id') {
       const subjectVariable = { termType: 'Variable', value: 'subject' } as any;
 
@@ -587,7 +626,7 @@ DELETE WHERE {
 
   private convertLikePattern(pattern: string): { regex: string; flags?: string } {
     const escaped = pattern
-      .replace(/([.+^${}()|\[\]\\])/g, '\\$1')
+      .replace(/[.*+?^${}()|[\]\\]/g, '\\$&')
       .replace(/%/g, '.*')
       .replace(/_/g, '.');
 
@@ -877,23 +916,68 @@ DELETE WHERE {
 
   // 生成主体 URI
   generateSubjectUri(record: any, table: PodTable): string {
-    // 从 webId 中提取用户路径
-    const userPath = this.extractUserPathFromWebId();
-    const containerPath = table.config.containerPath || '/data/';
-    
-    // 修复：去掉容器路径末尾的斜杠，因为我们要生成资源URI而不是容器URI
-    const cleanContainerPath = containerPath.replace(/\/$/, '');
-    
-    // 构建完整的容器路径
-    const fullContainerPath = cleanContainerPath.startsWith(userPath) ? 
-      cleanContainerPath : 
-      userPath + cleanContainerPath.replace(/^\//, '');
-    
-    const id = record.id || Date.now();
-    
-    // 始终使用绝对路径，确保SPARQL查询中的URI是完整的
-    const baseUri = `${this.podUrl}${fullContainerPath}`;
-    return `${baseUri}#${id}`; // 使用 # 分隔符，符合RDF最佳实践
+    const preferString = (value: unknown): string | null => {
+      if (typeof value === 'string' && value.length > 0) {
+        return value;
+      }
+      return null;
+    };
+
+    const toAbsolute = (path: string | null | undefined): string | null => {
+      if (!path || path.length === 0) {
+        return null;
+      }
+      const base = this.podUrl.endsWith('/') ? this.podUrl : `${this.podUrl}/`;
+      try {
+        const url = new URL(path, base).toString();
+        return url.replace(/\/$/, '');
+      } catch {
+        return null;
+      }
+    };
+
+    const directSubject = preferString(record.subject)
+      ?? preferString(record['@id'])
+      ?? preferString(record.uri);
+    if (directSubject) {
+      return directSubject;
+    }
+
+    const resolveBase = (): string => {
+      const fromResource = toAbsolute(table.config.resourcePath);
+      if (fromResource) {
+        return fromResource;
+      }
+      const fromContainer = toAbsolute(table.config.containerPath);
+      if (fromContainer) {
+        return fromContainer;
+      }
+      const userPath = this.extractUserPathFromWebId();
+      if (userPath) {
+        return new URL(userPath, this.podUrl).toString().replace(/\/$/, '');
+      }
+      return this.podUrl.replace(/\/$/, '');
+    };
+
+    const idValue = preferString(record.id);
+    if (idValue) {
+      if (idValue.includes('://')) {
+        return idValue;
+      }
+
+      const base = resolveBase();
+      if (idValue.startsWith('#')) {
+        return `${base}${idValue}`;
+      }
+      return `${base}#${idValue}`;
+    }
+
+    const base = resolveBase();
+    if (base.includes('#')) {
+      return base;
+    }
+
+    return `${base}#me`;
   }
 
   // 从 webId 中提取用户路径
@@ -919,9 +1003,9 @@ DELETE WHERE {
   // 格式化值
   formatValue(value: any, column?: any): string {
     if (value === null || value === undefined) {
-      return 'NULL';
+      throw new Error('Cannot format null or undefined value');
     }
-    
+
     // 处理 JSON 和 Object 类型
     if (column?.dataType === 'json' || column?.dataType === 'object') {
       // 将 JSON/Object 数据序列化为 JSON 字符串，并标记为 JSON 类型
@@ -970,7 +1054,7 @@ DELETE WHERE {
     
     if (sqlString.toLowerCase().includes('select')) {
       // 创建一个简化的 AST 并转换
-      const ast = this.parseSelectAST(sql, null as any);
+      this.parseSelectAST(sql, null as any);
       return {
         type: 'SELECT',
         query: `
@@ -1034,8 +1118,6 @@ DELETE WHERE {
     
     const sqlString = sql.queryChunks.join('');
     // 注意：SQL 对象的实际结构可能不同，这里使用安全的属性访问
-    const params = (sql as any).params || [];
-    
     // 简化的 AST 解析（实际实现需要更复杂的解析逻辑）
     if (sqlString.includes('SELECT')) {
       return this.parseSelectAST(sql, table);
@@ -1051,7 +1133,8 @@ DELETE WHERE {
   }
 
   // 解析 SELECT AST
-  private parseSelectAST(sql: SQL, table: PodTable): any {
+  private parseSelectAST(sql: SQL, _table: PodTable): any {
+    void _table;
     // 解析 SELECT 查询的 AST
     return {
       type: 'select',
@@ -1061,7 +1144,8 @@ DELETE WHERE {
   }
 
   // 解析 INSERT AST
-  private parseInsertAST(sql: SQL, table: PodTable): any {
+  private parseInsertAST(sql: SQL, _table: PodTable): any {
+    void _table;
     return {
       type: 'insert',
       values: (sql as any).params || [] // 插入的值
@@ -1069,7 +1153,8 @@ DELETE WHERE {
   }
 
   // 解析 UPDATE AST
-  private parseUpdateAST(sql: SQL, table: PodTable): any {
+  private parseUpdateAST(sql: SQL, _table: PodTable): any {
+    void _table;
     return {
       type: 'update',
       set: {}, // 需要从 AST 中提取
@@ -1078,7 +1163,8 @@ DELETE WHERE {
   }
 
   // 解析 DELETE AST
-  private parseDeleteAST(sql: SQL, table: PodTable): any {
+  private parseDeleteAST(sql: SQL, _table: PodTable): any {
+    void _table;
     return {
       type: 'delete',
       where: this.parseWhereClause(sql)
@@ -1086,7 +1172,8 @@ DELETE WHERE {
   }
 
   // 解析 WHERE 子句
-  private parseWhereClause(sql: SQL): any {
+  private parseWhereClause(_sql: SQL): any {
+    void _sql;
     // 简化的 WHERE 解析
     // 实际需要解析 SQL 的 WHERE AST
     return null;

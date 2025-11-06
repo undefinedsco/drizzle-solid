@@ -8,16 +8,6 @@ export interface NamespaceConfig {
 }
 
 // 预定义的常用命名空间
-export const COMMON_NAMESPACES = {
-  schema: { prefix: 'schema', uri: 'https://schema.org/' },
-  foaf: { prefix: 'foaf', uri: 'http://xmlns.com/foaf/0.1/' },
-  dc: { prefix: 'dc', uri: 'http://purl.org/dc/terms/' },
-  rdf: { prefix: 'rdf', uri: 'http://www.w3.org/1999/02/22-rdf-syntax-ns#' },
-  rdfs: { prefix: 'rdfs', uri: 'http://www.w3.org/2000/01/rdf-schema#' },
-  solid: { prefix: 'solid', uri: 'http://www.w3.org/ns/solid/terms#' },
-  ldp: { prefix: 'ldp', uri: 'http://www.w3.org/ns/ldp#' }
-} as const;
-
 // 列配置选项
 export interface PodColumnOptions {
   primaryKey?: boolean;
@@ -37,7 +27,33 @@ export interface PodColumnInterface {
 }
 
 // 修复的ColumnBuilder，避免属性与方法命名冲突
-export class ColumnBuilder<TType extends 'string' | 'integer' | 'datetime' | 'boolean'> {
+export type ColumnBuilderDataType = 'string' | 'integer' | 'datetime' | 'boolean' | 'json' | 'object';
+
+type RdfTermInput = string | { value: string } | { term?: { value: string } };
+
+const hasStringValue = (input: unknown): input is { value: string } =>
+  typeof input === 'object' && input !== null && typeof (input as Record<string, unknown>).value === 'string';
+
+const hasTermValue = (input: unknown): input is { term: { value: string } } =>
+  typeof input === 'object' && input !== null &&
+  typeof (input as Record<string, unknown>).term === 'object' &&
+  (input as Record<string, { value?: string }>).term !== null &&
+  typeof (input as Record<string, { value?: string }>).term?.value === 'string';
+
+const resolveTermIri = (input: RdfTermInput): string => {
+  if (typeof input === 'string') {
+    return input;
+  }
+  if (hasStringValue(input)) {
+    return input.value;
+  }
+  if (hasTermValue(input)) {
+    return input.term.value;
+  }
+  throw new Error('Term must be a string or VocabTerm with a string value');
+};
+
+export class ColumnBuilder<TType extends ColumnBuilderDataType> {
   public options: PodColumnOptions;
   private _predicateUri?: string; // 重命名单独属性
 
@@ -61,9 +77,10 @@ export class ColumnBuilder<TType extends 'string' | 'integer' | 'datetime' | 'bo
     return this;
   }
 
-  predicate(uri: string): ColumnBuilder<TType> {
-    this._predicateUri = uri;
-    this.options = { ...this.options, predicate: uri };
+  predicate(uri: RdfTermInput): ColumnBuilder<TType> {
+    const resolved = resolveTermIri(uri);
+    this._predicateUri = resolved;
+    this.options = { ...this.options, predicate: resolved };
     return this;
   }
 
@@ -113,12 +130,16 @@ export type InferUpdateData<TTable extends PodTable<Record<string, PodColumnBase
 
 // 表配置选项
 export interface PodTableOptions {
-  containerPath: string;
-  rdfClass: string;
+  resourcePath: string;
+  rdfClass: RdfTermInput;
   namespace?: NamespaceConfig; // 默认命名空间
   autoRegister?: boolean;
+  /** @deprecated 将在未来版本移除，请使用 resourcePath 上的 `sparql:` 前缀 */
   resourceMode?: 'ldp' | 'sparql';
+  /** @deprecated 将在未来版本移除，请使用 resourcePath 上的 `sparql:` 前缀 */
   sparqlEndpoint?: string;
+  /** @deprecated 自动从 resourcePath 推导，无需手动指定 */
+  containerPath?: string;
 }
 
 // 列类型基类
@@ -139,13 +160,11 @@ export abstract class PodColumnBase {
     if (this.options.predicate) {
       return this.options.predicate;
     }
-    
+
     if (tableNamespace) {
       return `${tableNamespace.uri}${this.name}`;
     }
-    
-    // 默认使用 schema.org
-    return `${COMMON_NAMESPACES.schema.uri}${this.name}`;
+    throw new Error(`Missing predicate for column "${this.name}"; please set namespace or predicate explicitly.`);
   }
 
   // 检查是否是引用类型
@@ -175,8 +194,8 @@ export abstract class PodColumnBase {
     return this;
   }
 
-  predicate(uri: string): this {
-    this.options.predicate = uri;
+  predicate(uri: RdfTermInput): this {
+    this.options.predicate = resolveTermIri(uri);
     return this;
   }
 
@@ -185,6 +204,8 @@ export abstract class PodColumnBase {
     return this;
   }
 }
+
+export type PodColumn = PodColumnBase;
 
 // 具体的列类型
 export class PodStringColumn extends PodColumnBase {
@@ -231,6 +252,7 @@ export class PodTable<TColumns extends Record<string, PodColumnBase> = Record<st
   public config: {
     name: string;
     containerPath: string;
+    resourcePath: string;
     rdfClass: string;
     namespace?: NamespaceConfig;
     autoRegister: boolean;
@@ -243,6 +265,7 @@ export class PodTable<TColumns extends Record<string, PodColumnBase> = Record<st
   // 为了兼容 drizzle-zod，添加必要的属性
   public readonly $inferSelect: InferTableData<PodTable<TColumns>>;
   public readonly $inferInsert: InferInsertData<PodTable<TColumns>>;
+  public readonly $inferUpdate: InferUpdateData<PodTable<TColumns>>;
 
   // 添加 drizzle-zod 需要的 _ 属性
   public readonly _: {
@@ -253,6 +276,7 @@ export class PodTable<TColumns extends Record<string, PodColumnBase> = Record<st
     readonly columns: TColumns;
     readonly inferSelect: InferTableData<PodTable<TColumns>>;
     readonly inferInsert: InferInsertData<PodTable<TColumns>>;
+    readonly inferUpdate: InferUpdateData<PodTable<TColumns>>;
   };
 
   constructor(
@@ -260,14 +284,17 @@ export class PodTable<TColumns extends Record<string, PodColumnBase> = Record<st
     columns: TColumns,
     options: PodTableOptions
   ) {
+    const resourceConfig = this.resolveResourceConfig(options);
+
     this.config = {
       name,
-      containerPath: options.containerPath,
-      rdfClass: options.rdfClass,
+      containerPath: resourceConfig.containerPath,
+      resourcePath: resourceConfig.resourcePath,
+      rdfClass: resolveTermIri(options.rdfClass),
       namespace: options.namespace,
       autoRegister: options.autoRegister !== false,
-      resourceMode: options.resourceMode ?? 'ldp',
-      sparqlEndpoint: options.sparqlEndpoint
+      resourceMode: resourceConfig.mode,
+      sparqlEndpoint: resourceConfig.sparqlEndpoint
     };
     
     this.columns = columns;
@@ -284,6 +311,7 @@ export class PodTable<TColumns extends Record<string, PodColumnBase> = Record<st
     // 初始化 drizzle-zod 兼容的属性
     this.$inferSelect = {} as InferTableData<PodTable<TColumns>>;
     this.$inferInsert = {} as InferInsertData<PodTable<TColumns>>;
+    this.$inferUpdate = {} as InferUpdateData<PodTable<TColumns>>;
 
     // 初始化 _ 属性
     this._ = {
@@ -293,7 +321,8 @@ export class PodTable<TColumns extends Record<string, PodColumnBase> = Record<st
       schema: undefined,
       columns,
       inferSelect: {} as InferTableData<PodTable<TColumns>>,
-      inferInsert: {} as InferInsertData<PodTable<TColumns>>
+      inferInsert: {} as InferInsertData<PodTable<TColumns>>,
+      inferUpdate: {} as InferUpdateData<PodTable<TColumns>>
     };
   }
 
@@ -320,6 +349,139 @@ export class PodTable<TColumns extends Record<string, PodColumnBase> = Record<st
     return this.config.namespace;
   }
 
+  private resolveResourceConfig(options: PodTableOptions): {
+    mode: 'ldp' | 'sparql';
+    resourcePath: string;
+    containerPath: string;
+    sparqlEndpoint?: string;
+  } {
+    const rawPath = options.resourcePath.trim();
+    const explicitMode = options.resourceMode;
+    const containerOverride = options.containerPath?.trim();
+
+    const { scheme, path } = this.parseResourcePath(rawPath);
+
+    let sparqlEndpoint = options.sparqlEndpoint?.trim();
+    if (!sparqlEndpoint && scheme === 'sparql') {
+      sparqlEndpoint = path;
+    }
+
+    if (!sparqlEndpoint && !explicitMode && rawPath.startsWith('sparql:')) {
+      sparqlEndpoint = rawPath.replace(/^sparql:\s*/, '').trim();
+    }
+
+    const inferModeFromScheme = (): 'ldp' | 'sparql' => {
+      if (scheme === 'sparql') return 'sparql';
+      if (scheme === 'idp' || scheme === 'ldp' || scheme === 'pod' || scheme === undefined) {
+        return 'ldp';
+      }
+      return 'ldp';
+    };
+
+    const mode: 'ldp' | 'sparql' = explicitMode ?? (sparqlEndpoint ? 'sparql' : inferModeFromScheme());
+
+    if (mode === 'sparql') {
+      const endpointSource = sparqlEndpoint && sparqlEndpoint.length > 0
+        ? sparqlEndpoint
+        : path;
+
+      const endpoint = this.normalizeSparqlEndpoint(endpointSource);
+
+      if (!endpoint || endpoint.length === 0) {
+        throw new Error('SPARQL tables require an endpoint (resourcePath can start with "sparql:")');
+      }
+      return {
+        mode: 'sparql',
+        resourcePath: endpoint,
+        containerPath: containerOverride ? this.ensureTrailingSlash(containerOverride) : '/',
+        sparqlEndpoint: endpoint
+      };
+    }
+
+    const normalizedPath = this.normalizeResourcePath(path);
+    return {
+      mode: 'ldp',
+      resourcePath: normalizedPath,
+      containerPath: containerOverride
+        ? this.ensureTrailingSlash(containerOverride)
+        : this.ensureTrailingSlash(this.deriveContainerPath(normalizedPath))
+    };
+  }
+
+  private parseResourcePath(rawPath: string): { scheme?: string; path: string } {
+    const trimmed = rawPath.trim();
+    if (trimmed.length === 0) {
+      throw new Error('podTable requires a non-empty resourcePath');
+    }
+
+    const schemeMatch = trimmed.match(/^([a-zA-Z][\w+.-]*):\/\/(.*)$/);
+    if (schemeMatch) {
+      const [, scheme, remainder] = schemeMatch;
+      const remainderTrimmed = remainder.trim();
+      const normalizedScheme = scheme.toLowerCase();
+
+      if (normalizedScheme === 'http' || normalizedScheme === 'https') {
+        const rest = remainderTrimmed.length === 0 ? '' : remainderTrimmed;
+        return { scheme: normalizedScheme, path: `${normalizedScheme}://${rest}` };
+      }
+
+      const normalizedRemainder = remainderTrimmed.length === 0 ? '/' : remainderTrimmed;
+      return { scheme: normalizedScheme, path: normalizedRemainder.startsWith('/') ? normalizedRemainder : `/${normalizedRemainder}` };
+    }
+
+    if (trimmed.startsWith('sparql:')) {
+      const remainder = trimmed.replace(/^sparql:\s*/, '').trim();
+      return { scheme: 'sparql', path: remainder.length === 0 ? '/' : remainder };
+    }
+
+    return { path: trimmed };
+  }
+
+  private normalizeSparqlEndpoint(endpoint: string): string {
+    const trimmed = endpoint.trim();
+    if (trimmed.length === 0) {
+      return trimmed;
+    }
+
+    if (/^[a-zA-Z][\w+.-]*:\/\//.test(trimmed)) {
+      return trimmed;
+    }
+
+    const normalized = trimmed.startsWith('/') ? trimmed : trimmed.replace(/^\.\/?/, '/');
+    return this.normalizeResourcePath(normalized);
+  }
+
+  private normalizeResourcePath(resourcePath: string): string {
+    if (typeof resourcePath !== 'string' || resourcePath.trim().length === 0) {
+      throw new Error('podTable requires a non-empty resourcePath');
+    }
+    if (/^[a-zA-Z][\w+.-]*:\/\//.test(resourcePath)) {
+      return resourcePath;
+    }
+
+    const trimmed = resourcePath.trim().replace(/^(\.\/)+/, '');
+    const normalized = trimmed.replace(/\/+/g, '/');
+    if (normalized.startsWith('/')) {
+      return normalized;
+    }
+    return `/${normalized}`;
+  }
+
+  private deriveContainerPath(resourcePath: string): string {
+    const withoutTrailingSlash = resourcePath.endsWith('/')
+      ? resourcePath.slice(0, -1)
+      : resourcePath;
+    const lastSlash = withoutTrailingSlash.lastIndexOf('/');
+    if (lastSlash === -1) {
+      return '/';
+    }
+    return withoutTrailingSlash.slice(0, lastSlash + 1);
+  }
+
+  private ensureTrailingSlash(path: string): string {
+    return path.endsWith('/') ? path : `${path}/`;
+  }
+
   // 获取资源访问模式
   getResourceMode(): 'ldp' | 'sparql' {
     return this.config.resourceMode;
@@ -328,6 +490,10 @@ export class PodTable<TColumns extends Record<string, PodColumnBase> = Record<st
   // 获取 SPARQL 端点（仅在 resourceMode === 'sparql' 时使用）
   getSparqlEndpoint(): string | undefined {
     return this.config.sparqlEndpoint;
+  }
+
+  getResourcePath(): string {
+    return this.config.resourcePath;
   }
 
   // 获取所有列
@@ -347,36 +513,36 @@ export class PodTable<TColumns extends Record<string, PodColumnBase> = Record<st
 }
 
 // 便捷的列定义函数 - 类似标准 Drizzle API
-export function text(name: string, options: PodColumnOptions = {}): PodStringColumn {
-  return new PodStringColumn(name, options);
+export function text(name: string, options: PodColumnOptions = {}): ColumnBuilder<'string'> {
+  return new ColumnBuilder(name, 'string', options);
 }
 
-export function varchar(name: string, options: PodColumnOptions = {}): PodStringColumn {
-  return new PodStringColumn(name, options);
+export function varchar(name: string, options: PodColumnOptions = {}): ColumnBuilder<'string'> {
+  return new ColumnBuilder(name, 'string', options);
 }
 
-export function integer(name: string, options: PodColumnOptions = {}): PodIntegerColumn {
-  return new PodIntegerColumn(name, options);
+export function integer(name: string, options: PodColumnOptions = {}): ColumnBuilder<'integer'> {
+  return new ColumnBuilder(name, 'integer', options);
 }
 
-export function boolean(name: string, options: PodColumnOptions = {}): PodBooleanColumn {
-  return new PodBooleanColumn(name, options);
+export function boolean(name: string, options: PodColumnOptions = {}): ColumnBuilder<'boolean'> {
+  return new ColumnBuilder(name, 'boolean', options);
 }
 
-export function timestamp(name: string, options: PodColumnOptions = {}): PodDateTimeColumn {
-  return new PodDateTimeColumn(name, options);
+export function timestamp(name: string, options: PodColumnOptions = {}): ColumnBuilder<'datetime'> {
+  return new ColumnBuilder(name, 'datetime', options);
 }
 
-export function datetime(name: string, options: PodColumnOptions = {}): PodDateTimeColumn {
-  return new PodDateTimeColumn(name, options);
+export function datetime(name: string, options: PodColumnOptions = {}): ColumnBuilder<'datetime'> {
+  return new ColumnBuilder(name, 'datetime', options);
 }
 
-export function json(name: string, options: PodColumnOptions = {}): PodJsonColumn {
-  return new PodJsonColumn(name, options);
+export function json(name: string, options: PodColumnOptions = {}): ColumnBuilder<'json'> {
+  return new ColumnBuilder(name, 'json', options);
 }
 
-export function object(name: string, options: PodColumnOptions = {}): PodObjectColumn {
-  return new PodObjectColumn(name, options);
+export function object(name: string, options: PodColumnOptions = {}): ColumnBuilder<'object'> {
+  return new ColumnBuilder(name, 'object', options);
 }
 
 // Pod 专用的列定义函数（保留向后兼容）
@@ -405,31 +571,46 @@ export function podObject(name: string, options: PodColumnOptions = {}): PodObje
 }
 
 // 创建类型安全的builder函数
-export function string(name: string, options: PodColumnOptions = {}): PodStringColumn {
-  return new PodStringColumn(name, options);
+export function string(name: string, options: PodColumnOptions = {}): ColumnBuilder<'string'> {
+  return new ColumnBuilder(name, 'string', options);
 }
 
-export function int(name: string, options: PodColumnOptions = {}): PodIntegerColumn {
-  return new PodIntegerColumn(name, options);
+export function int(name: string, options: PodColumnOptions = {}): ColumnBuilder<'integer'> {
+  return new ColumnBuilder(name, 'integer', options);
 }
 
-export function date(name: string, options: PodColumnOptions = {}): PodDateTimeColumn {
-  return new PodDateTimeColumn(name, options);
+export function date(name: string, options: PodColumnOptions = {}): ColumnBuilder<'datetime'> {
+  return new ColumnBuilder(name, 'datetime', options);
 }
 
-export function bool(name: string, options: PodColumnOptions = {}): PodBooleanColumn {
-  return new PodBooleanColumn(name, options);
+export function bool(name: string, options: PodColumnOptions = {}): ColumnBuilder<'boolean'> {
+  return new ColumnBuilder(name, 'boolean', options);
 }
 
 // 类型安全的podTable函数
+type ColumnInput = PodColumnBase | ColumnBuilder<ColumnBuilderDataType>;
+
+type ResolveColumn<T> = T extends ColumnBuilder<'string'> ? PodStringColumn
+  : T extends ColumnBuilder<'integer'> ? PodIntegerColumn
+  : T extends ColumnBuilder<'boolean'> ? PodBooleanColumn
+  : T extends ColumnBuilder<'datetime'> ? PodDateTimeColumn
+  : T extends ColumnBuilder<'json'> ? PodJsonColumn
+  : T extends ColumnBuilder<'object'> ? PodObjectColumn
+  : T extends PodColumnBase ? T
+  : PodColumnBase;
+
+type ResolvedColumns<T extends Record<string, ColumnInput>> = {
+  [K in keyof T]: ResolveColumn<T[K]>;
+};
+
 export function podTable<
   TName extends string,
-  TColumns extends Record<string, PodColumnBase | ColumnBuilder<'string' | 'integer' | 'datetime' | 'boolean'>>
+  TColumns extends Record<string, ColumnInput>
 >(
   name: TName,
   columns: TColumns,
   options: PodTableOptions
-): PodTable<Record<string, PodColumnBase>> {
+): PodTable<ResolvedColumns<TColumns>> {
   const processedColumns = {} as Record<string, PodColumnBase>;
 
   for (const [key, value] of Object.entries(columns)) {
@@ -449,6 +630,12 @@ export function podTable<
         case 'boolean':
           column = new PodBooleanColumn(value.name, value.options);
           break;
+        case 'json':
+          column = new PodJsonColumn(value.name, value.options);
+          break;
+        case 'object':
+          column = new PodObjectColumn(value.name, value.options);
+          break;
         case 'string':
         default:
           column = new PodStringColumn(value.name, value.options);
@@ -464,7 +651,7 @@ export function podTable<
     processedColumns[key] = column;
   }
 
-  return new PodTable(name, processedColumns, options);
+  return new PodTable(name, processedColumns as ResolvedColumns<TColumns>, options);
 }
 
 

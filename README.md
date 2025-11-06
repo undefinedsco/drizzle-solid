@@ -201,16 +201,18 @@ await db.delete(userTable)
 ### 自定义命名空间
 
 ```typescript
-import { podTable, string, COMMON_NAMESPACES } from 'drizzle-solid';
+import { podTable, string, namespace } from 'drizzle-solid';
+
+const LINQ = namespace('linq', 'https://linq.dev/ns/', {
+  favorite: 'profile#favorite'
+} as const);
 
 const customTable = podTable('custom', {
-  title: string('title', {
-    predicate: 'dc:title',
-    namespaces: {
-      ...COMMON_NAMESPACES,
-      dc: 'http://purl.org/dc/terms/'
-    }
-  })
+  title: string('title').predicate(LINQ.favorite)
+}, {
+  resourcePath: 'idp:///custom/index.ttl',
+  rdfClass: 'https://schema.org/CreativeWork',
+  namespace: LINQ
 });
 ```
 

@@ -40,22 +40,21 @@ const profiles = podTable('profiles', {
 });
 ```
 
-如果未调用 `.predicate(...)`，库会默认使用 `https://schema.org/<列名>`。
-
-## 常用词汇表
-`src/core/rdf-constants.ts` 预置了常用命名空间，可通过 `COMMON_NAMESPACES`/`RDF_PREDICATES`/`RDF_CLASSES` 直接引用，保持语义一致性。
+如果未调用 `.predicate(...)`，需要在 `namespace` 中包含同名条目，否则构建时会抛错。推荐做法是搭配命名空间常量使用，例如结合 `@inrupt/vocab-common-rdf`：
 
 ```ts
-import { COMMON_NAMESPACES, RDF_PREDICATES, RDF_CLASSES } from 'drizzle-solid';
+import { podTable, string, VCARD, FOAF } from 'drizzle-solid';
+import { LINQ } from '@/models/namespace';
 
-const posts = podTable('posts', {
-  id: string('id').primaryKey(),
-  title: string('title').predicate(RDF_PREDICATES.DC_TITLE),
-  author: string('author').predicate(RDF_PREDICATES.SCHEMA_AUTHOR)
+const contacts = podTable('contacts', {
+  webId: string('webId').primaryKey(),
+  name: string('name').predicate(VCARD.fn),
+  nickname: string('nickname').predicate(FOAF.nick),
+  favorite: string('favorite').predicate(LINQ.profileFavorite)
 }, {
-  containerPath: '/posts/',
-  rdfClass: RDF_CLASSES.SCHEMA_ARTICLE,
-  namespace: COMMON_NAMESPACES.dc
+  resourcePath: 'idp:///contacts/index.ttl',
+  rdfClass: FOAF.Person,
+  namespace: LINQ
 });
 ```
 

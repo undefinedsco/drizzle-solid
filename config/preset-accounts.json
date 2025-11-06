@@ -1,0 +1,120 @@
+{
+  "presetAccounts": {
+    "alice": {
+      "webId": "http://localhost:3000/alice/profile/card#me",
+      "podUrl": "http://localhost:3000/alice/",
+      "dataContainer": "http://localhost:3000/alice/data/",
+      "email": "alice@example.com",
+      "name": "Alice Smith",
+      "password": "alice123",
+      "description": "测试用户 Alice - 用于基础功能测试",
+      "profile": {
+        "bio": "I am Alice, a software engineer focused on semantic web and decentralized technologies. I love open source projects and am committed to building a more open and interconnected web world.",
+        "website": "https://alice-dev.example.com",
+        "location": "Beijing, China",
+        "avatar": "https://alice-dev.example.com/avatar.jpg",
+        "phone": "+86-138-0000-1234",
+        "organization": "Tech Innovation Lab",
+        "title": "Senior Software Engineer",
+        "skills": ["JavaScript", "TypeScript", "Solid", "RDF", "SPARQL", "Node.js"],
+        "interests": ["语义网", "去中心化技术", "开源软件", "人工智能", "区块链"],
+        "languages": ["中文", "English", "日本語"],
+        "social": {
+          "github": "https://github.com/alice-dev",
+          "twitter": "https://twitter.com/alice_dev",
+          "linkedin": "https://linkedin.com/in/alice-smith-dev"
+        }
+      }
+    },
+    "bob": {
+      "webId": "http://localhost:3000/bob/profile/card#me",
+      "podUrl": "http://localhost:3000/bob/",
+      "dataContainer": "http://localhost:3000/bob/data/",
+      "email": "bob@example.com",
+      "name": "Bob Johnson",
+      "password": "bob123",
+      "description": "测试用户 Bob - 用于多用户交互测试",
+      "profile": {
+        "bio": "我是 Bob，一名产品经理和设计师，专注于用户体验和产品创新。相信技术应该服务于人，致力于创造更好的数字体验。",
+        "website": "https://bob-design.example.com",
+        "location": "上海，中国",
+        "avatar": "https://bob-design.example.com/avatar.jpg",
+        "phone": "+86-139-0000-5678",
+        "organization": "Design Studio Co.",
+        "title": "Senior Product Manager",
+        "skills": ["产品设计", "用户体验", "项目管理", "数据分析", "Figma", "Sketch"],
+        "interests": ["产品设计", "用户体验", "创新思维", "团队协作", "数据分析"],
+        "languages": ["中文", "English"],
+        "social": {
+          "github": "https://github.com/bob-design",
+          "twitter": "https://twitter.com/bob_design",
+          "dribbble": "https://dribbble.com/bob-design"
+        }
+      }
+    },
+    "charlie": {
+      "webId": "http://localhost:3000/charlie/profile/card#me",
+      "podUrl": "http://localhost:3000/charlie/",
+      "dataContainer": "http://localhost:3000/charlie/data/",
+      "email": "charlie@example.com",
+      "name": "Charlie Brown",
+      "password": "charlie123",
+      "description": "测试用户 Charlie - 用于高级功能测试",
+      "profile": {
+        "bio": "我是 Charlie，一名数据科学家和机器学习工程师，专注于AI算法和数据分析。喜欢探索数据背后的故事，用技术解决现实问题。",
+        "website": "https://charlie-ai.example.com",
+        "location": "深圳，中国",
+        "avatar": "https://charlie-ai.example.com/avatar.jpg",
+        "phone": "+86-137-0000-9012",
+        "organization": "AI Research Institute",
+        "title": "Lead Data Scientist",
+        "skills": ["Python", "Machine Learning", "Deep Learning", "TensorFlow", "PyTorch", "数据分析"],
+        "interests": ["人工智能", "机器学习", "数据科学", "算法研究", "开源项目"],
+        "languages": ["中文", "English", "Python"],
+        "social": {
+          "github": "https://github.com/charlie-ai",
+          "twitter": "https://twitter.com/charlie_ai",
+          "kaggle": "https://kaggle.com/charlie-ai"
+        }
+      }
+    }
+  },
+  "serverConfig": {
+    "baseUrl": "http://localhost:3000",
+    "port": 3000,
+    "enableRegistration": true,
+    "enableAuthentication": true,
+    "defaultAcl": {
+      "read": ["public"],
+      "write": ["owner"],
+      "control": ["owner"]
+    }
+  },
+  "testScenarios": [
+    {
+      "name": "basic-auth",
+      "description": "基础认证测试",
+      "users": ["alice"]
+    },
+    {
+      "name": "multi-user",
+      "description": "多用户交互测试", 
+      "users": ["alice", "bob"]
+    },
+    {
+      "name": "advanced-features",
+      "description": "高级功能测试",
+      "users": ["alice", "bob", "charlie"]
+    },
+    {
+      "name": "permission-test",
+      "description": "权限测试",
+      "users": ["alice", "bob"]
+    },
+    {
+      "name": "data-science",
+      "description": "数据科学场景测试",
+      "users": ["charlie"]
+    }
+  ]
+}

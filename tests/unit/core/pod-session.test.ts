@@ -1,4 +1,4 @@
-import { describe, it, expect, beforeEach, jest } from '@jest/globals';
+import { describe, it, expect, beforeEach, vi } from 'vitest';
 import { PodAsyncSession } from '@src/core/pod-session';
 import { PodTable } from '@src/core/pod-table';
 import { PodStringColumn, PodIntegerColumn } from '@src/core/pod-table';
@@ -6,27 +6,41 @@ import { PodStringColumn, PodIntegerColumn } from '@src/core/pod-table';
 
 // Mock PodDialect
 const mockDialect = {
-  query: jest.fn(),
-  executeSql: jest.fn(),
-  connect: jest.fn(),
-  disconnect: jest.fn(),
-  isConnected: jest.fn().mockReturnValue(false)
+  query: vi.fn(),
+  executeSql: vi.fn(),
+  connect: vi.fn(),
+  disconnect: vi.fn(),
+  isConnected: vi.fn().mockReturnValue(false),
+  registerTable: vi.fn().mockResolvedValue(undefined)
 } as any; // Mock object for testing, intentionally using any for simplicity
+
+function resetDialectMocks(): void {
+  mockDialect.query.mockReset();
+  mockDialect.executeSql.mockReset();
+  mockDialect.connect.mockReset();
+  mockDialect.disconnect.mockReset();
+  mockDialect.isConnected.mockReset();
+  mockDialect.isConnected.mockReturnValue(false);
+  mockDialect.registerTable.mockReset();
+  mockDialect.registerTable.mockResolvedValue(undefined);
+}
 
 // Mock PodTable
 const mockTable = new PodTable('users', {
   id: new PodIntegerColumn('id', { primaryKey: true }),
   name: new PodStringColumn('name', { required: true })
 }, {
-  containerPath: '/users/',
-  rdfClass: 'https://schema.org/Person'
+  resourcePath: 'idp:///users/index.ttl',
+  rdfClass: 'https://schema.org/Person',
+  namespace: { prefix: 'schema', uri: 'https://schema.org/' }
 });
 
 describe('PodAsyncSession', () => {
   let session: PodAsyncSession;
 
   beforeEach(() => {
-    jest.clearAllMocks();
+    vi.clearAllMocks();
+    resetDialectMocks();
     session = new PodAsyncSession(mockDialect);
   });
 
@@ -60,7 +74,7 @@ describe('PodAsyncSession', () => {
 
     it('应该在启用日志时记录操作', async () => {
       const sessionWithLogger = new PodAsyncSession(mockDialect, undefined, { logger: true });
-      const consoleSpy = jest.spyOn(console, 'log').mockImplementation(() => {});
+      const consoleSpy = vi.spyOn(console, 'log').mockImplementation(() => {});
 
       const operation = {
         type: 'select' as const,
@@ -90,7 +104,7 @@ describe('PodAsyncSession', () => {
 
     it('应该在启用日志时记录 SQL', async () => {
       const sessionWithLogger = new PodAsyncSession(mockDialect, undefined, { logger: true });
-      const consoleSpy = jest.spyOn(console, 'log').mockImplementation(() => {});
+      const consoleSpy = vi.spyOn(console, 'log').mockImplementation(() => {});
 
       const sql = { queryChunks: ['SELECT * FROM users'] } as any;
       mockDialect.executeSql.mockResolvedValue([]);
@@ -135,9 +149,9 @@ describe('PodAsyncSession', () => {
 
   describe('transaction', () => {
     it('应该执行事务', async () => {
-      const consoleSpy = jest.spyOn(console, 'log').mockImplementation(() => {});
+      const consoleSpy = vi.spyOn(console, 'log').mockImplementation(() => {});
       
-      const transactionFn = jest.fn() as any; // Test mock, using any for simplicity
+      const transactionFn = vi.fn() as any; // Test mock, using any for simplicity
       transactionFn.mockResolvedValue('success');
       const result = await session.transaction(transactionFn);
 
@@ -150,11 +164,11 @@ describe('PodAsyncSession', () => {
     });
 
     it('应该处理事务失败', async () => {
-      const consoleSpy = jest.spyOn(console, 'log').mockImplementation(() => {});
-      const consoleErrorSpy = jest.spyOn(console, 'error').mockImplementation(() => {});
+      const consoleSpy = vi.spyOn(console, 'log').mockImplementation(() => {});
+      const consoleErrorSpy = vi.spyOn(console, 'error').mockImplementation(() => {});
       
       const error = new Error('Transaction failed');
-      const transactionFn = jest.fn() as any; // Test mock, using any for simplicity
+      const transactionFn = vi.fn() as any; // Test mock, using any for simplicity
       transactionFn.mockRejectedValue(error);
 
       await expect(session.transaction(transactionFn)).rejects.toThrow('Transaction failed');
@@ -173,6 +187,7 @@ describe('SelectQueryBuilder', () => {
   let builder: any; // Test builder, using any for simplicity
 
   beforeEach(() => {
+    resetDialectMocks();
     session = new PodAsyncSession(mockDialect);
     builder = session.select();
   });
@@ -221,6 +236,7 @@ describe('InsertQueryBuilder', () => {
   let builder: any; // Test builder, using any for simplicity
 
   beforeEach(() => {
+    resetDialectMocks();
     session = new PodAsyncSession(mockDialect);
     builder = session.insert(mockTable);
   });
@@ -236,6 +252,7 @@ describe('UpdateQueryBuilder', () => {
   let builder: any; // Test builder, using any for simplicity
 
   beforeEach(() => {
+    resetDialectMocks();
     session = new PodAsyncSession(mockDialect);
     builder = session.update(mockTable);
   });
@@ -256,6 +273,7 @@ describe('DeleteQueryBuilder', () => {
   let builder: any; // Test builder, using any for simplicity
 
   beforeEach(() => {
+    resetDialectMocks();
     session = new PodAsyncSession(mockDialect);
     builder = session.delete(mockTable);
   });
@@ -270,7 +288,8 @@ describe('PodAsyncSession 增强测试', () => {
   let session: PodAsyncSession;
 
   beforeEach(() => {
-    jest.clearAllMocks();
+    vi.clearAllMocks();
+    resetDialectMocks();
     session = new PodAsyncSession(mockDialect);
   });
 

@@ -1,8 +1,6 @@
 // RDF Schema 解析器
 // 从真实的 RDF Schema 中解析类型定义
 
-import { RDF_NAMESPACES } from './rdf-constants';
-
 // RDF Schema 类型定义
 export interface RDFSchemaDefinition {
   predicate: string;

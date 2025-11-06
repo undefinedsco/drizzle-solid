@@ -1,4 +1,4 @@
-import { afterAll, afterEach, beforeAll, describe, expect, test } from '@jest/globals';
+import { afterAll, afterEach, beforeAll, describe, expect, test } from 'vitest';
 import { getSolidDataset, getThing, removeThing, saveSolidDatasetAt } from '@inrupt/solid-client';
 import { TypeIndexManager, type TypeIndexEntry } from '@src/core/typeindex-manager';
 import type { Session } from '@inrupt/solid-client-authn-node';

@@ -21,6 +21,10 @@ export class ComunicaSPARQLExecutor {
     this.logging = config.logging || false;
   }
 
+  private formatError(error: unknown): string {
+    return error instanceof Error ? error.message : String(error);
+  }
+
   // 创建安全的 fetch 函数，修复 Comunica 的 HTTP 处理问题
   private createSafeFetch(originalFetch: typeof fetch): typeof fetch {
     return async (url: string | URL | Request, options?: RequestInit) => {
@@ -96,9 +100,9 @@ export class ComunicaSPARQLExecutor {
           text: async () => {
             try {
               return await response.text();
-            } catch (error) {
+            } catch (error: unknown) {
               if (this.logging) {
-                console.warn('[SafeFetch] Text parsing failed:', error);
+                console.warn('[SafeFetch] Text parsing failed:', this.formatError(error));
               }
               return '';
             }
@@ -106,9 +110,9 @@ export class ComunicaSPARQLExecutor {
           json: async () => {
             try {
               return await response.json();
-            } catch (error) {
+            } catch (error: unknown) {
               if (this.logging) {
-                console.warn('[SafeFetch] JSON parsing failed:', error);
+                console.warn('[SafeFetch] JSON parsing failed:', this.formatError(error));
               }
               return {};
             }
@@ -116,9 +120,9 @@ export class ComunicaSPARQLExecutor {
           clone: () => {
             try {
               return this.createSafeFetch(originalFetch)(url, options);
-            } catch (error) {
+            } catch (error: unknown) {
               if (this.logging) {
-                console.warn('[SafeFetch] Clone failed:', error);
+                console.warn('[SafeFetch] Clone failed:', this.formatError(error));
               }
               return safeResponse;
             }
@@ -126,9 +130,9 @@ export class ComunicaSPARQLExecutor {
         };
         
         return safeResponse as unknown as Response;
-      } catch (error) {
+      } catch (error: unknown) {
         if (this.logging) {
-          console.error('[SafeFetch] Error:', error);
+          console.error('[SafeFetch] Error:', this.formatError(error));
         }
         throw error;
       }
@@ -162,8 +166,8 @@ export class ComunicaSPARQLExecutor {
       } else {
         throw new Error(`Unsupported query type: ${sparqlQuery.type}`);
       }
-    } catch (error) {
-      console.error('SPARQL query execution failed:', error);
+    } catch (error: unknown) {
+      console.error('SPARQL query execution failed:', this.formatError(error));
       throw error;
     }
   }
@@ -218,16 +222,16 @@ export class ComunicaSPARQLExecutor {
             results.push({ source, error: `${response.status} ${response.statusText}`, success: false });
           }
         } catch (error: unknown) {
-          const errorMessage = error instanceof Error ? error.message : String(error);
+          const errorMessage = this.formatError(error);
           console.warn(`Error reading ${source}:`, errorMessage);
           results.push({ source, error: errorMessage, success: false });
         }
       }
       
       return results;
-    } catch (error) {
+    } catch (error: unknown) {
       if (this.logging) {
-        console.error('[Simple] SELECT query execution failed:', error instanceof Error ? error.message : String(error));
+        console.error('[Simple] SELECT query execution failed:', this.formatError(error));
       }
       throw error;
     }
@@ -253,14 +257,34 @@ export class ComunicaSPARQLExecutor {
       const bindings = await bindingsStream.toArray();
 
       return bindings.map((binding: any) => {
-        const result: any = {};
-        for (const [key, value] of binding.entries()) {
-          result[key] = this.convertComunicaTerm(value);
+        const result: Record<string, unknown> = {};
+
+        const assignValue = (key: unknown, value: unknown) => {
+          const keyName = this.extractBindingKeyName(key);
+          if (!keyName) {
+            return;
+          }
+          result[keyName] = this.convertComunicaTerm(value);
+        };
+
+        if (binding && typeof binding.forEach === 'function') {
+          binding.forEach((value: unknown, key: unknown) => assignValue(key, value));
+        } else if (binding && typeof binding.entries === 'function') {
+          for (const [key, value] of binding.entries()) {
+            assignValue(key, value);
+          }
+        } else {
+          for (const key in binding) {
+            if (Object.prototype.hasOwnProperty.call(binding, key)) {
+              assignValue(key, (binding as Record<string, unknown>)[key]);
+            }
+          }
         }
+
         return result;
       });
-    } catch (error) {
-      console.error('SELECT query failed:', error);
+    } catch (error: unknown) {
+      console.error('SELECT query failed:', this.formatError(error));
       throw error;
     }
   }
@@ -286,8 +310,8 @@ export class ComunicaSPARQLExecutor {
       });
       
       return [{ result }];
-    } catch (error) {
-      console.error('ASK query failed:', error);
+    } catch (error: unknown) {
+      console.error('ASK query failed:', this.formatError(error));
       throw error;
     }
   }
@@ -330,49 +354,84 @@ export class ComunicaSPARQLExecutor {
           
           // 构建请求头
           const headers: Record<string, string> = {
-            'Content-Type': 'application/sparql-update'
+            'Content-Type': 'application/sparql-update',
+            'If-Match': etag ?? '*'
           };
-          
-          // 如果有 ETag，添加 If-Match 头来避免冲突
-          if (etag) {
-            headers['If-Match'] = etag;
-          }
-          
-          const response = await this.fetchFn(source, {
-            method: 'PATCH',
-            headers,
-            body: sparqlQuery.query
-          });
+
+          const performPatch = async (customHeaders: Record<string, string>) => {
+            return this.fetchFn(source, {
+              method: 'PATCH',
+              headers: customHeaders,
+              body: sparqlQuery.query
+            });
+          };
+
+          let response = await performPatch(headers);
           
           if (response.ok) {
             results.push({ success: true, source, status: response.status });
             await this.invalidateCache(engine, source);
-          } else if (response.status === 409) {
+          } else if (response.status === 409 || response.status === 412) {
             // 409 冲突 - 尝试多种重试策略
             if (this.logging) {
-              console.log(`[UPDATE] 409 conflict for ${source}, trying multiple retry strategies`);
+              console.log(`[UPDATE] ${response.status} conflict for ${source}, trying multiple retry strategies`);
             }
             
             let retrySuccess = false;
+
+            // 如果是 412，优先尝试重新获取最新的 ETag
+            if (response.status === 412) {
+              try {
+                const latestHead = await this.fetchFn(source, {
+                  method: 'HEAD',
+                  headers: { 'Accept': 'text/turtle' }
+                });
+
+                if (latestHead.ok) {
+                  const latestEtag = latestHead.headers.get('ETag');
+                  if (latestEtag) {
+                    const retryHeaders = {
+                      ...headers,
+                      'If-Match': latestEtag
+                    };
+
+                    const retryWithEtag = await performPatch(retryHeaders);
+                    if (retryWithEtag.ok) {
+                      results.push({
+                        success: true,
+                        source,
+                        status: retryWithEtag.status,
+                        retried: true,
+                        strategy: 'refreshed-etag'
+                      });
+                      await this.invalidateCache(engine, source);
+                      retrySuccess = true;
+                    }
+                  }
+                }
+              } catch (retryEtagError) {
+                if (this.logging) {
+                  console.log(`[UPDATE] Retry with refreshed ETag failed:`, retryEtagError);
+                }
+              }
+            }
             
             // 策略1: 不使用 ETag 重试
-            try {
-              const retryResponse1 = await this.fetchFn(source, {
-                method: 'PATCH',
-                headers: {
+            if (!retrySuccess) {
+              try {
+                const retryResponse1 = await performPatch({
                   'Content-Type': 'application/sparql-update'
-                },
-                body: sparqlQuery.query
-              });
-              
-              if (retryResponse1.ok) {
-                results.push({ success: true, source, status: retryResponse1.status, retried: true, strategy: 'no-etag' });
-                await this.invalidateCache(engine, source);
-                retrySuccess = true;
-              }
-            } catch (retry1Error) {
-              if (this.logging) {
-                console.log(`[UPDATE] Retry strategy 1 failed:`, retry1Error);
+                });
+                
+                if (retryResponse1.ok) {
+                  results.push({ success: true, source, status: retryResponse1.status, retried: true, strategy: 'no-etag' });
+                  await this.invalidateCache(engine, source);
+                  retrySuccess = true;
+                }
+              } catch (retry1Error) {
+                if (this.logging) {
+                  console.log(`[UPDATE] Retry strategy 1 failed:`, retry1Error);
+                }
               }
             }
             
@@ -422,14 +481,14 @@ export class ComunicaSPARQLExecutor {
             const errorText = await response.text();
             results.push({ success: false, source, error: `${response.status} ${response.statusText}`, details: errorText });
           }
-        } catch (error) {
-          results.push({ success: false, source, error: error instanceof Error ? error.message : String(error) });
+        } catch (error: unknown) {
+          results.push({ success: false, source, error: this.formatError(error) });
         }
       }
       
       return results;
-    } catch (error) {
-      console.error('UPDATE query failed:', error);
+    } catch (error: unknown) {
+      console.error('UPDATE query failed:', this.formatError(error));
       throw error;
     }
   }
@@ -439,15 +498,41 @@ export class ComunicaSPARQLExecutor {
     if (typeof invalidate === 'function') {
       try {
         await invalidate.call(engine, source);
-      } catch (error) {
+      } catch (error: unknown) {
         if (this.logging) {
-          console.warn(`[UPDATE] Failed to invalidate cache for ${source}:`, error);
+          console.warn(`[UPDATE] Failed to invalidate cache for ${source}:`, this.formatError(error));
         }
       }
     }
   }
 
 
+
+  private extractBindingKeyName(key: unknown): string | null {
+    if (key === null || key === undefined) {
+      return null;
+    }
+
+    if (typeof key === 'string') {
+      return key;
+    }
+
+    if (typeof key === 'object') {
+      const candidate = key as { value?: unknown; termType?: string };
+      if (candidate && typeof candidate.value === 'string') {
+        return candidate.value;
+      }
+      if (candidate && candidate.termType === 'Variable' && typeof candidate.value === 'string') {
+        return candidate.value;
+      }
+    }
+
+    if (typeof key === 'symbol') {
+      return key.description ?? key.toString();
+    }
+
+    return String(key);
+  }
 
   // Convert Comunica term to JavaScript value
   private convertComunicaTerm(term: any): any {
@@ -472,10 +557,10 @@ export class ComunicaSPARQLExecutor {
             } else if (datatypeIri.includes('#json')) {
               try {
                 return JSON.parse(term.value);
-              } catch (error) {
-                console.warn('Failed to parse JSON value:', term.value, error);
-                return term.value;
-              }
+            } catch (error: unknown) {
+              console.warn('Failed to parse JSON value:', term.value, this.formatError(error));
+              return term.value;
+            }
             }
           }
         }
@@ -532,7 +617,7 @@ export class ComunicaSPARQLExecutor {
         
         const bindings = await bindingsStream.toArray();
         const results = bindings.map((binding: any) => {
-          const result: any = {};
+          const result: Record<string, unknown> = {};
           
           // 调试：打印 binding 对象结构
           if (this.logging && bindings.indexOf(binding) === 0) {
@@ -550,10 +635,13 @@ export class ComunicaSPARQLExecutor {
             // 新版本 Comunica
             try {
               for (const [key, value] of binding.entries()) {
-                result[key] = this.convertComunicaTerm(value);
+                const keyName = this.extractBindingKeyName(key);
+                if (keyName) {
+                  result[keyName] = this.convertComunicaTerm(value);
+                }
               }
-            } catch (error) {
-              console.warn('[Warning] binding.entries() failed:', error);
+            } catch (error: unknown) {
+              console.warn('[Warning] binding.entries() failed:', this.formatError(error));
               // 回退到其他方法
             }
           } else if (binding.keys && typeof binding.keys === 'function') {
@@ -563,7 +651,10 @@ export class ComunicaSPARQLExecutor {
                 const term = binding.get(variable);
                 if (term) {
                   // 正确提取变量名和值
-                  const varName = variable.value || variable.toString() || variable;
+                  const varName = this.extractBindingKeyName(variable);
+                  if (!varName) {
+                    continue;
+                  }
                   const termValue = this.convertComunicaTerm(term);
                   result[varName] = termValue;
                   
@@ -575,18 +666,21 @@ export class ComunicaSPARQLExecutor {
                   }
                 }
               }
-            } catch (error) {
-              console.warn('[Warning] binding.keys()/get() failed:', error);
+            } catch (error: unknown) {
+              console.warn('[Warning] binding.keys()/get() failed:', this.formatError(error));
             }
           }
           
           // 如果上面的方法都失败了，尝试直接遍历
           if (Object.keys(result).length === 0) {
             for (const key in binding) {
-              if (binding.hasOwnProperty(key) && key !== 'type' && key !== 'size') {
+              if (Object.prototype.hasOwnProperty.call(binding, key) && key !== 'type' && key !== 'size') {
                 const value = binding[key];
                 if (value) {
-                  result[key] = this.convertComunicaTerm(value);
+                  const keyName = this.extractBindingKeyName(key);
+                  if (keyName) {
+                    result[keyName] = this.convertComunicaTerm(value);
+                  }
                 }
               }
             }
@@ -636,9 +730,9 @@ export class ComunicaSPARQLExecutor {
           this.sources = originalSources;
         }
       }
-    } catch (error) {
+    } catch (error: unknown) {
       if (this.logging) {
-        console.error('[Comunica] Query execution failed:', error);
+        console.error('[Comunica] Query execution failed:', this.formatError(error));
       }
       throw error;
     }

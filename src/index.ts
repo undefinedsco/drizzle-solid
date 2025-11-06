@@ -1,6 +1,6 @@
 // 主要入口点
-export { drizzle, type SolidDatabase } from './driver';
-export type { InruptSession } from './solid';
+export { drizzle, type SolidDatabase, type SolidAuthSession } from './driver';
+export * from './solid';
 
 // 核心类
 export { PodDialect } from './core/pod-dialect';
@@ -29,7 +29,6 @@ export {
   podJson,
   podObject,
   // 命名空间和常量
-  COMMON_NAMESPACES,
   RDF_PREDICATES,
   RDF_CLASSES,
   // 类型
@@ -136,3 +135,6 @@ export {
   max,
   type AggregateExpression
 } from './core/aggregates';
+
+// 命名空间辅助
+export { namespace, VCARD, FOAF, LDP, SCHEMA } from './namespaces';

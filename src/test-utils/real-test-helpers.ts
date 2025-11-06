@@ -2,7 +2,12 @@ import { describe } from '@jest/globals';
 
 export const ENABLE_REAL_TESTS = process.env.SOLID_ENABLE_REAL_TESTS !== 'false';
 
-export const describeIfReal = ENABLE_REAL_TESTS ? describe : describe.skip;
+export function describeIfReal(
+  ...args: Parameters<typeof describe>
+): ReturnType<typeof describe> {
+  const target = ENABLE_REAL_TESTS ? describe : describe.skip;
+  return target(...args);
+}
 
 const warnedSuites = new Set<string>();
 

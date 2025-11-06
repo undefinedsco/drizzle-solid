@@ -1,16 +1,26 @@
 {
   "name": "drizzle-solid",
   "version": "0.1.0",
+  "private": true,
   "description": "Drizzle ORM adapter for Solid Pods",
   "main": "dist/index.js",
   "types": "dist/index.d.ts",
+  "exports": {
+    ".": {
+      "types": "./dist/index.d.ts",
+      "default": "./dist/index.js"
+    }
+  },
+  "files": [
+    "dist",
+    "README.md",
+    "LICENSE"
+  ],
   "scripts": {
     "build": "tsc",
-    "build:browser": "node scripts/build-browser.js",
-    "build:all": "npm run build && npm run build:browser",
-    "test": "jest",
-    "test:watch": "jest --watch",
-    "test:coverage": "jest --coverage",
+    "test": "vitest",
+    "test:watch": "vitest --watch",
+    "test:coverage": "vitest --coverage",
     "lint": "eslint src/**/*.ts",
     "lint:fix": "eslint src/**/*.ts --fix",
     "dev": "ts-node src/index.ts",
@@ -31,6 +41,15 @@
     "quality": "npm run lint && npm run test",
     "css:install": "npm install --prefix .internal/css-runtime"
   },
+  "author": "Undefined Sco",
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/undefinedsco/drizzle-solid.git"
+  },
+  "bugs": {
+    "url": "https://github.com/undefinedsco/drizzle-solid/issues"
+  },
+  "homepage": "https://github.com/undefinedsco/drizzle-solid#readme",
   "keywords": [
     "drizzle",
     "solid",
@@ -39,10 +58,9 @@
     "semantic-web",
     "orm"
   ],
-  "author": "Your Name",
   "license": "MIT",
   "dependencies": {
-    "@comunica/query-sparql-solid": "^2.10.0",
+    "@comunica/query-sparql-solid": "^2.4.0",
     "@inrupt/solid-client": "^2.1.2",
     "@inrupt/solid-client-authn-node": "^3.1.0",
     "@inrupt/universal-fetch": "^1.0.3",
@@ -55,14 +73,14 @@
   },
   "devDependencies": {
     "@solid/community-server": "^7.1.7",
-    "@types/jest": "^29.5.0",
     "@types/node": "^18.15.0",
     "@typescript-eslint/eslint-plugin": "^5.57.0",
     "@typescript-eslint/parser": "^5.57.0",
+    "@vitest/coverage-v8": "^2.1.9",
+    "@vitest/utils": "^2.1.9",
     "eslint": "^8.37.0",
-    "jest": "^29.5.0",
-    "ts-jest": "^29.1.0",
     "ts-node": "^10.9.0",
-    "typescript": "^5.0.0"
+    "typescript": "^5.0.0",
+    "vitest": "^2.1.9"
   }
 }

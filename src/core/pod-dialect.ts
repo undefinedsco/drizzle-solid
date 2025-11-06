@@ -7,20 +7,20 @@ import { ComunicaSPARQLExecutor, SolidSPARQLExecutor } from './sparql-executor';
 import { TypeIndexManager, TypeIndexEntry, TypeIndexConfig, DiscoveredTable } from './typeindex-manager';
 import type { SelectQueryPlan } from './select-plan';
 
-// Inrupt Session类型定义
-export interface InruptSession {
+// 最小 Solid Session 接口定义
+export interface SolidAuthSession {
   info: {
     isLoggedIn: boolean;
     webId?: string;
     sessionId?: string;
   };
   fetch: typeof fetch;
-  login: (options: any) => Promise<void>;
-  logout: () => Promise<void>;
+  login?: (options?: any) => Promise<void>;
+  logout?: () => Promise<void>;
 }
 
 export interface PodDialectConfig {
-  session: InruptSession; // Inrupt Session对象，包含所有认证信息
+  session: SolidAuthSession;
   typeIndex?: TypeIndexConfig;
 }
 
@@ -61,7 +61,7 @@ type TableResourceDescriptor =
 export class PodDialect {
   static readonly [entityKind] = 'PodDialect';
 
-  private session: InruptSession;
+  private session: SolidAuthSession;
   private podUrl: string;
   private webId: string;
   private connected = false;
@@ -69,6 +69,9 @@ export class PodDialect {
   private sparqlExecutor: ComunicaSPARQLExecutor;
   private typeIndexManager: TypeIndexManager;
   public config: PodDialectConfig;
+  private registeredTables: Set<string> = new Set();
+  private preparedContainers: Set<string> = new Set();
+  private preparedResources: Set<string> = new Set();
 
   // 在PodDialect类中添加默认谓词映射（在constructor或类属性中）
   private defaultPredicates: Record<string, string> = {
@@ -137,10 +140,12 @@ export class PodDialect {
     }
 
     const { containerUrl, resourceUrl } = this.resolveTableUrls(table);
-    await this.ensureContainerExists(containerUrl);
-    await this.ensureResourceExists(resourceUrl, { createIfMissing: false });
+    const normalizedResourceUrl = this.normalizeResourceUrl(resourceUrl);
 
-    const subjects = await this.findSubjectsForCondition(condition, table, resourceUrl);
+    await this.ensureContainerExists(containerUrl);
+    await this.ensureResourceExists(normalizedResourceUrl, { createIfMissing: false });
+
+    const subjects = await this.findSubjectsForCondition(condition, table, normalizedResourceUrl);
     if (subjects.length === 0) {
       console.log('[UPDATE] Complex update matched no subjects');
       return [];
@@ -156,13 +161,13 @@ export class PodDialect {
 
       console.log('[UPDATE] Complex update query for subject:', subject); 
       console.log(updateQuery);
-      await this.executeOnResource(resourceUrl, {
+      await this.executeOnResource(normalizedResourceUrl, {
         type: 'UPDATE',
         query: updateQuery,
         prefixes: this.sparqlConverter.getPrefixes()
       });
 
-      results.push({ success: true, source: resourceUrl, subject });
+      results.push({ success: true, source: normalizedResourceUrl, subject });
     }
 
     return results;
@@ -175,11 +180,12 @@ export class PodDialect {
     console.log('[PodDialect] Complex delete triggered with condition:', JSON.stringify(condition, null, 2));
     const table = operation.table;
     const { containerUrl, resourceUrl } = this.resolveTableUrls(table);
+    const normalizedResourceUrl = this.normalizeResourceUrl(resourceUrl);
 
     await this.ensureContainerExists(containerUrl);
-    await this.ensureResourceExists(resourceUrl, { createIfMissing: false });
+    await this.ensureResourceExists(normalizedResourceUrl, { createIfMissing: false });
 
-    const subjects = await this.findSubjectsForCondition(condition, table, resourceUrl);
+    const subjects = await this.findSubjectsForCondition(condition, table, normalizedResourceUrl);
     if (subjects.length === 0) {
       console.log('[DELETE] Complex delete matched no subjects');
       return [];
@@ -189,13 +195,13 @@ export class PodDialect {
 
     for (const subject of subjects) {
       const deleteQuery = `${this.buildPrefixLines()}\nDELETE WHERE {\n  <${subject}> ?p ?o .\n}`;
-      await this.executeOnResource(resourceUrl, {
+      await this.executeOnResource(normalizedResourceUrl, {
         type: 'DELETE',
         query: deleteQuery,
         prefixes: this.sparqlConverter.getPrefixes()
       });
 
-      results.push({ success: true, source: resourceUrl, subject });
+      results.push({ success: true, source: normalizedResourceUrl, subject });
     }
 
     return results;
@@ -206,6 +212,7 @@ export class PodDialect {
     table: PodTable,
     resourceUrl: string
   ): Promise<string[]> {
+    const normalizedUrl = this.normalizeResourceUrl(resourceUrl);
     const prefixLines = this.buildPrefixLines();
     const whereClause = this.sparqlConverter.buildWhereClauseForCondition(condition, table);
     console.log('[UPDATE] Complex update where clause:', whereClause);
@@ -213,7 +220,7 @@ export class PodDialect {
     const query = `${prefixLines}\nSELECT ?subject WHERE {\n${whereClause}\n}`;
     console.log('[UPDATE] Complex update select query:', query);
 
-    const rows = await this.executeOnResource(resourceUrl, {
+    const rows = await this.executeOnResource(normalizedUrl, {
       type: 'SELECT',
       query,
       prefixes: this.sparqlConverter.getPrefixes()
@@ -353,14 +360,18 @@ export class PodDialect {
       typeof table.getResourceMode === 'function' ? table.getResourceMode() : (table.config.resourceMode ?? 'ldp');
 
     if (mode === 'sparql') {
-      const endpoint =
+      const endpointSource =
         (typeof table.getSparqlEndpoint === 'function' && table.getSparqlEndpoint()) ||
         table.config.sparqlEndpoint ||
         table.config.containerPath;
 
-      if (!endpoint) {
+      if (!endpointSource) {
         throw new Error(`Table ${table.config.name} is configured for SPARQL access but no endpoint was provided`);
       }
+
+      const endpoint = this.isAbsoluteUrl(endpointSource)
+        ? endpointSource
+        : this.resolveAbsoluteUrl(endpointSource);
 
       return { mode: 'sparql', endpoint };
     }
@@ -384,6 +395,24 @@ export class PodDialect {
   }
 
   private resolveLdpResource(table: PodTable): { containerUrl: string; resourceUrl: string } {
+    const configuredResourcePath =
+      typeof (table as any).getResourcePath === 'function'
+        ? (table as any).getResourcePath()
+        : (table as any).config?.resourcePath;
+
+    if (configuredResourcePath) {
+      const absoluteResource = this.resolveAbsoluteUrl(configuredResourcePath);
+      const normalizedResource = this.normalizeResourceUrl(absoluteResource);
+      const lastSlash = normalizedResource.lastIndexOf('/');
+      const containerUrl =
+        lastSlash >= 0 ? `${normalizedResource.slice(0, lastSlash + 1)}` : `${normalizedResource}/`;
+
+      return {
+        containerUrl,
+        resourceUrl: normalizedResource
+      };
+    }
+
     const configuredPath = table.config.containerPath || '/data/';
     const isAbsolute = configuredPath.startsWith('http://') || configuredPath.startsWith('https://');
     const ensureTrailingSlash = (value: string): string => (value.endsWith('/') ? value : `${value}/`);
@@ -479,10 +508,15 @@ export class PodDialect {
   }
 
   private async resourceExists(resourceUrl: string): Promise<boolean> {
+    const normalizedUrl = this.normalizeResourceUrl(resourceUrl);
+    if (this.preparedResources.has(normalizedUrl)) {
+      return true;
+    }
     try {
-      const response = await this.session.fetch(resourceUrl, { method: 'HEAD' });
+      const response = await this.session.fetch(normalizedUrl, { method: 'HEAD' });
 
       if (response.ok || response.status === 409) {
+        this.markResourcePrepared(normalizedUrl);
         return true;
       }
 
@@ -491,15 +525,20 @@ export class PodDialect {
       }
 
       if (response.status === 405) {
-        const getResponse = await this.session.fetch(resourceUrl, {
+        const getResponse = await this.session.fetch(normalizedUrl, {
           method: 'GET',
           headers: { 'Accept': 'text/turtle' }
         });
-        return getResponse.ok;
+        if (getResponse.ok) {
+          this.markResourcePrepared(normalizedUrl);
+          return true;
+        }
+        return false;
       }
 
       if (response.status === 401 || response.status === 403) {
         // 无法验证是否存在，假定存在以避免破坏流程
+        this.markResourcePrepared(normalizedUrl);
         return true;
       }
 
@@ -507,11 +546,15 @@ export class PodDialect {
     } catch (error) {
       console.warn('[PodDialect] Failed to check resource existence via HEAD, falling back to GET', error);
       try {
-        const getResponse = await this.session.fetch(resourceUrl, {
+        const getResponse = await this.session.fetch(normalizedUrl, {
           method: 'GET',
           headers: { 'Accept': 'text/turtle' }
         });
-        return getResponse.ok;
+        if (getResponse.ok) {
+          this.markResourcePrepared(normalizedUrl);
+          return true;
+        }
+        return false;
       } catch (fallbackError) {
         console.warn('[PodDialect] Resource existence fallback GET failed', fallbackError);
         return false;
@@ -519,23 +562,112 @@ export class PodDialect {
     }
   }
 
+  private normalizeResourceUrl(resourceUrl: string): string {
+    if (!resourceUrl) {
+      return resourceUrl;
+    }
+
+    let normalized = resourceUrl;
+    while (normalized.endsWith('/') && !normalized.endsWith('://')) {
+      normalized = normalized.slice(0, -1);
+    }
+    return normalized;
+  }
+
+  private normalizeContainerKey(containerUrl: string): string {
+    const absoluteContainer = containerUrl.startsWith('http')
+      ? containerUrl
+      : this.resolveAbsoluteUrl(containerUrl);
+    return absoluteContainer.endsWith('/') ? absoluteContainer : `${absoluteContainer}/`;
+  }
+
+  private normalizeResourceKey(resourceUrl: string): string {
+    const absoluteResource = resourceUrl.startsWith('http')
+      ? resourceUrl
+      : this.resolveAbsoluteUrl(resourceUrl);
+    return this.normalizeResourceUrl(absoluteResource);
+  }
+
+  private markContainerPrepared(containerUrl: string): void {
+    this.preparedContainers.add(this.normalizeContainerKey(containerUrl));
+  }
+
+  private markResourcePrepared(resourceUrl: string): void {
+    this.preparedResources.add(this.normalizeResourceKey(resourceUrl));
+  }
+
+  private isAbsoluteUrl(value: string): boolean {
+    return /^https?:\/\//i.test(value);
+  }
+
+  private resolveAbsoluteUrl(path: string): string {
+    if (!path) {
+      return this.podUrl.replace(/\/$/, '');
+    }
+
+    if (this.isAbsoluteUrl(path)) {
+      return path;
+    }
+
+    const sanitizedPath = path.replace(/^(\.\/)+/, '');
+    const base = this.podUrl.endsWith('/') ? this.podUrl : `${this.podUrl}/`;
+    const hasTrailingSlash = sanitizedPath.endsWith('/');
+
+    const rawUserPath = this.extractUserPathFromWebId();
+    const normalizedUser = rawUserPath.replace(/^\/+|\/+$/g, '');
+    const trimmedPath = sanitizedPath.replace(/^\/+/, '');
+
+    let relativePath = trimmedPath;
+    const userPrefixWithSlash = normalizedUser.length > 0 ? `${normalizedUser}/` : '';
+
+    if (normalizedUser.length > 0) {
+      const needsUserPrefix =
+        relativePath.length === 0 ||
+        (relativePath !== normalizedUser && !relativePath.startsWith(userPrefixWithSlash));
+
+      if (needsUserPrefix) {
+        relativePath = relativePath.length > 0
+          ? `${normalizedUser}/${relativePath}`
+          : normalizedUser;
+      }
+    }
+
+    if (hasTrailingSlash && !relativePath.endsWith('/')) {
+      relativePath = `${relativePath}/`;
+    }
+
+    const absolute = new URL(relativePath, base).toString();
+
+    if (!hasTrailingSlash && absolute.endsWith('/')) {
+      return absolute.replace(/\/$/, '');
+    }
+
+    return absolute;
+  }
+
   private async ensureResourceExists(
     resourceUrl: string,
     options: { createIfMissing?: boolean } = {}
   ): Promise<void> {
     const { createIfMissing = true } = options;
+    const normalizedUrl = this.normalizeResourceUrl(resourceUrl);
 
-    const exists = await this.resourceExists(resourceUrl);
+    if (this.preparedResources.has(normalizedUrl)) {
+      return;
+    }
+
+    const exists = await this.resourceExists(normalizedUrl);
     if (exists) {
+      this.markResourcePrepared(normalizedUrl);
       return;
     }
 
     if (!createIfMissing) {
-      throw new Error(`Resource not found: ${resourceUrl}`);
+      throw new Error(`Resource not found: ${normalizedUrl}`);
     }
 
     try {
-      const response = await this.session.fetch(resourceUrl, {
+      const response = await this.session.fetch(normalizedUrl, {
         method: 'PUT',
         headers: {
           'Content-Type': 'text/turtle'
@@ -546,6 +678,8 @@ export class PodDialect {
       if (!response.ok && ![201, 202, 204, 409].includes(response.status)) {
         throw new Error(`Failed to create resource: ${response.status} ${response.statusText}`);
       }
+
+      this.markResourcePrepared(normalizedUrl);
     } catch (error) {
       console.error('[PodDialect] ensureResourceExists failed:', error);
       throw error;
@@ -553,7 +687,8 @@ export class PodDialect {
   }
 
   private async executeOnResource(resourceUrl: string, sparqlQuery: SPARQLQuery): Promise<any[]> {
-    return await this.sparqlExecutor.queryContainer(resourceUrl, sparqlQuery);
+    const normalizedUrl = this.normalizeResourceUrl(resourceUrl);
+    return await this.sparqlExecutor.queryContainer(normalizedUrl, sparqlQuery);
   }
 
   // 核心查询方法 - 通过 Comunica 执行 SPARQL
@@ -563,6 +698,7 @@ export class PodDialect {
     }
 
     const { containerUrl, resourceUrl } = this.resolveTableUrls(operation.table);
+    const normalizedResourceUrl = this.normalizeResourceUrl(resourceUrl);
 
     try {
       let sparqlQuery: SPARQLQuery;
@@ -610,10 +746,14 @@ export class PodDialect {
             throw new Error('INSERT operation requires at least one value');
           }
 
-          await this.ensureContainerExists(containerUrl);
-          await this.ensureResourceExists(resourceUrl, { createIfMissing: true });
+          if (!this.preparedContainers.has(this.normalizeContainerKey(containerUrl))) {
+            await this.ensureContainerExists(containerUrl);
+          }
+          if (!this.preparedResources.has(this.normalizeResourceKey(resourceUrl))) {
+            await this.ensureResourceExists(normalizedResourceUrl, { createIfMissing: true });
+          }
 
-          const canInsert = await this.checkResourceExistence(values, operation.table, resourceUrl);
+          const canInsert = await this.checkResourceExistence(values, operation.table, containerUrl);
           if (!canInsert) {
             throw new Error('Resource already exists, INSERT aborted');
           }
@@ -630,8 +770,22 @@ export class PodDialect {
             throw new Error('UPDATE operation requires where conditions to locate target resources');
           }
 
-          await this.ensureContainerExists(containerUrl);
-          await this.ensureResourceExists(resourceUrl, { createIfMissing: false });
+          if (!this.preparedContainers.has(this.normalizeContainerKey(containerUrl))) {
+            try {
+              await this.ensureContainerExists(containerUrl);
+            } catch (error) {
+              const message = error instanceof Error ? error.message : String(error);
+              if (message.includes('Failed to check container: 401') || message.includes('Failed to check container: 403')) {
+                console.warn(`[UPDATE] Skipping container existence check for ${containerUrl}: ${message}`);
+              } else {
+                throw error;
+              }
+            }
+          }
+
+          if (!this.preparedResources.has(this.normalizeResourceKey(resourceUrl))) {
+            await this.ensureResourceExists(normalizedResourceUrl, { createIfMissing: false });
+          }
 
           if (this.isQueryCondition(operation.where)) {
             return await this.executeComplexUpdate(operation, operation.where as QueryCondition);
@@ -642,14 +796,18 @@ export class PodDialect {
         }
 
         case 'delete': {
-          await this.ensureContainerExists(containerUrl);
+          if (!this.preparedContainers.has(this.normalizeContainerKey(containerUrl))) {
+            await this.ensureContainerExists(containerUrl);
+          }
 
-          const hasResource = await this.resourceExists(resourceUrl);
+          const hasResource = this.preparedResources.has(this.normalizeResourceKey(resourceUrl))
+            ? true
+            : await this.resourceExists(normalizedResourceUrl);
           if (!hasResource) {
             console.log('[DELETE] Target resource does not exist, skipping SPARQL execution');
             return [{
               success: true,
-              source: resourceUrl,
+              source: normalizedResourceUrl,
               status: 404
             }];
           }
@@ -664,7 +822,7 @@ export class PodDialect {
 
       console.log('Generated SPARQL:', sparqlQuery.query);
 
-      const results = await this.executeOnResource(resourceUrl, sparqlQuery);
+      const results = await this.executeOnResource(normalizedResourceUrl, sparqlQuery);
       console.log(`${operation.type.toUpperCase()} operation completed, ${results.length} records affected`);
       return results;
 
@@ -826,8 +984,35 @@ export class PodDialect {
    * 注册表到 TypeIndex
    */
   async registerTable(table: PodTable): Promise<void> {
-    if (!table.config.autoRegister) {
-      console.log(`Table ${table.config.name} has autoRegister disabled, skipping registration`);
+    const tableKey = table.config.name ?? JSON.stringify(table.config);
+    if (this.registeredTables.has(tableKey)) {
+      return;
+    }
+
+    const skipTypeIndex = table.config.autoRegister === false;
+
+    try {
+      const descriptor = this.resolveTableResource(table);
+      if (descriptor.mode === 'ldp') {
+        await this.ensureContainerExists(descriptor.containerUrl);
+
+        try {
+          await this.ensureResourceExists(descriptor.resourceUrl, { createIfMissing: true });
+        } catch (error: unknown) {
+          console.warn(`[registerTable] ensureResourceExists failed for ${descriptor.resourceUrl}:`, error);
+        }
+
+        this.markContainerPrepared(descriptor.containerUrl);
+        this.markResourcePrepared(descriptor.resourceUrl);
+      }
+    } catch (error: unknown) {
+      console.warn(`[registerTable] Resource preparation failed for ${table.config.name}:`, error);
+    }
+
+    this.registeredTables.add(tableKey);
+
+    if (skipTypeIndex) {
+      console.log(`Table ${table.config.name} has autoRegister disabled, skipping TypeIndex registration`);
       return;
     }
 
@@ -839,7 +1024,22 @@ export class PodDialect {
         instanceContainer: `${this.podUrl.replace(/\/$/, '')}${table.config.containerPath}`
       };
 
-      await this.typeIndexManager.registerType(entry);
+      try {
+        await this.typeIndexManager.registerType(entry);
+      } catch (error: unknown) {
+        const message = error instanceof Error ? error.message : String(error);
+        if (message.includes('TypeIndex not found')) {
+          console.warn('[registerTable] TypeIndex missing. Attempting to create.');
+          try {
+            const typeIndexUrl = await this.typeIndexManager.createTypeIndex();
+            await this.typeIndexManager.registerType(entry, typeIndexUrl);
+          } catch (creationError: unknown) {
+            console.warn('[registerTable] Unable to create TypeIndex. Continuing without registration.', creationError);
+          }
+        } else {
+          console.warn('[registerTable] TypeIndex registration failed. Continuing without registration.', error);
+        }
+      }
       console.log(`Table ${table.config.name} registered to TypeIndex`);
     } catch (error) {
       console.error(`Failed to register table ${table.config.name}:`, error);
@@ -936,10 +1136,17 @@ export class PodDialect {
    */
   private async checkResourceExistence(values: any[], table: PodTable, containerUrl: string): Promise<boolean> {
     try {
-      console.log(`🔍 检查资源存在性: ${containerUrl}`);
-      
+      let targetContainer = containerUrl.startsWith('http')
+        ? containerUrl
+        : this.resolveAbsoluteUrl(containerUrl);
+      if (!targetContainer.endsWith('/')) {
+        targetContainer = `${targetContainer}/`;
+      }
+
+      console.log(`🔍 检查资源存在性: ${targetContainer}`);
+
       // 直接读取容器内容，检查是否包含我们要插入的资源
-      const response = await this.session.fetch(containerUrl, {
+      const response = await this.session.fetch(targetContainer, {
         method: 'GET',
         headers: {
           'Accept': 'text/turtle'
@@ -981,15 +1188,25 @@ export class PodDialect {
   // 确保容器存在
   private async ensureContainerExists(containerUrl: string): Promise<void> {
     try {
-      // 检查容器是否存在
-      const checkResponse = await this.session.fetch(containerUrl, {
+      const targetContainer = this.normalizeContainerKey(containerUrl);
+
+      if (this.preparedContainers.has(targetContainer)) {
+        return;
+      }
+
+      const checkResponse = await this.session.fetch(targetContainer, {
         method: 'HEAD'
       });
 
+      if (checkResponse.status === 401 || checkResponse.status === 403) {
+        console.log(`[INSERT] 容器 ${targetContainer} 不允许 HEAD，视为已存在`);
+        this.markContainerPrepared(targetContainer);
+        return;
+      }
+
       if (checkResponse.status === 404) {
-        // 容器不存在，创建它
-        console.log(`[INSERT] 创建容器: ${containerUrl}`);
-        const createResponse = await this.session.fetch(containerUrl, {
+        console.log(`[INSERT] 创建容器: ${targetContainer}`);
+        const createResponse = await this.session.fetch(targetContainer, {
           method: 'PUT',
           headers: {
             'Content-Type': 'text/turtle',
@@ -999,18 +1216,19 @@ export class PodDialect {
 
         if (createResponse.ok) {
           console.log(`[INSERT] 容器创建成功: ${createResponse.status}`);
+          this.markContainerPrepared(targetContainer);
         } else if (createResponse.status === 409) {
-          // 409 Conflict 通常意味着容器已存在，我们继续使用现有容器
-          console.log(`[INSERT] 容器已存在（409冲突）: ${containerUrl}`);
+          console.log(`[INSERT] 容器已存在（409冲突）: ${targetContainer}`);
+          this.markContainerPrepared(targetContainer);
         } else {
           throw new Error(`Failed to create container: ${createResponse.status} ${createResponse.statusText}`);
         }
       } else if (checkResponse.status === 200) {
-        // 容器已存在，这是正常情况
-        console.log(`[INSERT] 容器已存在: ${containerUrl}`);
+        console.log(`[INSERT] 容器已存在: ${targetContainer}`);
+        this.markContainerPrepared(targetContainer);
       } else if (checkResponse.status === 409) {
-        // 409 Conflict 通常意味着容器已存在但内容不同，我们继续使用现有容器
-        console.log(`[INSERT] 容器已存在（409冲突）: ${containerUrl}`);
+        console.log(`[INSERT] 容器已存在（409冲突）: ${targetContainer}`);
+        this.markContainerPrepared(targetContainer);
       } else if (!checkResponse.ok) {
         throw new Error(`Failed to check container: ${checkResponse.status} ${checkResponse.statusText}`);
       }
@@ -1030,8 +1248,8 @@ export class PodDialect {
     const table = operation.table;
     const rdfClass = table.config.rdfClass || 'http://example.org/Entity';
     const namespace = table.config.namespace || '';
-    
-    const selectVars: string[] = [];
+
+    const selectVars: string[] = ['?subject'];
     const wherePatterns: string[] = [`?subject a <${rdfClass}> .`];
     const prefixes = [
       'PREFIX rdf: <http://www.w3.org/1999/02/22-rdf-syntax-ns#>',
@@ -1040,7 +1258,10 @@ export class PodDialect {
       'PREFIX dc: <http://purl.org/dc/terms/>',
       'PREFIX xsd: <http://www.w3.org/2001/XMLSchema#>'
     ];
-    
+
+    const columnPredicates = new Map<string, string>();
+    let filteredByIdentifier = false;
+
     // 为每个列生成变量和模式
     Object.keys(table.columns).forEach(columnName => {
       const column = table.columns[columnName];
@@ -1079,6 +1300,10 @@ export class PodDialect {
       }
 
       if (predicate) {
+        columnPredicates.set(columnName, predicate);
+      }
+
+      if (predicate) {
         const varName = `?${columnName}`;
         selectVars.push(varName);
 
@@ -1091,18 +1316,134 @@ export class PodDialect {
         }
       }
     });
-    
-    // 处理where条件
-    if (operation.where) {
-      // 暂时跳过where条件处理，因为buildWhereClause方法不存在
-      // TODO: 实现buildWhereClause方法或使用其他方式处理where条件
+
+    const isUriString = (value: string): boolean => value.startsWith('http://') || value.startsWith('https://');
+
+    const formatLiteral = (value: unknown): string | null => {
+      if (value === null || value === undefined) {
+        return null;
+      }
+      if (typeof value === 'string') {
+        const escaped = value.replace(/\\/g, '\\\\').replace(/"/g, '\\"');
+        return `"${escaped}"`;
+      }
+      if (typeof value === 'number' && Number.isFinite(value)) {
+        return value.toString();
+      }
+      if (typeof value === 'boolean') {
+        return value ? 'true' : 'false';
+      }
+      if (value instanceof Date) {
+        return `"${value.toISOString()}"^^xsd:dateTime`;
+      }
+      const asString = String(value);
+      const escaped = asString.replace(/\\/g, '\\\\').replace(/"/g, '\\"');
+      return `"${escaped}"`;
+    };
+
+    const escapeForRegex = (value: string): string => value.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+
+    const applyWhereConditions = (conditions: Record<string, unknown>) => {
+      for (const [key, rawValue] of Object.entries(conditions)) {
+        if (rawValue === undefined) {
+          continue;
+        }
+
+        const values = Array.isArray(rawValue) ? rawValue : [rawValue];
+
+        if (key === 'subject' || key === '@id') {
+          filteredByIdentifier = true;
+          const formatted = values
+            .map((value) => {
+              if (typeof value !== 'string') {
+                return null;
+              }
+              const trimmed = value.trim();
+              if (!trimmed) {
+                return null;
+              }
+              return isUriString(trimmed) ? `<${trimmed}>` : formatLiteral(trimmed);
+            })
+            .filter((value): value is string => Boolean(value));
+
+          if (formatted.length === 1) {
+            wherePatterns.push(`FILTER(?subject = ${formatted[0]})`);
+          } else if (formatted.length > 1) {
+            const valuesClause = formatted.join(' ');
+            wherePatterns.push(`VALUES ?subject { ${valuesClause} }`);
+          }
+          continue;
+        }
+
+        if (key === 'id') {
+          filteredByIdentifier = true;
+          const fragments = values
+            .map((value) => {
+              if (typeof value !== 'string') {
+                return null;
+              }
+              const trimmed = value.trim().replace(/^#/, '');
+              return trimmed.length > 0 ? trimmed : null;
+            })
+            .filter((fragment): fragment is string => Boolean(fragment));
+
+          if (fragments.length === 0) {
+            continue;
+          }
+
+          const conditions = fragments.map((fragment) => {
+            const escaped = escapeForRegex(fragment);
+            return `REGEX(STR(?subject), "#${escaped}$")`;
+          });
+
+          const filterClause = conditions.length === 1
+            ? conditions[0]
+            : conditions.map((clause) => `(${clause})`).join(' || ');
+
+          wherePatterns.push(`FILTER(${filterClause})`);
+          continue;
+        }
+
+        const predicate = columnPredicates.get(key);
+        if (!predicate) {
+          continue;
+        }
+
+        const formattedValues = values
+          .map((value) => formatLiteral(value))
+          .filter((value): value is string => Boolean(value));
+
+        if (formattedValues.length === 0) {
+          continue;
+        }
+
+        if (formattedValues.length === 1) {
+          wherePatterns.push(`?subject <${predicate}> ${formattedValues[0]} .`);
+        } else {
+          const tempVar = `?${key}_filter`;
+          wherePatterns.push(`?subject <${predicate}> ${tempVar} .`);
+          const filterValues = formattedValues.join(', ');
+          wherePatterns.push(`FILTER(${tempVar} IN (${filterValues}))`);
+        }
+      }
+    };
+
+    const isPlainObject = (value: unknown): value is Record<string, unknown> => {
+      return Boolean(value) && Object.getPrototypeOf(value) === Object.prototype;
+    };
+
+    if (operation.where && isPlainObject(operation.where)) {
+      applyWhereConditions(operation.where);
     }
-    
+
     let query = `${prefixes.join('\n')}\nSELECT ${selectVars.join(' ')} WHERE {\n  ${wherePatterns.join('\n  ')}\n}`;
-    
+
     // 添加LIMIT/OFFSET
     if (operation.limit) {
       query += `\nLIMIT ${operation.limit}`;
+    }
+    else if (filteredByIdentifier) {
+      query += '\nLIMIT 1';
     }
     if (operation.offset) {
       query += `\nOFFSET ${operation.offset}`;

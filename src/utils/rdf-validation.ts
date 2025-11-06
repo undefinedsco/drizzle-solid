@@ -1,4 +1,4 @@
-import { RDF_PREDICATES, RDF_CLASSES, RDF_NAMESPACES } from '../core/rdf-constants';
+import { RDF_PREDICATES, RDF_NAMESPACES } from '../core/rdf-constants';
 
 export interface ValidationResult {
   isValid: boolean;
@@ -144,7 +144,6 @@ function parseTurtle(turtle: string): ParsedRDFData {
 
   // 简化的 Turtle 解析器
   const lines = turtle.split('\n');
-  let currentSubject = '';
 
   for (const line of lines) {
     const trimmed = line.trim();

@@ -25,10 +25,6 @@ const LDP = {
   contains: 'http://www.w3.org/ns/ldp#contains'
 };
 
-const SOLID = {
-  oidcIssuer: 'http://www.w3.org/ns/solid/terms#oidcIssuer'
-};
-
 export interface PodContainer {
   url: string;
   name?: string;

@@ -413,8 +413,13 @@ export class TypeIndexManager {
    * 自动发现和注册类型（用于数据消费方）
    */
   async autoDiscoverAndRegister(webId?: string): Promise<TypeIndexEntry[]> {
-    const targetWebId = webId || this.webId;
-    
+    const previousWebId = this.webId;
+    const targetWebId = webId ?? this.webId;
+
+    if (webId && webId !== this.webId) {
+      this.webId = webId;
+    }
+
     try {
       // 1. 查找 TypeIndex
       const typeIndexUrl = await this.findTypeIndex();
@@ -427,11 +432,15 @@ export class TypeIndexManager {
       // 2. 发现已注册的类型
       const entries = await this.discoverTypes(typeIndexUrl);
       
-      console.log(`Discovered ${entries.length} types from TypeIndex`);
+      console.log(`Discovered ${entries.length} types from TypeIndex for ${targetWebId}`);
       return entries;
     } catch (error) {
       console.error('Error in auto discovery:', error);
       return [];
+    } finally {
+      if (webId && webId !== previousWebId) {
+        this.webId = previousWebId;
+      }
     }
   }
 

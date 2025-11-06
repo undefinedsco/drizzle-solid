@@ -1,4 +1,4 @@
-import { describe, it, expect, jest } from '@jest/globals';
+import { describe, it, expect, vi } from 'vitest';
 import { PodDialect } from '@src/core/pod-dialect';
 import { podTable, string } from '@src/index';
 import type { SelectQueryPlan } from '@src/core/select-plan';
@@ -8,9 +8,9 @@ const createSession = () => ({
     isLoggedIn: true,
     webId: 'https://example.com/profile/card#me'
   },
-  fetch: jest.fn(),
-  login: jest.fn(),
-  logout: jest.fn()
+  fetch: vi.fn(),
+  login: vi.fn(),
+  logout: vi.fn()
 });
 
 describe('PodDialect resolveTableUrls source selection', () => {
@@ -18,10 +18,11 @@ describe('PodDialect resolveTableUrls source selection', () => {
     const dialect = new PodDialect({ session: createSession() });
 
     const usersTable = podTable('users', {
-      id: string('id').primaryKey()
+      id: string('id').primaryKey().predicate('https://schema.org/identifier')
     }, {
-      containerPath: 'https://pod.example.com/data/users.ttl',
+      resourcePath: 'https://pod.example.com/data/users.ttl',
       rdfClass: 'https://schema.org/Person',
+      namespace: { prefix: 'schema', uri: 'https://schema.org/' },
       autoRegister: false
     });
 
@@ -47,10 +48,11 @@ describe('PodDialect resolveTableUrls source selection', () => {
     const dialect = new PodDialect({ session: createSession() });
 
     const postsTable = podTable('posts', {
-      id: string('id').primaryKey()
+      id: string('id').primaryKey().predicate('https://schema.org/identifier')
     }, {
-      containerPath: 'shared/posts.ttl',
+      resourcePath: 'shared/posts.ttl',
       rdfClass: 'https://schema.org/CreativeWork',
+      namespace: { prefix: 'schema', uri: 'https://schema.org/' },
       autoRegister: false
     });
 
@@ -76,10 +78,11 @@ describe('PodDialect resolveTableUrls source selection', () => {
     const dialect = new PodDialect({ session: createSession() });
 
     const logTable = podTable('logs', {
-      id: string('id').primaryKey()
+      id: string('id').primaryKey().predicate('https://schema.org/identifier')
     }, {
-      containerPath: 'https://pod.example.com/sparql',
+      resourcePath: 'https://pod.example.com/sparql',
       rdfClass: 'https://schema.org/Message',
+      namespace: { prefix: 'schema', uri: 'https://schema.org/' },
       autoRegister: false,
       resourceMode: 'sparql'
     });

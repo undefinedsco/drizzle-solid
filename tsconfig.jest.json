@@ -3,12 +3,15 @@
   "compilerOptions": {
     "rootDir": ".",
     "baseUrl": ".",
+    "types": ["vitest/globals"],
     "paths": {
       "@src/*": ["src/*"]
     }
   },
   "include": [
     "src/**/*",
-    "tests/**/*"
+    "tests/**/*",
+    "vitest.config.ts",
+    "vitest.setup.ts"
   ]
 }

@@ -1,0 +1,38 @@
+name: Test Examples
+
+on:
+  push:
+    paths:
+      - 'examples/**'
+      - 'tests/examples/**'
+  pull_request:
+    paths:
+      - 'examples/**'
+      - 'tests/examples/**'
+
+jobs:
+  test-examples:
+    runs-on: ubuntu-latest
+    
+    steps:
+    - uses: actions/checkout@v3
+    
+    - name: Setup Node.js
+      uses: actions/setup-node@v3
+      with:
+        node-version: 20
+    
+    - name: Install dependencies
+      run: npm install
+      
+    - name: Run example tests
+      run: |
+        npm run build
+        npm test tests/examples/
+      env:
+        SOLID_POD_URL: ${{ secrets.SOLID_POD_URL }}
+        SOLID_WEB_ID: ${{ secrets.SOLID_WEB_ID }}
+        
+    - name: Upload coverage
+      uses: codecov/codecov-action@v3
+      if: always()

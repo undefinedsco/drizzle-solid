@@ -1,4 +1,4 @@
-import { describe, it, expect, beforeEach } from '@jest/globals';
+import { describe, it, expect, beforeEach } from 'vitest';
 import { ASTToSPARQLConverter } from '@src/core/ast-to-sparql';
 import { eq, and, inArray, isNull } from '@src/core/query-conditions';
 
@@ -38,7 +38,7 @@ const mockTable = {
   },
   config: {
     name: 'users',
-    containerPath: '/users/',
+    resourcePath: '/users/index.ttl',
     rdfClass: 'https://schema.org/Person',
     namespace: { prefix: 'schema', uri: 'https://schema.org/' },
     autoRegister: true
@@ -210,12 +210,10 @@ describe('ASTToSPARQLConverter', () => {
 
   describe('generateSubjectUri', () => {
     it('应该生成正确的主体 URI', () => {
-      const record = { id: 123 };
+      const record = { id: '123' };
       const uri = converter['generateSubjectUri'](record, mockTable);
-      
-      expect(uri).toContain('https://example.com/pod');
-      expect(uri).toContain('/users');
-      expect(uri).toContain('123');
+
+      expect(uri).toBe('https://example.com/users/index.ttl#123');
     });
   });
 
@@ -317,12 +315,9 @@ describe('ASTToSPARQLConverter', () => {
   });
 
   describe('formatValue 方法测试', () => {
-    it('应该处理 null 和 undefined 值', () => {
-      const result1 = converter['formatValue'](null);
-      const result2 = converter['formatValue'](undefined);
-
-      expect(result1).toBe('NULL');
-      expect(result2).toBe('NULL');
+    it('应该在遇到 null 或 undefined 时抛错', () => {
+      expect(() => converter['formatValue'](null)).toThrow('Cannot format null or undefined value');
+      expect(() => converter['formatValue'](undefined)).toThrow('Cannot format null or undefined value');
     });
 
     it('应该处理引用类型的字符串值', () => {

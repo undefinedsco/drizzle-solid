@@ -1,0 +1,24 @@
+{
+  "records": [
+    {
+      "subject": "https://example.org/alice/profile/card#me",
+      "name": "Alice",
+      "fullName": "Alice Wonderland",
+      "nick": "ally",
+      "avatar": "https://example.org/ally.png",
+      "photo": "https://example.org/avatar.png",
+      "depiction": null,
+      "inbox": "mailto:alice@example.org"
+    },
+    {
+      "subject": "https://example.org/bob/profile/card#me",
+      "name": "Bob",
+      "fullName": "Bob Builder",
+      "nick": "builder",
+      "avatar": "https://example.org/bob.png",
+      "photo": "https://example.org/bob-photo.png",
+      "depiction": null,
+      "inbox": "mailto:bob@example.org"
+    }
+  ]
+}

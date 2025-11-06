@@ -1,4 +1,4 @@
-import { describe, it, expect } from '@jest/globals';
+import { describe, it, expect } from 'vitest';
 import { 
   createTypedTable, 
   field, 
@@ -15,8 +15,9 @@ describe('Compile-time Types', () => {
         email: field('email', 'https://schema.org/email', 'string'),
         isActive: field('isActive', 'https://schema.org/isActive', 'boolean')
       }, {
-        containerPath: '/users/',
-        rdfClass: 'https://schema.org/Person'
+        resourcePath: 'idp:///users/index.ttl',
+        rdfClass: 'https://schema.org/Person',
+        namespace: { prefix: 'schema', uri: 'https://schema.org/' }
       });
 
       expect(usersTable.config.name).toBe('users');
@@ -49,8 +50,9 @@ describe('Compile-time Types', () => {
   describe('typedTable builder', () => {
     it('应该支持链式调用构建表', () => {
       const usersTable = typedTable('users', {
-        containerPath: '/users/',
-        rdfClass: 'https://schema.org/Person'
+        resourcePath: 'idp:///users/index.ttl',
+        rdfClass: 'https://schema.org/Person',
+        namespace: { prefix: 'schema', uri: 'https://schema.org/' }
       })
         .addField(CommonFields.name())
         .addField(CommonFields.age())
@@ -75,8 +77,9 @@ describe('Compile-time Types', () => {
         email: field('email', 'https://schema.org/email', 'string'),
         isActive: field('isActive', 'https://schema.org/isActive', 'boolean')
       }, {
-        containerPath: '/users/',
-        rdfClass: 'https://schema.org/Person'
+        resourcePath: 'idp:///users/index.ttl',
+        rdfClass: 'https://schema.org/Person',
+        namespace: { prefix: 'schema', uri: 'https://schema.org/' }
       });
 
       // 验证列的类型
@@ -90,8 +93,9 @@ describe('Compile-time Types', () => {
   describe('复杂场景', () => {
     it('应该支持复杂的表定义', () => {
       const postsTable = typedTable('posts', {
-        containerPath: '/posts/',
-        rdfClass: 'https://schema.org/BlogPosting'
+        resourcePath: 'idp:///posts/index.ttl',
+        rdfClass: 'https://schema.org/BlogPosting',
+        namespace: { prefix: 'schema', uri: 'https://schema.org/' }
       })
         .addField(CommonFields.name('https://schema.org/headline'))
         .addField(field('content', 'https://schema.org/text', 'string'))

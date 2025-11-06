@@ -55,21 +55,21 @@ export function field<T extends string>(
 
 // 预定义的常用字段
 export const CommonFields = {
-  name: (predicate: string = 'https://schema.org/name') => 
+  name: (predicate = 'https://schema.org/name') => 
     field('name', predicate, 'string'),
-  email: (predicate: string = 'https://schema.org/email') => 
+  email: (predicate = 'https://schema.org/email') => 
     field('email', predicate, 'string'),
-  age: (predicate: string = 'https://schema.org/age') => 
+  age: (predicate = 'https://schema.org/age') => 
     field('age', predicate, 'number'),
-  dateCreated: (predicate: string = 'https://schema.org/dateCreated') => 
+  dateCreated: (predicate = 'https://schema.org/dateCreated') => 
     field('dateCreated', predicate, 'Date'),
-  isActive: (predicate: string = 'https://schema.org/isActive') => 
+  isActive: (predicate = 'https://schema.org/isActive') => 
     field('isActive', predicate, 'boolean'),
-  url: (predicate: string = 'https://schema.org/url') => 
+  url: (predicate = 'https://schema.org/url') => 
     field('url', predicate, 'string'),
-  description: (predicate: string = 'https://schema.org/description') => 
+  description: (predicate = 'https://schema.org/description') => 
     field('description', predicate, 'string'),
-  identifier: (predicate: string = 'https://schema.org/identifier') => 
+  identifier: (predicate = 'https://schema.org/identifier') => 
     field('identifier', predicate, 'string')
 } as const;
 
@@ -100,7 +100,7 @@ export function typedTable(name: string, options: PodTableOptions) {
 
 // 类型安全的查询结果类型
 export type TypedTableResult<T extends Record<string, TypedField<any>>> = {
-  [K in keyof T]: T[K] extends TypedField<infer U> 
+  [K in keyof T]: T[K] extends TypedField<any> 
     ? T[K]['type'] extends 'string' ? string
     : T[K]['type'] extends 'number' ? number
     : T[K]['type'] extends 'boolean' ? boolean

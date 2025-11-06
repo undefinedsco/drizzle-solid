@@ -1,0 +1,11 @@
+{
+  "name": "css-runtime",
+  "private": true,
+  "version": "1.0.0",
+  "dependencies": {
+    "@solid/community-server": "^7.1.7"
+  },
+  "overrides": {
+    "@comunica/*": "$@comunica/*"
+  }
+}

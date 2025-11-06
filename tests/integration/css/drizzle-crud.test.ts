@@ -1,4 +1,4 @@
-import { afterAll, beforeAll, describe, expect, test, jest } from '@jest/globals';
+import { afterAll, beforeAll, describe, expect, test, vi } from 'vitest';
 import { drizzle } from '../../../src/driver';
 import {
   podTable,
@@ -25,17 +25,19 @@ import type { Session } from '@inrupt/solid-client-authn-node';
 import { createTestSession, ensureContainer } from './helpers';
 
 const containerPath = `/drizzle-tests/${Date.now()}/`;
+const schemaNamespace = { prefix: 'schema', uri: 'https://schema.org/' } as const;
 
-jest.setTimeout(60_000);
+vi.setConfig({ testTimeout: 60_000 });
 
 const profileTable = podTable('profiles', {
-  id: string('id').primaryKey(),
-  name: string('name').notNull(),
-  age: int('age'),
-  createdAt: date('createdAt').notNull()
+  id: string('id').primaryKey().predicate('https://schema.org/identifier'),
+  name: string('name').notNull().predicate('https://schema.org/name'),
+  age: int('age').predicate('https://schema.org/age'),
+  createdAt: date('createdAt').notNull().predicate('https://schema.org/dateCreated')
 }, {
-  containerPath,
+  resourcePath: `${containerPath}profiles.ttl`,
   rdfClass: 'https://schema.org/Person',
+  namespace: schemaNamespace,
   autoRegister: false
 });
 
@@ -49,7 +51,7 @@ describe('CSS integration: drizzle CRUD', () => {
     session = await createTestSession();
     db = drizzle(session);
     containerUrl = await ensureContainer(session, containerPath);
-    resourceUrl = `${containerUrl}${profileTable.config.name}.ttl`;
+    resourceUrl = `${containerUrl}profiles.ttl`;
   }, 120_000);
 
   afterAll(async () => {
@@ -320,28 +322,30 @@ describe('CSS integration: drizzle CRUD', () => {
     const postsPath = `/drizzle-tests/posts-${timestamp}/`;
 
     const usersTable = podTable('users', {
-      id: string('id').primaryKey(),
-      name: string('name').notNull()
+      id: string('id').primaryKey().predicate('https://schema.org/identifier'),
+      name: string('name').notNull().predicate('https://schema.org/name')
     }, {
-      containerPath: usersPath,
+      resourcePath: `${usersPath}users.ttl`,
       rdfClass: 'https://schema.org/Person',
+      namespace: schemaNamespace,
       autoRegister: false
     });
 
     const postsTable = podTable('posts', {
-      id: string('id').primaryKey(),
-      title: string('title').notNull(),
-      authorId: string('authorId').notNull()
+      id: string('id').primaryKey().predicate('https://schema.org/identifier'),
+      title: string('title').notNull().predicate('https://schema.org/headline'),
+      authorId: string('authorId').notNull().predicate('https://schema.org/author')
     }, {
-      containerPath: postsPath,
+      resourcePath: `${postsPath}posts.ttl`,
       rdfClass: 'https://schema.org/CreativeWork',
+      namespace: schemaNamespace,
       autoRegister: false
     });
 
     const usersContainer = await ensureContainer(session, usersPath);
     const postsContainer = await ensureContainer(session, postsPath);
-    const usersResource = `${usersContainer}${usersTable.config.name}.ttl`;
-    const postsResource = `${postsContainer}${postsTable.config.name}.ttl`;
+    const usersResource = `${usersContainer}users.ttl`;
+    const postsResource = `${postsContainer}posts.ttl`;
 
     try {
       await db.insert(usersTable).values([

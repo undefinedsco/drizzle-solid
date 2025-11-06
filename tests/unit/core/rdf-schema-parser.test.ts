@@ -1,4 +1,4 @@
-import { describe, it, expect } from '@jest/globals';
+import { describe, it, expect, vi } from 'vitest';
 import {
   parseRDFSchema,
   getPredicateTypeScriptType,
@@ -25,7 +25,7 @@ schema:url rdfs:range xsd:anyURI .
   describe('parseRDFSchema', () => {
     it('应该解析 Turtle 格式的 RDF Schema', async () => {
       // Mock fetch 函数
-      const mockFetch = jest.fn().mockResolvedValue({
+      const mockFetch = vi.fn().mockResolvedValue({
         ok: true,
         text: () => Promise.resolve(mockTurtleSchema)
       });
@@ -44,7 +44,7 @@ schema:url rdfs:range xsd:anyURI .
     });
 
     it('应该处理网络错误', async () => {
-      const mockFetch = jest.fn().mockResolvedValue({
+      const mockFetch = vi.fn().mockResolvedValue({
         ok: false,
         status: 404,
         statusText: 'Not Found'
@@ -152,7 +152,7 @@ schema:isActive rdfs:range xsd:boolean .
 
       // 这里需要测试 parseTurtleSchema 函数，但它是私有的
       // 我们可以通过 parseRDFSchema 来间接测试
-      const mockFetch = jest.fn().mockResolvedValue({
+      const mockFetch = vi.fn().mockResolvedValue({
         ok: true,
         text: () => Promise.resolve(complexTurtle)
       });

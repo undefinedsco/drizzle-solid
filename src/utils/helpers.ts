@@ -48,13 +48,14 @@ export function deepClone<T>(obj: T): T {
   }
 
   if (typeof obj === 'object') {
-    const clonedObj = {} as T;
-    for (const key in obj) {
-      if (obj.hasOwnProperty(key)) {
-        clonedObj[key] = deepClone(obj[key]);
+    const clonedObj: Record<string, unknown> = {};
+    const source = obj as Record<string, unknown>;
+    for (const key in source) {
+      if (Object.prototype.hasOwnProperty.call(source, key)) {
+        clonedObj[key] = deepClone(source[key]);
       }
     }
-    return clonedObj;
+    return clonedObj as T;
   }
 
   return obj;

@@ -20,10 +20,10 @@ export async function createTestSession(): Promise<Session> {
   
   const clientId = process.env.SOLID_CLIENT_ID;
   const clientSecret = process.env.SOLID_CLIENT_SECRET;
-  const oidcIssuer = process.env.SOLID_OIDC_ISSUER || 'http://localhost:3000';
+  const oidcIssuer = process.env.SOLID_OIDC_ISSUER;
   
-  if (!clientId || !clientSecret) {
-    throw new Error('Missing SOLID_CLIENT_ID or SOLID_CLIENT_SECRET in .env');
+  if (!clientId || !clientSecret || !oidcIssuer) {
+    throw new Error('Missing SOLID_CLIENT_ID, SOLID_CLIENT_SECRET, or SOLID_OIDC_ISSUER in environment');
   }
 
   try {

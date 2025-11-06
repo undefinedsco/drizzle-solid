@@ -1,4 +1,4 @@
-import { describe, it, expect, beforeEach, jest } from '@jest/globals';
+import { describe, it, expect, beforeEach, vi } from 'vitest';
 import {
   PodDiscovery,
   discoverPodContainers,
@@ -12,12 +12,12 @@ const createMockResponse = (data: any, options: { ok?: boolean; status?: number;
     status: options.status ?? 200,
     statusText: options.statusText ?? 'OK',
     headers: new Headers({ 'content-type': 'text/turtle' }),
-    clone: jest.fn().mockReturnThis(),
-    text: jest.fn().mockResolvedValue(typeof data === 'string' ? data : ''),
-    json: jest.fn().mockResolvedValue(typeof data === 'object' ? data : {}),
-    arrayBuffer: jest.fn().mockResolvedValue(new ArrayBuffer(0)),
-    blob: jest.fn().mockResolvedValue(new Blob()),
-    formData: jest.fn().mockResolvedValue(new FormData()),
+    clone: vi.fn().mockReturnThis(),
+    text: vi.fn().mockResolvedValue(typeof data === 'string' ? data : ''),
+    json: vi.fn().mockResolvedValue(typeof data === 'object' ? data : {}),
+    arrayBuffer: vi.fn().mockResolvedValue(new ArrayBuffer(0)),
+    blob: vi.fn().mockResolvedValue(new Blob()),
+    formData: vi.fn().mockResolvedValue(new FormData()),
     body: null,
     bodyUsed: false,
     redirected: false,
@@ -32,7 +32,7 @@ const createMockResponse = (data: any, options: { ok?: boolean; status?: number;
 };
 
 // Mock fetch
-const mockFetch = jest.fn() as jest.MockedFunction<typeof fetch>;
+const mockFetch = vi.fn() as vi.MockedFunction<typeof fetch>;
 global.fetch = mockFetch;
 
 describe('Pod Discovery', () => {
@@ -50,7 +50,7 @@ describe('Pod Discovery', () => {
     });
 
     it('应该使用自定义 fetch 函数', () => {
-      const customFetch = jest.fn() as jest.MockedFunction<typeof fetch>;
+      const customFetch = vi.fn() as vi.MockedFunction<typeof fetch>;
       const discovery = new PodDiscovery(customFetch);
       expect(discovery).toBeInstanceOf(PodDiscovery);
     });
@@ -98,11 +98,11 @@ describe('Pod Discovery', () => {
 
       // 模拟认证过程中的错误
       const originalConsoleError = console.error;
-      console.error = jest.fn();
+      console.error = vi.fn();
 
       // 创建一个会抛出错误的认证过程
       const discovery = new PodDiscovery();
-      const mockMethod = jest.fn().mockRejectedValue(new Error('Authentication failed') as never);
+      const mockMethod = vi.fn().mockRejectedValue(new Error('Authentication failed') as never);
       discovery['authenticateWithProvider'] = mockMethod as any;
 
       await expect(discovery.authenticateWithProvider(oidcIssuer)).rejects.toThrow('Authentication failed');
@@ -139,10 +139,10 @@ describe('Pod Discovery', () => {
 
       it('应该使用自定义 fetch 函数', async () => {
         const webId = 'https://example.com/profile/card#me';
-        const customFetch = jest.fn().mockResolvedValue({
+        const customFetch = vi.fn().mockResolvedValue({
           ok: false,
           status: 404
-        } as never) as jest.MockedFunction<typeof fetch>;
+        } as never) as vi.MockedFunction<typeof fetch>;
 
         const result = await discoverPodContainers(webId, customFetch);
 

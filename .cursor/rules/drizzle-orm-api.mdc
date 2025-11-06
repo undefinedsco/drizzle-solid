@@ -1,0 +1,5 @@
+---
+alwaysApply: true
+---
+
+兼容drizzle-orm的api，减少从drizzle-orm迁移的成本

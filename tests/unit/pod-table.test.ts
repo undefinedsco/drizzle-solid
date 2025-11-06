@@ -12,7 +12,7 @@ describe('PodTable Tests', () => {
       age: int('age'),
       createdAt: date('createdAt')
     }, {
-      containerPath: '/users/',
+      resourcePath: 'idp:///users/index.ttl',
       rdfClass: 'https://schema.org/Person'
     });
 
@@ -31,7 +31,7 @@ describe('PodTable Tests', () => {
       title: string('title').notNull(),
       priority: int('priority')
     }, {
-      containerPath: '/tasks/',
+      resourcePath: 'idp:///tasks/index.ttl',
       rdfClass: 'https://schema.org/Task'
     });
 

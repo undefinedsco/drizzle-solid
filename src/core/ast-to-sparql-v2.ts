@@ -1,4 +1,5 @@
 import * as sparqljs from 'sparqljs';
+import { DataFactory } from 'n3';
 import { PodTable } from './pod-table';
 
 // SPARQL 查询类型
@@ -13,7 +14,7 @@ export interface SPARQLQuery {
  * 相比手动拼接字符串，这种方式更安全、更可维护
  */
 export class SparqlJSConverter {
-  private generator: sparqljs.Generator;
+  private generator: sparqljs.SparqlGenerator;
   private podUrl: string;
   private webId: string;
   private prefixes: Record<string, string> = {
@@ -30,6 +31,21 @@ export class SparqlJSConverter {
     this.podUrl = podUrl;
     this.webId = webId || '';
     this.generator = new sparqljs.Generator();
+  }
+
+  private createVariable(name: string): sparqljs.VariableTerm {
+    return DataFactory.variable(name) as sparqljs.VariableTerm;
+  }
+
+  private createNamedNode(value: string): sparqljs.IriTerm {
+    return DataFactory.namedNode(value) as sparqljs.IriTerm;
+  }
+
+  private createLiteral(value: string, datatype?: string): sparqljs.LiteralTerm {
+    if (datatype) {
+      return DataFactory.literal(value, DataFactory.namedNode(datatype)) as sparqljs.LiteralTerm;
+    }
+    return DataFactory.literal(value) as sparqljs.LiteralTerm;
   }
 
   /**
@@ -55,7 +71,7 @@ export class SparqlJSConverter {
    * 转换 INSERT 查询
    */
   convertInsert(values: any[], table: PodTable): SPARQLQuery {
-    const insertQuery: sparqljs.UpdateQuery = {
+    const insertQuery: sparqljs.Update = {
       type: 'update',
       prefixes: this.prefixes,
       updates: [{
@@ -78,18 +94,18 @@ export class SparqlJSConverter {
    * 转换 UPDATE 查询
    */
   convertUpdate(setData: any, whereConditions: any, table: PodTable): SPARQLQuery {
-    const updateQuery: sparqljs.UpdateQuery = {
+    const updateQuery: sparqljs.Update = {
       type: 'update',
       prefixes: this.prefixes,
       updates: [{
-        updateType: 'deletewhere', // 使用 DELETE/INSERT WHERE 模式
-        delete: [{
-          type: 'bgp',
-          triples: this.buildDeleteTriples(setData, table)
-        }],
+        updateType: 'insertdelete',
         insert: [{
           type: 'bgp',
           triples: this.buildUpdateTriples(setData, table)
+        }],
+        delete: [{
+          type: 'bgp',
+          triples: this.buildDeleteTriples(setData, table)
         }],
         where: this.buildWherePatterns({ where: whereConditions }, table)
       }]
@@ -106,11 +122,12 @@ export class SparqlJSConverter {
    * 转换 DELETE 查询
    */
   convertDelete(whereConditions: any, table: PodTable): SPARQLQuery {
-    const deleteQuery: sparqljs.UpdateQuery = {
+    const deleteQuery: sparqljs.Update = {
       type: 'update',
       prefixes: this.prefixes,
       updates: [{
-        updateType: 'delete',
+        updateType: 'insertdelete',
+        insert: [],
         delete: [{
           type: 'bgp',
           triples: this.buildAllTriples(table)
@@ -131,16 +148,14 @@ export class SparqlJSConverter {
    */
   private buildSelectVariables(ast: any, table: PodTable): sparqljs.Variable[] {
     if (ast.columns === '*' || !ast.columns) {
-      // SELECT * - 返回所有列变量（除了id）
       return Object.keys(table.columns)
         .filter(col => col !== 'id')
-        .map(col => ({ termType: 'Variable', value: col }));
+        .map(col => this.createVariable(col));
     }
-    
-    // 指定列
-    return ast.columns
+
+    return (ast.columns as string[])
       .filter((col: string) => col !== 'id')
-      .map((col: string) => ({ termType: 'Variable', value: col }));
+      .map((col: string) => this.createVariable(col));
   }
 
   /**
@@ -153,9 +168,9 @@ export class SparqlJSConverter {
     patterns.push({
       type: 'bgp',
       triples: [{
-        subject: { termType: 'Variable', value: 'subject' },
-        predicate: { termType: 'NamedNode', value: 'http://www.w3.org/1999/02/22-rdf-syntax-ns#type' },
-        object: { termType: 'NamedNode', value: table.config.rdfClass }
+        subject: this.createVariable('subject'),
+        predicate: this.createNamedNode('http://www.w3.org/1999/02/22-rdf-syntax-ns#type'),
+        object: this.createNamedNode(table.config.rdfClass)
       }]
     });
 
@@ -165,9 +180,9 @@ export class SparqlJSConverter {
 
       const predicate = this.getPredicateForColumn(column, table);
       const triple: sparqljs.Triple = {
-        subject: { termType: 'Variable', value: 'subject' },
-        predicate: { termType: 'NamedNode', value: predicate },
-        object: { termType: 'Variable', value: columnName }
+        subject: this.createVariable('subject'),
+        predicate: this.createNamedNode(predicate),
+        object: this.createVariable(columnName)
       };
 
       if (column.options.required) {
@@ -240,51 +255,41 @@ export class SparqlJSConverter {
           type: 'operation',
           operator: '=',
           args: [
-            { termType: 'Variable', value: 'subject' },
-            { termType: 'NamedNode', value: resourceUri }
+            this.createVariable('subject'),
+            this.createNamedNode(resourceUri)
           ]
         }
       };
     }
 
-    // 构建操作符表达式
+    const columnVar = this.createVariable(columnName);
+
     let sparqlOperator: string;
     let args: sparqljs.Expression[];
 
     switch (operator) {
       case '=':
         sparqlOperator = '=';
-        args = [
-          { termType: 'Variable', value: columnName },
-          this.buildLiteralTerm(value)
-        ];
+        args = [columnVar, this.buildLiteralTerm(value) as sparqljs.Expression];
         break;
       case '!=':
         sparqlOperator = '!=';
-        args = [
-          { termType: 'Variable', value: columnName },
-          this.buildLiteralTerm(value)
-        ];
+        args = [columnVar, this.buildLiteralTerm(value) as sparqljs.Expression];
         break;
       case '>':
         sparqlOperator = '>';
-        args = [
-          { termType: 'Variable', value: columnName },
-          this.buildLiteralTerm(value)
-        ];
+        args = [columnVar, this.buildLiteralTerm(value) as sparqljs.Expression];
         break;
       case '<':
         sparqlOperator = '<';
-        args = [
-          { termType: 'Variable', value: columnName },
-          this.buildLiteralTerm(value)
-        ];
+        args = [columnVar, this.buildLiteralTerm(value) as sparqljs.Expression];
         break;
       case 'LIKE':
         sparqlOperator = 'regex';
         args = [
-          { termType: 'Variable', value: columnName },
-          { termType: 'Literal', value: value.toString().replace(/%/g, '.*') }
+          columnVar,
+          this.createLiteral(value.toString().replace(/%/g, '.*')),
+          this.createLiteral('i')
         ];
         break;
       default:
@@ -306,38 +311,25 @@ export class SparqlJSConverter {
    */
   private buildLiteralTerm(value: any): sparqljs.Term {
     if (typeof value === 'string') {
-      return {
-        termType: 'Literal',
-        value,
-        datatype: { termType: 'NamedNode', value: 'http://www.w3.org/2001/XMLSchema#string' }
-      };
-    } else if (typeof value === 'number') {
-      const datatype = Number.isInteger(value) 
+      return this.createLiteral(value);
+    }
+
+    if (typeof value === 'number') {
+      const datatype = Number.isInteger(value)
         ? 'http://www.w3.org/2001/XMLSchema#integer'
         : 'http://www.w3.org/2001/XMLSchema#decimal';
-      return {
-        termType: 'Literal',
-        value: value.toString(),
-        datatype: { termType: 'NamedNode', value: datatype }
-      };
-    } else if (typeof value === 'boolean') {
-      return {
-        termType: 'Literal',
-        value: value.toString(),
-        datatype: { termType: 'NamedNode', value: 'http://www.w3.org/2001/XMLSchema#boolean' }
-      };
-    } else if (value instanceof Date) {
-      return {
-        termType: 'Literal',
-        value: value.toISOString(),
-        datatype: { termType: 'NamedNode', value: 'http://www.w3.org/2001/XMLSchema#dateTime' }
-      };
-    } else {
-      return {
-        termType: 'Literal',
-        value: String(value)
-      };
+      return this.createLiteral(value.toString(), datatype);
     }
+
+    if (typeof value === 'boolean') {
+      return this.createLiteral(value.toString(), 'http://www.w3.org/2001/XMLSchema#boolean');
+    }
+
+    if (value instanceof Date) {
+      return this.createLiteral(value.toISOString(), 'http://www.w3.org/2001/XMLSchema#dateTime');
+    }
+
+    return this.createLiteral(String(value));
   }
 
   /**
@@ -348,13 +340,13 @@ export class SparqlJSConverter {
 
     for (const record of values) {
       const subjectUri = this.generateSubjectUri(record, table);
-      const subject: sparqljs.Term = { termType: 'NamedNode', value: subjectUri };
+      const subject = this.createNamedNode(subjectUri);
 
       // 添加类型三元组
       triples.push({
         subject,
-        predicate: { termType: 'NamedNode', value: 'http://www.w3.org/1999/02/22-rdf-syntax-ns#type' },
-        object: { termType: 'NamedNode', value: table.config.rdfClass }
+        predicate: this.createNamedNode('http://www.w3.org/1999/02/22-rdf-syntax-ns#type'),
+        object: this.createNamedNode(table.config.rdfClass)
       });
 
       // 添加属性三元组
@@ -367,7 +359,7 @@ export class SparqlJSConverter {
         const predicate = this.getPredicateForColumn(column, table);
         triples.push({
           subject,
-          predicate: { termType: 'NamedNode', value: predicate },
+          predicate: this.createNamedNode(predicate),
           object: this.buildLiteralTerm(value)
         });
       });
@@ -381,7 +373,7 @@ export class SparqlJSConverter {
    */
   private buildDeleteTriples(setData: any, table: PodTable): sparqljs.Triple[] {
     const triples: sparqljs.Triple[] = [];
-    const subject: sparqljs.Term = { termType: 'Variable', value: 'subject' };
+    const subject = this.createVariable('subject');
 
     Object.keys(setData).forEach(columnName => {
       const column = table.columns[columnName];
@@ -390,8 +382,8 @@ export class SparqlJSConverter {
       const predicate = this.getPredicateForColumn(column, table);
       triples.push({
         subject,
-        predicate: { termType: 'NamedNode', value: predicate },
-        object: { termType: 'Variable', value: `old_${columnName}` }
+        predicate: this.createNamedNode(predicate),
+        object: this.createVariable(`old_${columnName}`)
       });
     });
 
@@ -403,7 +395,7 @@ export class SparqlJSConverter {
    */
   private buildUpdateTriples(setData: any, table: PodTable): sparqljs.Triple[] {
     const triples: sparqljs.Triple[] = [];
-    const subject: sparqljs.Term = { termType: 'Variable', value: 'subject' };
+    const subject = this.createVariable('subject');
 
     Object.entries(setData).forEach(([columnName, value]) => {
       const column = table.columns[columnName];
@@ -412,7 +404,7 @@ export class SparqlJSConverter {
       const predicate = this.getPredicateForColumn(column, table);
       triples.push({
         subject,
-        predicate: { termType: 'NamedNode', value: predicate },
+        predicate: this.createNamedNode(predicate),
         object: this.buildLiteralTerm(value)
       });
     });
@@ -425,13 +417,13 @@ export class SparqlJSConverter {
    */
   private buildAllTriples(table: PodTable): sparqljs.Triple[] {
     const triples: sparqljs.Triple[] = [];
-    const subject: sparqljs.Term = { termType: 'Variable', value: 'subject' };
+    const subject = this.createVariable('subject');
 
     // 类型三元组
     triples.push({
       subject,
-      predicate: { termType: 'NamedNode', value: 'http://www.w3.org/1999/02/22-rdf-syntax-ns#type' },
-      object: { termType: 'NamedNode', value: table.config.rdfClass }
+      predicate: this.createNamedNode('http://www.w3.org/1999/02/22-rdf-syntax-ns#type'),
+      object: this.createNamedNode(table.config.rdfClass)
     });
 
     // 属性三元组
@@ -441,8 +433,8 @@ export class SparqlJSConverter {
       const predicate = this.getPredicateForColumn(column, table);
       triples.push({
         subject,
-        predicate: { termType: 'NamedNode', value: predicate },
-        object: { termType: 'Variable', value: columnName }
+        predicate: this.createNamedNode(predicate),
+        object: this.createVariable(columnName)
       });
     });
 

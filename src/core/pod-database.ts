@@ -1,7 +1,14 @@
 import { entityKind } from 'drizzle-orm';
 import { PodDialect } from './pod-dialect';
-import { PodAsyncSession, type SelectFieldMap } from './pod-session';
-import { PodTable } from './pod-table';
+import {
+  PodAsyncSession,
+  type SelectFieldMap,
+  SelectQueryBuilder,
+  InsertQueryBuilder,
+  UpdateQueryBuilder,
+  DeleteQueryBuilder
+} from './pod-session';
+import { PodTable, type InferTableData } from './pod-table';
 
 export class PodDatabase<TSchema extends Record<string, unknown> = Record<string, never>> {
   static readonly [entityKind] = 'PodDatabase';
@@ -13,23 +20,36 @@ export class PodDatabase<TSchema extends Record<string, unknown> = Record<string
   ) {}
 
   // SELECT 查询
-  select<TTable extends PodTable<any>>(fields?: SelectFieldMap) {
+  select<TTable extends PodTable<any>>(fields?: SelectFieldMap): SelectQueryBuilder<TTable> {
     return this.session.select<TTable>(fields);
   }
 
   // INSERT 查询
-  insert<TTable extends PodTable<any>>(table: TTable) {
+  insert<TTable extends PodTable<any>>(table: TTable): InsertQueryBuilder<TTable> {
     return this.session.insert(table);
   }
 
   // UPDATE 查询
-  update<TTable extends PodTable<any>>(table: TTable) {
+  update<TTable extends PodTable<any>>(table: TTable): UpdateQueryBuilder<TTable> {
     return this.session.update(table);
   }
 
   // DELETE 查询
-  delete<TTable extends PodTable<any>>(table: TTable) {
+  delete<TTable extends PodTable<any>>(table: TTable): DeleteQueryBuilder<TTable> {
     return this.session.delete(table);
+  }
+
+  // Find first matching row (LIMIT 1)
+  async findFirst<TTable extends PodTable<any>>(
+    table: TTable,
+    where?: Record<string, unknown>
+  ): Promise<InferTableData<TTable> | null> {
+    const builder = this.select<TTable>().from(table).limit(1);
+    if (where && Object.keys(where).length > 0) {
+      builder.where(where);
+    }
+    const rows = await builder;
+    return rows.length > 0 ? rows[0] : null;
   }
 
   // 事务支持

@@ -1,4 +1,4 @@
-import { describe, it, expect, beforeEach } from '@jest/globals';
+import { describe, it, expect, beforeEach } from 'vitest';
 import { z } from 'zod';
 import { 
   createTableSchema, 
@@ -15,9 +15,10 @@ import {
   date, 
   json, 
   object,
-  COMMON_NAMESPACES,
   RDF_CLASSES
 } from '@src/core/pod-table';
+
+const schemaNamespace = { prefix: 'schema', uri: 'https://schema.org/' };
 
 describe('Zod 集成测试', () => {
   let usersTable: any; // Test table, using any for simplicity
@@ -33,9 +34,9 @@ describe('Zod 集成测试', () => {
       profile: json('profile'),
       metadata: object('metadata')
     }, {
-      containerPath: '/users/',
+      resourcePath: 'idp:///users/index.ttl',
       rdfClass: RDF_CLASSES.SCHEMA_PERSON,
-      namespace: COMMON_NAMESPACES.schema
+      namespace: schemaNamespace
     });
   });
 
@@ -301,9 +302,9 @@ describe('Zod 集成测试', () => {
 
     it('应该处理空的表定义', () => {
       const emptyTable = podTable('empty', {}, {
-        containerPath: '/empty/',
+        resourcePath: 'idp:///empty/index.ttl',
         rdfClass: RDF_CLASSES.SCHEMA_PERSON,
-        namespace: COMMON_NAMESPACES.schema
+        namespace: schemaNamespace
       });
 
       const schema = createTableSchema(emptyTable);
@@ -315,9 +316,9 @@ describe('Zod 集成测试', () => {
         id: int('id').primaryKey(),
         name: string('name').notNull()
       }, {
-        containerPath: '/invalid/',
+        resourcePath: 'idp:///invalid/index.ttl',
         rdfClass: RDF_CLASSES.SCHEMA_PERSON,
-        namespace: COMMON_NAMESPACES.schema
+        namespace: schemaNamespace
       });
 
       // 模拟无效的列类型
