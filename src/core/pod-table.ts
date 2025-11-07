@@ -521,10 +521,6 @@ export function varchar(name: string, options: PodColumnOptions = {}): ColumnBui
   return new ColumnBuilder(name, 'string', options);
 }
 
-export function integer(name: string, options: PodColumnOptions = {}): ColumnBuilder<'integer'> {
-  return new ColumnBuilder(name, 'integer', options);
-}
-
 export function boolean(name: string, options: PodColumnOptions = {}): ColumnBuilder<'boolean'> {
   return new ColumnBuilder(name, 'boolean', options);
 }
@@ -576,6 +572,10 @@ export function string(name: string, options: PodColumnOptions = {}): ColumnBuil
 }
 
 export function int(name: string, options: PodColumnOptions = {}): ColumnBuilder<'integer'> {
+  return new ColumnBuilder(name, 'integer', options);
+}
+
+export function integer(name: string, options: PodColumnOptions = {}): ColumnBuilder<'integer'> {
   return new ColumnBuilder(name, 'integer', options);
 }
 
