@@ -512,24 +512,11 @@ export class PodTable<TColumns extends Record<string, PodColumnBase> = Record<st
   }
 }
 
-// 便捷的列定义函数 - 类似标准 Drizzle API
-export function text(name: string, options: PodColumnOptions = {}): ColumnBuilder<'string'> {
-  return new ColumnBuilder(name, 'string', options);
-}
-
-export function varchar(name: string, options: PodColumnOptions = {}): ColumnBuilder<'string'> {
-  return new ColumnBuilder(name, 'string', options);
-}
-
 export function boolean(name: string, options: PodColumnOptions = {}): ColumnBuilder<'boolean'> {
   return new ColumnBuilder(name, 'boolean', options);
 }
 
 export function timestamp(name: string, options: PodColumnOptions = {}): ColumnBuilder<'datetime'> {
-  return new ColumnBuilder(name, 'datetime', options);
-}
-
-export function datetime(name: string, options: PodColumnOptions = {}): ColumnBuilder<'datetime'> {
   return new ColumnBuilder(name, 'datetime', options);
 }
 
@@ -581,6 +568,71 @@ export function integer(name: string, options: PodColumnOptions = {}): ColumnBui
 
 export function date(name: string, options: PodColumnOptions = {}): ColumnBuilder<'datetime'> {
   return new ColumnBuilder(name, 'datetime', options);
+}
+
+// 时间相关列类型别名
+export function datetime(name: string, options: PodColumnOptions = {}): ColumnBuilder<'datetime'> {
+  return new ColumnBuilder(name, 'datetime', options);
+}
+
+// 文本相关列类型别名
+export function text(name: string, options: PodColumnOptions = {}): ColumnBuilder<'string'> {
+  return new ColumnBuilder(name, 'string', options);
+}
+
+export function varchar(name: string, options: PodColumnOptions = {}): ColumnBuilder<'string'> {
+  return new ColumnBuilder(name, 'string', options);
+}
+
+export function char(name: string, options: PodColumnOptions = {}): ColumnBuilder<'string'> {
+  return new ColumnBuilder(name, 'string', options);
+}
+
+// 数字相关列类型别名  
+export function bigint(name: string, options: PodColumnOptions = {}): ColumnBuilder<'integer'> {
+  return new ColumnBuilder(name, 'integer', options);
+}
+
+export function smallint(name: string, options: PodColumnOptions = {}): ColumnBuilder<'integer'> {
+  return new ColumnBuilder(name, 'integer', options);
+}
+
+export function tinyint(name: string, options: PodColumnOptions = {}): ColumnBuilder<'integer'> {
+  return new ColumnBuilder(name, 'integer', options);
+}
+
+export function mediumint(name: string, options: PodColumnOptions = {}): ColumnBuilder<'integer'> {
+  return new ColumnBuilder(name, 'integer', options);
+}
+
+export function serial(name: string, options: PodColumnOptions = {}): ColumnBuilder<'integer'> {
+  return new ColumnBuilder(name, 'integer', options);
+}
+
+// 浮点数相关列类型别名
+export function real(name: string, options: PodColumnOptions = {}): ColumnBuilder<'integer'> {
+  return new ColumnBuilder(name, 'integer', options);
+}
+
+export function decimal(name: string, options: PodColumnOptions = {}): ColumnBuilder<'integer'> {
+  return new ColumnBuilder(name, 'integer', options);
+}
+
+export function numeric(name: string, options: PodColumnOptions = {}): ColumnBuilder<'integer'> {
+  return new ColumnBuilder(name, 'integer', options);
+}
+
+export function float(name: string, options: PodColumnOptions = {}): ColumnBuilder<'integer'> {
+  return new ColumnBuilder(name, 'integer', options);
+}
+
+export function double(name: string, options: PodColumnOptions = {}): ColumnBuilder<'integer'> {
+  return new ColumnBuilder(name, 'integer', options);
+}
+
+// JSON相关别名
+export function jsonb(name: string, options: PodColumnOptions = {}): ColumnBuilder<'json'> {
+  return new ColumnBuilder(name, 'json', options);
 }
 
 

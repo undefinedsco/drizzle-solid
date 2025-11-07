@@ -101,6 +101,48 @@ const userTable = podTable('users', {
 });
 ```
 
+### 支持的列类型
+
+Drizzle Solid 完全兼容所有 Drizzle ORM 数据库方言的列类型：
+
+#### 基础类型
+```typescript
+// 字符串类型
+string('name')     // 通用字符串
+text('content')    // 文本内容
+varchar('title')   // 可变长度字符串
+char('code')       // 固定长度字符串
+
+// 数字类型
+int('count')       // MySQL 风格整数
+integer('id')      // PostgreSQL 风格整数
+bigint('large')    // 大整数
+smallint('small')  // 小整数
+tinyint('tiny')    // 微整数 (MySQL)
+mediumint('medium') // 中等整数 (MySQL)
+serial('auto')     // 自增序列
+
+// 浮点数类型
+real('price')      // 实数
+decimal('amount')  // 十进制数
+numeric('value')   // 数值
+float('ratio')     // 单精度浮点
+double('precise')  // 双精度浮点
+
+// 布尔类型
+boolean('active')  // 布尔值
+
+// 日期时间类型
+date('birthday')   // 日期
+datetime('event')  // 日期时间
+timestamp('created') // 时间戳
+
+// JSON 类型
+json('data')       // JSON 数据
+jsonb('config')    // 二进制 JSON (PostgreSQL)
+object('metadata') // 对象类型 (扩展)
+```
+
 ### 查询操作
 
 ```typescript
