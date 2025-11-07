@@ -13,7 +13,8 @@
       "Bash(curl:*)",
       "Bash(node:*)",
       "WebFetch(domain:orm.drizzle.team)",
-      "WebFetch(domain:github.com)"
+      "WebFetch(domain:github.com)",
+      "Bash(grep:*)"
     ],
     "deny": []
   }

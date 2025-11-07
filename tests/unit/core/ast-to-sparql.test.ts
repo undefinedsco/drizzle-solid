@@ -322,7 +322,9 @@ describe('ASTToSPARQLConverter', () => {
 
     it('应该处理引用类型的字符串值', () => {
       const column = {
-        isReference: () => true
+        isReference: () => true,
+        options: { referenceTarget: 'Person' },
+        formatValue: (value: any) => `<${value}>`
       };
       const result = converter['formatValue']('http://example.com/resource', column);
 
@@ -334,11 +336,12 @@ describe('ASTToSPARQLConverter', () => {
         isReference: () => true,
         options: {
           referenceTarget: 'http://example.com/'
-        }
+        },
+        formatValue: (value: any) => `<${column.options.referenceTarget}${value}>`
       };
       const result = converter['formatValue'](123, column);
 
-      expect(result).toBe('<http://example.com//123>');
+      expect(result).toBe('<http://example.com/123>');
     });
 
     it('应该处理 Date 对象', () => {

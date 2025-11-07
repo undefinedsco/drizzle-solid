@@ -16,6 +16,9 @@ export interface PodColumnOptions {
   predicate?: string; // 可选的自定义 predicate
   referenceTarget?: string; // 引用的目标 RDF 类
   notNull?: boolean;
+  // Array support
+  baseType?: ColumnBuilderDataType; // 数组元素的基础类型
+  isArray?: boolean; // 是否为数组类型
 }
 
 // 添加PodColumn接口扩展
@@ -27,7 +30,7 @@ export interface PodColumnInterface {
 }
 
 // 修复的ColumnBuilder，避免属性与方法命名冲突
-export type ColumnBuilderDataType = 'string' | 'integer' | 'datetime' | 'boolean' | 'json' | 'object';
+export type ColumnBuilderDataType = 'string' | 'integer' | 'datetime' | 'boolean' | 'json' | 'object' | 'array' | 'uri';
 
 type RdfTermInput = string | { value: string } | { term?: { value: string } };
 
@@ -67,6 +70,106 @@ export class ColumnBuilder<TType extends ColumnBuilderDataType> {
     this._predicateUri = predicate;
   }
 
+  // 统一的值格式化方法 - Column 层负责类型转换
+  formatValue(value: any): string | string[] {
+    if (value === null || value === undefined) {
+      throw new Error('Cannot format null or undefined value');
+    }
+
+    // 处理数组类型 - 使用多重属性
+    if (this.options.isArray) {
+      if (!Array.isArray(value)) {
+        throw new Error('Array column requires array value');
+      }
+      // 返回字符串数组，每个元素会作为单独的三元组
+      return value.map(item => this.formatSingleValue(item));
+    }
+
+    return this.formatSingleValue(value);
+  }
+
+  // 格式化单个值
+  private formatSingleValue(value: any): string {
+    // 处理引用类型
+    if (this.options.referenceTarget && typeof value === 'string') {
+      return `<${value}>`;
+    }
+
+    // 根据数据类型格式化
+    switch (this.dataType) {
+      case 'string':
+        return `"${String(value).replace(/"/g, '\\"')}"`;
+      
+      case 'integer':
+        return String(Number(value));
+      
+      case 'boolean':
+        return `"${value}"^^<http://www.w3.org/2001/XMLSchema#boolean>`;
+      
+      case 'datetime':
+        const date = value instanceof Date ? value : new Date(value);
+        return `"${date.toISOString()}"^^<http://www.w3.org/2001/XMLSchema#dateTime>`;
+      
+      case 'json':
+      case 'object':
+        const jsonString = JSON.stringify(value);
+        return `"${jsonString.replace(/"/g, '\\"')}"^^<http://www.w3.org/2001/XMLSchema#json>`;
+      
+      case 'uri':
+        // URI 类型直接作为 NamedNode，不需要引号
+        if (typeof value !== 'string' || (!value.startsWith('http://') && !value.startsWith('https://'))) {
+          throw new Error(`URI column requires valid HTTP(S) URL, got: ${value}`);
+        }
+        return `<${value}>`;
+      
+      default:
+        return `"${String(value).replace(/"/g, '\\"')}"`;
+    }
+  }
+
+  // 统一的值解析方法 - Column 层负责类型解析
+  parseValue(rdfValue: string, datatypeIri?: string): any {
+    // 处理数组类型在 SPARQL 执行层会返回多个值的数组
+    if (this.options.isArray) {
+      // 这个方法主要用于解析单个 RDF 值，数组会在查询层处理
+      return this.parseSingleValue(rdfValue, datatypeIri);
+    }
+
+    return this.parseSingleValue(rdfValue, datatypeIri);
+  }
+
+  // 解析单个值
+  private parseSingleValue(rdfValue: string, datatypeIri?: string): any {
+    if (!datatypeIri) {
+      return rdfValue;
+    }
+
+    // 根据数据类型和 RDF 类型解析
+    if (datatypeIri.includes('#integer') || datatypeIri.includes('#int')) {
+      return parseInt(rdfValue, 10);
+    } else if (datatypeIri.includes('#decimal') || datatypeIri.includes('#double')) {
+      return parseFloat(rdfValue);
+    } else if (datatypeIri.includes('#boolean')) {
+      return rdfValue === 'true';
+    } else if (datatypeIri.includes('#dateTime')) {
+      return new Date(rdfValue);
+    } else if (datatypeIri.includes('#json')) {
+      try {
+        return JSON.parse(rdfValue);
+      } catch (error) {
+        console.warn('Failed to parse JSON value:', rdfValue);
+        return rdfValue;
+      }
+    }
+
+    // URI 类型检测 - 如果看起来像 URI 就直接返回
+    if (rdfValue.startsWith('http://') || rdfValue.startsWith('https://')) {
+      return rdfValue;
+    }
+
+    return rdfValue;
+  }
+
   primaryKey(): ColumnBuilder<TType> {
     this.options = { ...this.options, primaryKey: true, required: true };
     return this;
@@ -89,9 +192,29 @@ export class ColumnBuilder<TType extends ColumnBuilderDataType> {
     return this;
   }
 
-  reference(target: string): ColumnBuilder<TType> {
-    this.options = { ...this.options, referenceTarget: target };
+  defaultNow(): ColumnBuilder<TType> {
+    this.options = { ...this.options, defaultValue: () => new Date() };
     return this;
+  }
+
+  reference(rdfClassUri: string): ColumnBuilder<TType> {
+    // 验证是否是有效的 RDF Class URI
+    if (!rdfClassUri.startsWith('http://') && !rdfClassUri.startsWith('https://')) {
+      throw new Error(`Invalid RDF Class URI: ${rdfClassUri}. Must be a full HTTP(S) URL.`);
+    }
+    
+    this.options = { ...this.options, referenceTarget: rdfClassUri };
+    return this;
+  }
+
+  // Array support - similar to Drizzle ORM PostgreSQL
+  array(): ColumnBuilder<'array'> {
+    const arrayBuilder = new ColumnBuilder<'array'>(this.name, 'array', {
+      ...this.options,
+      baseType: this.dataType,
+      isArray: true
+    }, this._predicateUri);
+    return arrayBuilder;
   }
 
   // method to get predicate URI
@@ -241,6 +364,12 @@ export class PodJsonColumn extends PodColumnBase {
 export class PodObjectColumn extends PodColumnBase {
   constructor(name: string, options: PodColumnOptions = {}) {
     super(name, 'object', options);
+  }
+}
+
+export class PodUriColumn extends PodColumnBase {
+  constructor(name: string, options: PodColumnOptions = {}) {
+    super(name, 'uri', options);
   }
 }
 
@@ -528,6 +657,10 @@ export function object(name: string, options: PodColumnOptions = {}): ColumnBuil
   return new ColumnBuilder(name, 'object', options);
 }
 
+export function uri(name: string, options: PodColumnOptions = {}): ColumnBuilder<'uri'> {
+  return new ColumnBuilder(name, 'uri', options);
+}
+
 // Pod 专用的列定义函数（保留向后兼容）
 export function podString(name: string, options: PodColumnOptions = {}): PodStringColumn {
   return new PodStringColumn(name, options);
@@ -684,6 +817,9 @@ export function podTable<
           break;
         case 'object':
           column = new PodObjectColumn(value.name, value.options);
+          break;
+        case 'uri':
+          column = new PodUriColumn(value.name, value.options);
           break;
         case 'string':
         default:

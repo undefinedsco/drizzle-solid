@@ -212,7 +212,7 @@ DELETE WHERE {
     return this.getPredicateForColumn(column, table);
   }
 
-  formatLiteralValue(value: any, column?: any): string {
+  formatLiteralValue(value: any, column?: any): string | string[] {
     return this.formatValue(value, column);
   }
 
@@ -494,8 +494,8 @@ DELETE WHERE {
 
     const variable = { termType: 'Variable', value: columnName };
     const literalInput = Array.isArray(rawValue)
-      ? rawValue.map((item) => this.buildLiteralTerm(item))
-      : this.buildLiteralTerm(rawValue);
+      ? rawValue.map((item) => this.buildLiteralTerm(item, undefined))
+      : this.buildLiteralTerm(rawValue, undefined);
     const literalSingle = Array.isArray(literalInput) ? null : literalInput;
 
     switch (operator) {
@@ -637,7 +637,64 @@ DELETE WHERE {
   }
 
   // 构建字面量项
-  private buildLiteralTerm(value: any): any {
+  private buildLiteralTerm(value: any, column?: any): any {
+    // 处理引用类型（WebID等）
+    if (column?.options?.referenceTarget && typeof value === 'string') {
+      return {
+        termType: 'NamedNode',
+        value: value
+      };
+    }
+
+    // 使用列的类型信息确定数据类型
+    if (column) {
+      switch (column.dataType) {
+        case 'string':
+          return {
+            termType: 'Literal',
+            value: String(value),
+            datatype: { termType: 'NamedNode', value: 'http://www.w3.org/2001/XMLSchema#string' }
+          };
+        case 'integer':
+          return {
+            termType: 'Literal',
+            value: String(Number(value)),
+            datatype: { termType: 'NamedNode', value: 'http://www.w3.org/2001/XMLSchema#integer' }
+          };
+        case 'boolean':
+          return {
+            termType: 'Literal',
+            value: String(Boolean(value)),
+            datatype: { termType: 'NamedNode', value: 'http://www.w3.org/2001/XMLSchema#boolean' }
+          };
+        case 'datetime':
+          const date = value instanceof Date ? value : new Date(value);
+          return {
+            termType: 'Literal',
+            value: date.toISOString(),
+            datatype: { termType: 'NamedNode', value: 'http://www.w3.org/2001/XMLSchema#dateTime' }
+          };
+        case 'json':
+        case 'object':
+          return {
+            termType: 'Literal',
+            value: JSON.stringify(value),
+            datatype: { termType: 'NamedNode', value: 'http://www.w3.org/2001/XMLSchema#json' }
+          };
+        
+        case 'uri':
+          // URI 类型作为 NamedNode
+          if (typeof value !== 'string' || (!value.startsWith('http://') && !value.startsWith('https://'))) {
+            throw new Error(`URI column requires valid HTTP(S) URL, got: ${value}`);
+          }
+          return {
+            termType: 'NamedNode',
+            value: value
+          };
+      }
+    }
+
+    // 回退到类型推断
     if (typeof value === 'string') {
       return {
         termType: 'Literal',
@@ -794,11 +851,27 @@ DELETE WHERE {
         if (!column) return;
 
         const predicate = this.getPredicateForColumn(column, table);
-        triples.push({
-          subject,
-          predicate: { termType: 'NamedNode', value: predicate },
-          object: this.buildLiteralTerm(value)
-        });
+
+        // 处理数组类型 - 多重属性
+        if (column.options?.isArray && Array.isArray(value)) {
+          // 为数组的每个元素创建单独的三元组
+          value.forEach(arrayItem => {
+            if (arrayItem !== undefined && arrayItem !== null) {
+              triples.push({
+                subject,
+                predicate: { termType: 'NamedNode', value: predicate },
+                object: this.buildLiteralTerm(arrayItem, column)
+              });
+            }
+          });
+        } else {
+          // 普通单值属性
+          triples.push({
+            subject,
+            predicate: { termType: 'NamedNode', value: predicate },
+            object: this.buildLiteralTerm(value, column)
+          });
+        }
       });
     }
     
@@ -862,7 +935,7 @@ DELETE WHERE {
       triples.push({
         subject,
         predicate: { termType: 'NamedNode', value: predicate },
-        object: this.buildLiteralTerm(value)
+        object: this.buildLiteralTerm(value, undefined)
       });
     });
     
@@ -1000,36 +1073,24 @@ DELETE WHERE {
     return '';
   }
 
-  // 格式化值
-  formatValue(value: any, column?: any): string {
+  // 格式化值 - 使用 Column 的统一格式化方法
+  formatValue(value: any, column?: any): string | string[] {
+    if (column && typeof column.formatValue === 'function') {
+      // 使用 Column 的统一格式化方法
+      return column.formatValue(value);
+    }
+
+    // 回退到基本格式化（向后兼容）
     if (value === null || value === undefined) {
       throw new Error('Cannot format null or undefined value');
     }
-
-    // 处理 JSON 和 Object 类型
-    if (column?.dataType === 'json' || column?.dataType === 'object') {
-      // 将 JSON/Object 数据序列化为 JSON 字符串，并标记为 JSON 类型
-      const jsonString = JSON.stringify(value);
-      return `"${jsonString.replace(/"/g, '\\"')}"^^<http://www.w3.org/2001/XMLSchema#json>`;
-    }
     
     if (typeof value === 'string') {
-      if (column?.isReference()) {
-        // 引用类型使用 URI
-        return `<${value}>`;
-      } else {
-        // 字符串字面量
-        return `"${value.replace(/"/g, '\\"')}"`;
-      }
+      return `"${value.replace(/"/g, '\\"')}"`;
     }
     
     if (typeof value === 'number') {
-      if (column?.isReference()) {
-        // 引用类型的数字ID转换为URI
-        return `<${column.options.referenceTarget}/${value}>`;
-      } else {
-        return value.toString();
-      }
+      return value.toString();
     }
     
     if (typeof value === 'boolean') {

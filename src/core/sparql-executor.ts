@@ -561,6 +561,18 @@ export class ComunicaSPARQLExecutor {
               console.warn('Failed to parse JSON value:', term.value, this.formatError(error));
               return term.value;
             }
+            } else if (datatypeIri.includes('#jsonArray') || datatypeIri.includes('solid/terms#jsonArray')) {
+              try {
+                const parsed = JSON.parse(term.value);
+                if (!Array.isArray(parsed)) {
+                  console.warn('Expected array but got:', typeof parsed, parsed);
+                  return [parsed]; // 包装为数组
+                }
+                return parsed;
+              } catch (error: unknown) {
+                console.warn('Failed to parse JSON Array value:', term.value, this.formatError(error));
+                return [term.value]; // 失败时包装为数组
+              }
             }
           }
         }

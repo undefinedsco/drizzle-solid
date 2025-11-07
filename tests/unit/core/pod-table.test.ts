@@ -16,6 +16,8 @@ import {
   date,
   json,
   object,
+  uri,
+  text,
   RDF_CLASSES,
   type PodTableOptions
 } from '@src/core/pod-table';
@@ -243,6 +245,26 @@ describe('链式方法', () => {
     expect(column.options.primaryKey).toBe(true);
     expect(column.options.required).toBe(true);
     expect(column.options.referenceTarget).toBe(RDF_CLASSES.SCHEMA_PERSON);
+  });
+
+  it('应该支持 array() 方法', () => {
+    const arrayColumn = text('tags').array();
+    expect(arrayColumn.dataType).toBe('array');
+    expect(arrayColumn.options.isArray).toBe(true);
+    expect(arrayColumn.options.baseType).toBe('string');
+  });
+
+  it('应该支持 uri() 类型', () => {
+    const uriColumn = uri('webId');
+    expect(uriColumn.dataType).toBe('uri');
+  });
+
+  it('应该支持 uri().array() 组合', () => {
+    const uriArrayColumn = uri('friends').array().reference(RDF_CLASSES.FOAF_PERSON);
+    expect(uriArrayColumn.dataType).toBe('array');
+    expect(uriArrayColumn.options.isArray).toBe(true);
+    expect(uriArrayColumn.options.baseType).toBe('uri');
+    expect(uriArrayColumn.options.referenceTarget).toBe(RDF_CLASSES.FOAF_PERSON);
   });
 });
 

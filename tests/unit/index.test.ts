@@ -29,7 +29,7 @@ describe('Index exports', () => {
       podTable,
       string,
       int,
-      bool,
+      boolean,
       date,
       namespace,
       VCARD,
@@ -40,7 +40,7 @@ describe('Index exports', () => {
     expect(podTable).toBeDefined();
     expect(string).toBeDefined();
     expect(int).toBeDefined();
-    expect(bool).toBeDefined();
+    expect(boolean).toBeDefined();
     expect(date).toBeDefined();
     expect(namespace).toBeDefined();
     expect(VCARD).toBeDefined();
