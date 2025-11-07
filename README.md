@@ -90,13 +90,13 @@ npm run example:usage
 ### 表定义
 
 ```typescript
-import { podTable, string, int, bool, date, eq, gte, and } from 'drizzle-solid';
+import { podTable, string, int, boolean, date, eq, gte, and } from 'drizzle-solid';
 
 const userTable = podTable('users', {
   name: string('name'),           // foaf:name
   email: string('email'),         // foaf:mbox
   age: int('age'),               // foaf:age
-  verified: bool('verified'),     // 自定义谓词
+  verified: boolean('verified'),     // 自定义谓词
   createdAt: date('createdAt')   // dcterms:created
 });
 ```

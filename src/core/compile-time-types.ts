@@ -1,7 +1,7 @@
 // 编译时类型推断系统
 // 使用 TypeScript 的编译时类型检查，而不是运行时推断
 
-import { podTable, string, int, bool, date } from './pod-table';
+import { podTable, string, int, boolean, date } from './pod-table';
 import { PodTable, PodTableOptions } from './pod-table';
 
 // 类型安全的字段定义
@@ -33,7 +33,7 @@ export function createTypedTable<T extends Record<string, TypedField<any>>>(
         columns[fieldName] = int(fieldName).predicate(fieldDef.predicate);
         break;
       case 'boolean':
-        columns[fieldName] = bool(fieldName).predicate(fieldDef.predicate);
+        columns[fieldName] = boolean(fieldName).predicate(fieldDef.predicate);
         break;
       case 'Date':
         columns[fieldName] = date(fieldName).predicate(fieldDef.predicate);

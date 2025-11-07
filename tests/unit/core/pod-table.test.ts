@@ -12,7 +12,7 @@ import {
   podTable,
   string,
   int,
-  bool,
+  boolean,
   date,
   json,
   object,
@@ -322,8 +322,8 @@ describe('新的列定义函数', () => {
     expect(column.dataType).toBe('integer');
   });
 
-  it('应该支持 bool() 函数', () => {
-    const column = bool('active');
+  it('应该支持 boolean() 函数', () => {
+    const column = boolean('active');
     expect(column).toBeInstanceOf(ColumnBuilder);
     expect(column.name).toBe('active');
     expect(column.dataType).toBe('boolean');
@@ -354,7 +354,7 @@ describe('新的列定义函数', () => {
     const table = podTable('people', {
       name: string('name').notNull(),
       born: date('born'),
-      active: bool('active'),
+      active: boolean('active'),
       avatar: json('avatar'),
       preferences: object('preferences')
     }, {

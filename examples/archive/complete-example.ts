@@ -4,7 +4,7 @@ import {
   podTable, 
   string, 
   int, 
-  bool, 
+  boolean, 
   date,
   RDF_PREDICATES,
   RDF_CLASSES
@@ -17,7 +17,7 @@ const users = podTable('users', {
   id: int('id').primaryKey(),
   name: string('name').notNull(),
   email: string('email').notNull(),
-  isActive: bool('isActive').default(true),
+  isActive: boolean('isActive').default(true),
   createdAt: date('createdAt').predicate(RDF_PREDICATES.SCHEMA_DATE_CREATED),
   updatedAt: date('updatedAt').predicate(RDF_PREDICATES.SCHEMA_DATE_MODIFIED),
 }, {

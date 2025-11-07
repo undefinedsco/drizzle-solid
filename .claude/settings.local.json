@@ -11,7 +11,9 @@
       "Bash(npm run build:*)",
       "Bash(npm publish:*)",
       "Bash(curl:*)",
-      "Bash(node:*)"
+      "Bash(node:*)",
+      "WebFetch(domain:orm.drizzle.team)",
+      "WebFetch(domain:github.com)"
     ],
     "deny": []
   }

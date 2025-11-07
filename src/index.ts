@@ -17,7 +17,6 @@ export {
   // 标准 Drizzle 风格的列定义
   string,
   int,
-  bool,
   boolean,
   date,
   json,

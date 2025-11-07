@@ -1,4 +1,4 @@
-import { drizzle, solid, podTable, string, int, bool, date, json, object, getTableSchema } from '../src/index';
+import { drizzle, solid, podTable, string, int, boolean, date, json, object, getTableSchema } from '../src/index';
 import { eq } from 'drizzle-orm';
 import { z } from 'zod';
 
@@ -8,7 +8,7 @@ const users = podTable('users', {
   name: string('name').notNull(),
   email: string('email').notNull(),
   age: int('age'),
-  isActive: bool('isActive').default(true),
+  isActive: boolean('isActive').default(true),
   createdAt: date('createdAt'),
   profile: json('profile'),
   metadata: object('metadata')

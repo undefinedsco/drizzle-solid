@@ -583,9 +583,6 @@ export function date(name: string, options: PodColumnOptions = {}): ColumnBuilde
   return new ColumnBuilder(name, 'datetime', options);
 }
 
-export function bool(name: string, options: PodColumnOptions = {}): ColumnBuilder<'boolean'> {
-  return new ColumnBuilder(name, 'boolean', options);
-}
 
 // 类型安全的podTable函数
 type ColumnInput = PodColumnBase | ColumnBuilder<ColumnBuilderDataType>;
