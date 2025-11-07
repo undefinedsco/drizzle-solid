@@ -1,3 +1,11 @@
+// 从 @inrupt/vocab-common-rdf 导入标准 RDF 词汇表
+import { 
+  VCARD as VCARD_VOCAB,
+  FOAF as FOAF_VOCAB,
+  LDP as LDP_VOCAB,
+  SCHEMA_INRUPT as SCHEMA_VOCAB
+} from '@inrupt/vocab-common-rdf';
+
 export type Namespace<TTerms extends Record<string, string> = Record<string, string>> = ((term: string) => string) & {
   prefix: string;
   uri: string;
@@ -30,33 +38,8 @@ export function namespace<TTerms extends Record<string, string>>(
   return builder;
 }
 
-export const VCARD = namespace('vcard', 'http://www.w3.org/2006/vcard/ns#', {
-  fn: 'fn',
-  givenName: 'given-name',
-  familyName: 'family-name',
-  hasPhoto: 'hasPhoto',
-  note: 'note',
-  region: 'region',
-  gender: 'gender',
-  email: 'hasEmail'
-} as const);
-
-export const FOAF = namespace('foaf', 'http://xmlns.com/foaf/0.1/', {
-  nick: 'nick',
-  name: 'name',
-  homepage: 'homepage',
-  img: 'img',
-  person: 'Person',
-  Person: 'Person'
-} as const);
-
-export const LDP = namespace('ldp', 'http://www.w3.org/ns/ldp#', {
-  inbox: 'inbox'
-} as const);
-
-export const SCHEMA = namespace('schema', 'https://schema.org/', {
-  name: 'name',
-  email: 'email',
-  url: 'url',
-  description: 'description'
-} as const);
+// 重新导出标准命名空间
+export const VCARD = VCARD_VOCAB;
+export const FOAF = FOAF_VOCAB;
+export const LDP = LDP_VOCAB;
+export const SCHEMA = SCHEMA_VOCAB;

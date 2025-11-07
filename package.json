@@ -1,7 +1,6 @@
 {
   "name": "drizzle-solid",
-  "version": "0.1.0",
-  "private": true,
+  "version": "0.1.1",
   "description": "Drizzle ORM adapter for Solid Pods",
   "main": "dist/index.js",
   "types": "dist/index.d.ts",
@@ -64,6 +63,7 @@
     "@inrupt/solid-client": "^2.1.2",
     "@inrupt/solid-client-authn-node": "^3.1.0",
     "@inrupt/universal-fetch": "^1.0.3",
+    "@inrupt/vocab-common-rdf": "^1.0.5",
     "dotenv": "^17.2.2",
     "drizzle-orm": "^0.28.0",
     "n3": "^1.26.0",

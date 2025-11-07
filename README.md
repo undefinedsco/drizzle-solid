@@ -269,7 +269,7 @@ MIT License - 查看[LICENSE](LICENSE)文件了解详情。
 
 1. `docs/quick-start-local.md` 获取本地 CSS 启动与疑难解答
 2. `examples/README.md` 了解脚本入口与运行方式
-3. [Issue 列表](https://github.com/your-repo/drizzle-solid/issues) 提交复现步骤与日志
+3. [Issue 列表](https://github.com/undefinedsco/drizzle-solid/issues) 提交复现步骤与日志
 
 ---
 
