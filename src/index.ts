@@ -18,6 +18,7 @@ export {
   string,
   int,
   bool,
+  boolean,
   date,
   json,
   object,
