@@ -691,11 +691,91 @@ export class PodDialect {
     return await this.sparqlExecutor.queryContainer(normalizedUrl, sparqlQuery);
   }
 
+  /**
+   * 确保表有 resourcePath，如果没有则从 TypeIndex 自动发现
+   * 如果已有 resourcePath，检查是否与 TypeIndex 冲突
+   */
+  private async ensureTableResourcePath(table: PodTable): Promise<void> {
+    const rdfClass = typeof table.config.rdfClass === 'string'
+      ? table.config.rdfClass
+      : (table.config.rdfClass as any).value || String(table.config.rdfClass);
+
+    // 检查是否已经有 resourcePath
+    const configuredResourcePath =
+      (typeof (table as any).getResourcePath === 'function' && (table as any).getResourcePath()) ||
+      (table as any).config?.resourcePath;
+
+    const configuredContainerPath = table.config.containerPath;
+
+    if (configuredResourcePath && configuredResourcePath.trim().length > 0) {
+      // 已经有 resourcePath，检查是否与 TypeIndex 冲突
+      try {
+        const discoveredEntry = await this.typeIndexManager.discoverSpecificType(rdfClass);
+
+        if (discoveredEntry) {
+          const typeIndexPath = discoveredEntry.containerPath;
+
+          // 检查冲突
+          if (configuredContainerPath && configuredContainerPath !== typeIndexPath) {
+            console.warn(
+              `[AutoDiscover] ⚠️  CONFLICT: Table ${table.config.name} has resourcePath "${configuredResourcePath}" ` +
+              `but TypeIndex points to "${typeIndexPath}". Using configured resourcePath (ignoring TypeIndex).`
+            );
+            // 优先使用用户配置的路径（写入优先）
+          } else {
+            console.log(`[AutoDiscover] Table ${table.config.name} resourcePath matches TypeIndex ✓`);
+          }
+        }
+      } catch (error) {
+        // TypeIndex 查询失败，使用配置的路径
+        console.log(`[AutoDiscover] Could not check TypeIndex for ${table.config.name}, using configured path`);
+      }
+
+      return; // 已经有路径，无需自动发现
+    }
+
+    // 没有 resourcePath，从 TypeIndex 自动发现
+    console.log(`[AutoDiscover] Table ${table.config.name} has no resourcePath, discovering from TypeIndex...`);
+
+    try {
+      const discoveredEntry = await this.typeIndexManager.discoverSpecificType(rdfClass);
+
+      if (discoveredEntry) {
+        // 动态设置 containerPath 和 resourcePath
+        const containerPath = discoveredEntry.containerPath;
+        const resourcePath = discoveredEntry.instanceContainer
+          ? `${discoveredEntry.instanceContainer}${table.config.name}.ttl`
+          : `${containerPath}${table.config.name}.ttl`;
+
+        console.log(`[AutoDiscover] ✓ Found resource path from TypeIndex: ${resourcePath}`);
+
+        // 动态注入到表配置中
+        (table as any).config.containerPath = containerPath;
+        (table as any).config.resourcePath = resourcePath;
+        if ((table as any)._) {
+          (table as any)._.config.containerPath = containerPath;
+          (table as any)._.config.resourcePath = resourcePath;
+        }
+      } else {
+        console.warn(`[AutoDiscover] ⚠️  No TypeIndex entry found for ${rdfClass}, using default path /data/`);
+        // 使用默认路径
+        (table as any).config.containerPath = '/data/';
+      }
+    } catch (error) {
+      console.warn('[AutoDiscover] Failed to discover resource path from TypeIndex:', error);
+      // 失败时使用默认路径
+      (table as any).config.containerPath = '/data/';
+    }
+  }
+
   // 核心查询方法 - 通过 Comunica 执行 SPARQL
   async query(operation: PodOperation): Promise<unknown[]> {
     if (!this.connected) {
       await this.connect();
     }
+
+    // 如果表没有指定 resourcePath，尝试从 TypeIndex 自动发现
+    await this.ensureTableResourcePath(operation.table);
 
     const { containerUrl, resourceUrl } = this.resolveTableUrls(operation.table);
     const normalizedResourceUrl = this.normalizeResourceUrl(resourceUrl);

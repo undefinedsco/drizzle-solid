@@ -253,7 +253,7 @@ export type InferUpdateData<TTable extends PodTable<Record<string, PodColumnBase
 
 // 表配置选项
 export interface PodTableOptions {
-  resourcePath: string;
+  resourcePath?: string;  // 可选：写入时必须指定，读取时可从 TypeIndex 自动发现
   rdfClass: RdfTermInput;
   namespace?: NamespaceConfig; // 默认命名空间
   autoRegister?: boolean;
@@ -485,6 +485,15 @@ export class PodTable<TColumns extends Record<string, PodColumnBase> = Record<st
     containerPath: string;
     sparqlEndpoint?: string;
   } {
+    // 如果没有 resourcePath，返回默认配置（稍后从 TypeIndex 发现）
+    if (!options.resourcePath) {
+      return {
+        mode: 'ldp',
+        resourcePath: '', // 空路径，稍后从 TypeIndex 自动发现
+        containerPath: options.containerPath || '/data/'
+      };
+    }
+
     const rawPath = options.resourcePath.trim();
     const explicitMode = options.resourceMode;
     const containerOverride = options.containerPath?.trim();
