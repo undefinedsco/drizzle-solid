@@ -341,7 +341,13 @@ DELETE WHERE {
       }
     });
 
-    // 生成 id 变量，方便 ORDER BY / SELECT 使用
+    // 添加 WHERE 条件过滤器 (必须在 BIND 之前)
+    if (ast.where) {
+      const filters = this.buildFilterPatterns(ast.where, table);
+      patterns.push(...filters);
+    }
+
+    // 生成 id 变量，方便 ORDER BY / SELECT 使用 (放在 FILTER 之后)
     patterns.push({
       type: 'bind',
       variable: { termType: 'Variable', value: 'id' },
@@ -355,12 +361,6 @@ DELETE WHERE {
         ]
       }
     } as any);
-
-    // 添加 WHERE 条件过滤器
-    if (ast.where) {
-      const filters = this.buildFilterPatterns(ast.where, table);
-      patterns.push(...filters);
-    }
 
     return patterns;
   }
