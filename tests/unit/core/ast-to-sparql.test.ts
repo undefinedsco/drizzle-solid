@@ -470,8 +470,84 @@ describe('ASTToSPARQLConverter', () => {
   describe('addPrefix 方法测试', () => {
     it('应该添加自定义前缀', () => {
       converter.addPrefix('custom', 'http://custom.org/');
-      
+
       expect(converter['prefixes']['custom']).toBe('http://custom.org/');
+    });
+  });
+
+  describe('@id 查询的 SPARQL 模式顺序', () => {
+    it('应该将 FILTER 放在 BIND 之前', () => {
+      const ast = {
+        type: 'select',
+        select: ['id', 'name', 'email'],
+        where: {
+          '@id': 'https://example.com/profile/card#me'
+        }
+      };
+
+      const result = converter.convertSelect(ast, mockTable);
+
+      // 检查生成的 SPARQL 查询
+      expect(result.query).toContain('FILTER');
+      expect(result.query).toContain('BIND');
+
+      // 确保 FILTER 在 BIND 之前
+      const filterIndex = result.query.indexOf('FILTER');
+      const bindIndex = result.query.indexOf('BIND');
+
+      expect(filterIndex).toBeGreaterThan(-1);
+      expect(bindIndex).toBeGreaterThan(-1);
+      expect(filterIndex).toBeLessThan(bindIndex);
+    });
+
+    it('应该正确处理 subject 字段的过滤', () => {
+      const ast = {
+        type: 'select',
+        select: ['id', 'name'],
+        where: {
+          subject: 'https://example.com/profile/card#me'
+        }
+      };
+
+      const result = converter.convertSelect(ast, mockTable);
+
+      // 检查生成的 SPARQL 包含正确的 FILTER
+      expect(result.query).toContain('FILTER');
+      expect(result.query).toContain('https://example.com/profile/card#me');
+
+      // 确保 FILTER 在 BIND 之前
+      const filterIndex = result.query.indexOf('FILTER');
+      const bindIndex = result.query.indexOf('BIND');
+      expect(filterIndex).toBeLessThan(bindIndex);
+    });
+
+    it('应该正确构建包含类型约束和过滤器的 WHERE 子句', () => {
+      const ast = {
+        type: 'select',
+        select: ['id', 'name', 'email'],
+        where: {
+          '@id': 'https://example.com/users/123#user',
+          name: 'John'
+        }
+      };
+
+      const result = converter.convertSelect(ast, mockTable);
+
+      // 应该包含类型约束
+      expect(result.query).toContain('rdf:type');
+      expect(result.query).toContain('schema:Person');
+
+      // 应该包含 @id 过滤器
+      expect(result.query).toContain('FILTER');
+      expect(result.query).toContain('https://example.com/users/123#user');
+
+      // 应该包含 name 过滤器
+      expect(result.query).toContain('?name');
+
+      // FILTER 应该在 BIND 之前
+      const filterIndex = result.query.indexOf('FILTER');
+      const bindIndex = result.query.indexOf('BIND');
+      expect(filterIndex).toBeLessThan(bindIndex);
     });
   });
 });
