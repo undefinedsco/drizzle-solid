@@ -8,6 +8,7 @@ export interface TypeIndexEntry {
   instanceContainer?: string; // 实例容器路径（自动从 webId 推导）
   classRegistry?: string;    // 类注册表路径
   table?: any;               // 可选的预定义表结构
+  isPublic?: boolean;        // 是否注册到公开 TypeIndex (默认 false，注册到私有)
 }
 
 export interface DiscoveredTable {
@@ -252,10 +253,15 @@ export class TypeIndexManager {
    * 注册类型到 TypeIndex
    */
   async registerType(entry: TypeIndexEntry, typeIndexUrl?: string): Promise<void> {
-    const targetTypeIndexUrl = typeIndexUrl || await this.findTypeIndex();
-    
+    let targetTypeIndexUrl = typeIndexUrl;
+
+    // 如果没有指定 TypeIndex URL，根据 isPublic 字段选择合适的 TypeIndex
     if (!targetTypeIndexUrl) {
-      throw new Error('TypeIndex not found. Please create one first.');
+      const foundUrl = await this.findTypeIndexByVisibility(entry.isPublic || false);
+      if (!foundUrl) {
+        throw new Error('TypeIndex not found. Please create one first.');
+      }
+      targetTypeIndexUrl = foundUrl;
     }
 
     try {
@@ -270,7 +276,7 @@ export class TypeIndexManager {
 
       // 自动推导 instanceContainer
       const instanceContainer = entry.instanceContainer || `${this.podUrl}${entry.containerPath}`;
-      
+
       // 创建类型注册条目
       const entryId = `#${entry.forClass.toLowerCase()}`;
       const entryThing = buildThing(createThing({ url: `${targetTypeIndexUrl}${entryId}` }))
@@ -285,11 +291,62 @@ export class TypeIndexManager {
 
       // 保存更新后的 TypeIndex
       await saveSolidDatasetAt(targetTypeIndexUrl, dataset, { fetch: this.fetchFn });
-      
-      console.log(`Type ${entry.forClass} registered to TypeIndex`);
+
+      const visibility = entry.isPublic ? 'public' : 'private';
+      console.log(`Type ${entry.forClass} registered to ${visibility} TypeIndex: ${targetTypeIndexUrl}`);
     } catch (error) {
       console.error('Error registering type:', error);
       throw error;
+    }
+  }
+
+  /**
+   * 根据可见性查找对应的 TypeIndex (private 或 public)
+   */
+  private async findTypeIndexByVisibility(isPublic: boolean): Promise<string | null> {
+    try {
+      let profileDataset;
+      let profile;
+
+      try {
+        console.log('Fetching WebID profile document for TypeIndex visibility check...');
+        profileDataset = await getSolidDataset(this.webId, { fetch: this.fetchFn });
+        if (profileDataset) {
+          profile = getThing(profileDataset, this.webId);
+        }
+      } catch (error) {
+        console.warn('Could not fetch WebID document for visibility check:', error);
+      }
+
+      if (profile) {
+        const predicate = isPublic
+          ? 'http://www.w3.org/ns/solid/terms#publicTypeIndex'
+          : 'http://www.w3.org/ns/solid/terms#privateTypeIndex';
+
+        const typeIndexUrls = getUrl(profile, predicate);
+        if (typeIndexUrls) {
+          const typeIndexUrl = Array.isArray(typeIndexUrls) ? typeIndexUrls[0] : typeIndexUrls;
+          console.log(`Found ${isPublic ? 'public' : 'private'} TypeIndex in profile: ${typeIndexUrl}`);
+          return typeIndexUrl;
+        }
+      }
+
+      // Fallback 到标准位置
+      const standardLocation = isPublic
+        ? `${this.podUrl}settings/publicTypeIndex.ttl`
+        : `${this.podUrl}settings/privateTypeIndex.ttl`;
+
+      try {
+        await getSolidDataset(standardLocation, { fetch: this.fetchFn });
+        console.log(`Found ${isPublic ? 'public' : 'private'} TypeIndex at standard location: ${standardLocation}`);
+        return standardLocation;
+      } catch {
+        console.log(`No ${isPublic ? 'public' : 'private'} TypeIndex found`);
+        return null;
+      }
+    } catch (error) {
+      console.error(`Error finding ${isPublic ? 'public' : 'private'} TypeIndex:`, error);
+      return null;
     }
   }
 

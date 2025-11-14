@@ -10,6 +10,7 @@ vi.mock('@inrupt/solid-client', async () => {
     getThing: vi.fn(),
     getUrl: vi.fn(),
     getThingAll: vi.fn(),
+    saveSolidDatasetAt: vi.fn(),
   };
 });
 
@@ -195,6 +196,110 @@ describe('TypeIndexManager', () => {
       expect(result).toBeNull();
       // Should have tried profile + 3 standard locations
       expect(getSolidDataset).toHaveBeenCalledTimes(4);
+    });
+  });
+
+  describe('registerType with public/private visibility', () => {
+    it('should register to private TypeIndex by default', async () => {
+      const { getSolidDataset, getThing, getUrl, saveSolidDatasetAt } = await import('@inrupt/solid-client');
+      const manager = new TypeIndexManager(originalWebId, podUrl);
+
+      const mockProfileDataset = { type: 'Dataset', graphs: { default: {} } };
+      const mockProfileThing = { type: 'Subject', url: originalWebId };
+
+      vi.mocked(getSolidDataset).mockResolvedValue(mockProfileDataset as any);
+      vi.mocked(getThing).mockReturnValue(mockProfileThing as any);
+      vi.mocked(getUrl).mockReturnValue('https://alice.example/settings/privateTypeIndex.ttl');
+      vi.mocked(saveSolidDatasetAt).mockResolvedValue(mockProfileDataset as any);
+
+      const entry: TypeIndexEntry = {
+        rdfClass: 'https://schema.org/Person',
+        containerPath: '/people/',
+        forClass: 'Person'
+        // isPublic 未设置，默认为 false
+      };
+
+      await manager.registerType(entry);
+
+      // 应该查找 privateTypeIndex
+      expect(getUrl).toHaveBeenCalledWith(
+        mockProfileThing,
+        'http://www.w3.org/ns/solid/terms#privateTypeIndex'
+      );
+      expect(saveSolidDatasetAt).toHaveBeenCalledWith(
+        'https://alice.example/settings/privateTypeIndex.ttl',
+        expect.anything(),
+        expect.objectContaining({ fetch: expect.any(Function) })
+      );
+    });
+
+    it('should register to public TypeIndex when isPublic=true', async () => {
+      const { getSolidDataset, getThing, getUrl, saveSolidDatasetAt } = await import('@inrupt/solid-client');
+      const manager = new TypeIndexManager(originalWebId, podUrl);
+
+      const mockProfileDataset = { type: 'Dataset', graphs: { default: {} } };
+      const mockProfileThing = { type: 'Subject', url: originalWebId };
+
+      vi.mocked(getSolidDataset).mockResolvedValue(mockProfileDataset as any);
+      vi.mocked(getThing).mockReturnValue(mockProfileThing as any);
+      vi.mocked(getUrl).mockReturnValue('https://alice.example/settings/publicTypeIndex.ttl');
+      vi.mocked(saveSolidDatasetAt).mockResolvedValue(mockProfileDataset as any);
+
+      const entry: TypeIndexEntry = {
+        rdfClass: 'https://schema.org/BlogPosting',
+        containerPath: '/posts/',
+        forClass: 'BlogPost',
+        isPublic: true
+      };
+
+      await manager.registerType(entry);
+
+      // 应该查找 publicTypeIndex
+      expect(getUrl).toHaveBeenCalledWith(
+        mockProfileThing,
+        'http://www.w3.org/ns/solid/terms#publicTypeIndex'
+      );
+      expect(saveSolidDatasetAt).toHaveBeenCalledWith(
+        'https://alice.example/settings/publicTypeIndex.ttl',
+        expect.anything(),
+        expect.objectContaining({ fetch: expect.any(Function) })
+      );
+    });
+
+    it('should fallback to standard location when profile does not have TypeIndex', async () => {
+      const { getSolidDataset, getThing, getUrl, saveSolidDatasetAt } = await import('@inrupt/solid-client');
+      const manager = new TypeIndexManager(originalWebId, podUrl);
+
+      const mockProfileDataset = { type: 'Dataset', graphs: { default: {} } };
+      const mockProfileThing = { type: 'Subject', url: originalWebId };
+
+      // First call: fetch profile
+      // Second call: check standard location (succeeds)
+      // Third call: save to standard location
+      vi.mocked(getSolidDataset)
+        .mockResolvedValueOnce(mockProfileDataset as any)
+        .mockResolvedValueOnce(mockProfileDataset as any)
+        .mockResolvedValueOnce(mockProfileDataset as any);
+
+      vi.mocked(getThing).mockReturnValue(mockProfileThing as any);
+      vi.mocked(getUrl).mockReturnValue(null); // profile 中没有 TypeIndex 链接
+      vi.mocked(saveSolidDatasetAt).mockResolvedValue(mockProfileDataset as any);
+
+      const entry: TypeIndexEntry = {
+        rdfClass: 'https://schema.org/Event',
+        containerPath: '/events/',
+        forClass: 'Event',
+        isPublic: false
+      };
+
+      await manager.registerType(entry);
+
+      // 应该保存到标准位置
+      expect(saveSolidDatasetAt).toHaveBeenCalledWith(
+        'https://alice.example/settings/privateTypeIndex.ttl',
+        expect.anything(),
+        expect.objectContaining({ fetch: expect.any(Function) })
+      );
     });
   });
 });

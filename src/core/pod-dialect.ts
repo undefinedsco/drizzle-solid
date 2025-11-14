@@ -1021,7 +1021,8 @@ export class PodDialect {
         rdfClass: table.config.rdfClass,
         containerPath: table.config.containerPath,
         forClass: table.config.name,
-        instanceContainer: `${this.podUrl.replace(/\/$/, '')}${table.config.containerPath}`
+        instanceContainer: `${this.podUrl.replace(/\/$/, '')}${table.config.containerPath}`,
+        isPublic: (table as any)._.config?.isPublic || false // 从 table config 中获取 isPublic
       };
 
       try {

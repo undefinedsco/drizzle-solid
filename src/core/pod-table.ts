@@ -257,6 +257,7 @@ export interface PodTableOptions {
   rdfClass: RdfTermInput;
   namespace?: NamespaceConfig; // 默认命名空间
   autoRegister?: boolean;
+  isPublic?: boolean; // 是否注册到公开 TypeIndex (默认 false，注册到私有)
   /** @deprecated 将在未来版本移除，请使用 resourcePath 上的 `sparql:` 前缀 */
   resourceMode?: 'ldp' | 'sparql';
   /** @deprecated 将在未来版本移除，请使用 resourcePath 上的 `sparql:` 前缀 */
