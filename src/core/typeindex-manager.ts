@@ -67,56 +67,120 @@ export class TypeIndexManager {
    */
   async findTypeIndex(): Promise<string | null> {
     try {
-      // 获取用户的 WebID 文档
-      const profileDataset = await getSolidDataset(this.webId, { fetch: this.fetchFn });
-      const profile = getThing(profileDataset, this.webId);
+      // 第一步：主动获取 profile 数据（即使 session 跳过了 profile）
+      let profileDataset;
+      let profile;
 
-      if (!profile) {
-        throw new Error('Could not find profile in WebID document');
-      }
+      try {
+        console.log('Fetching WebID profile document...');
+        profileDataset = await getSolidDataset(this.webId, { fetch: this.fetchFn });
 
-      // 1. 首先从 profile 中查找 TypeIndex 链接
-      const typeIndexUrls = getUrl(profile, 'http://www.w3.org/ns/solid/terms#typeIndex');
-      
-      if (typeIndexUrls) {
-        const typeIndexUrl = Array.isArray(typeIndexUrls) ? typeIndexUrls[0] : typeIndexUrls;
-        console.log(`Found TypeIndex in profile: ${typeIndexUrl}`);
-        return typeIndexUrl;
-      }
+        if (!profileDataset) {
+          console.warn('WebID document is empty, attempting to refetch...');
+          // 尝试强制重新获取
+          profileDataset = await getSolidDataset(this.webId, {
+            fetch: this.fetchFn,
+            // 强制刷新，不使用缓存
+          });
+        }
 
-      // 2. 如果 profile 中没有，尝试从存储根目录查找
-      const storageUrls = getUrl(profile, RDF_PREDICATES.SOLID_STORAGE);
-      
-      if (storageUrls) {
-        const storageUrl = Array.isArray(storageUrls) ? storageUrls[0] : storageUrls;
-        
-        try {
-          const storageDataset = await getSolidDataset(storageUrl, { fetch: this.fetchFn });
-          const storageThing = getThing(storageDataset, storageUrl);
-          
-          if (storageThing) {
-            const typeIndexLink = getUrl(storageThing, 'http://www.w3.org/ns/solid/terms#typeIndex');
-            if (typeIndexLink) {
-              const typeIndexUrl = Array.isArray(typeIndexLink) ? typeIndexLink[0] : typeIndexLink;
-              console.log(`Found TypeIndex in storage: ${typeIndexUrl}`);
-              return typeIndexUrl;
+        if (profileDataset) {
+          profile = getThing(profileDataset, this.webId);
+
+          if (!profile) {
+            console.warn('Profile thing not found in dataset, trying alternative approaches...');
+            // 尝试获取 dataset 中的所有 things，可能 webId 格式不同
+            const allThings = getThingAll(profileDataset);
+            if (allThings.length > 0) {
+              profile = allThings[0]; // 使用第一个 thing
+              console.log('Using first thing from dataset as profile');
             }
+          } else {
+            console.log('Successfully loaded profile from WebID document');
           }
-        } catch (error) {
-          console.log('Could not access storage directory:', error);
+        }
+      } catch (error) {
+        console.warn('Could not fetch WebID document:', error);
+        // 继续执行 fallback 逻辑
+      }
+
+      if (profile) {
+        // 1. 首先查找 Private TypeIndex (优先)
+        const privateTypeIndexUrls = getUrl(profile, 'http://www.w3.org/ns/solid/terms#privateTypeIndex');
+        if (privateTypeIndexUrls) {
+          const typeIndexUrl = Array.isArray(privateTypeIndexUrls) ? privateTypeIndexUrls[0] : privateTypeIndexUrls;
+          console.log(`Found Private TypeIndex in profile: ${typeIndexUrl}`);
+          return typeIndexUrl;
+        }
+
+        // 2. 查找 Public TypeIndex
+        const publicTypeIndexUrls = getUrl(profile, 'http://www.w3.org/ns/solid/terms#publicTypeIndex');
+        if (publicTypeIndexUrls) {
+          const typeIndexUrl = Array.isArray(publicTypeIndexUrls) ? publicTypeIndexUrls[0] : publicTypeIndexUrls;
+          console.log(`Found Public TypeIndex in profile: ${typeIndexUrl}`);
+          return typeIndexUrl;
+        }
+
+        // 3. 兼容旧的 typeIndex 谓词
+        const legacyTypeIndexUrls = getUrl(profile, 'http://www.w3.org/ns/solid/terms#typeIndex');
+        if (legacyTypeIndexUrls) {
+          const typeIndexUrl = Array.isArray(legacyTypeIndexUrls) ? legacyTypeIndexUrls[0] : legacyTypeIndexUrls;
+          console.log(`Found legacy TypeIndex in profile: ${typeIndexUrl}`);
+          return typeIndexUrl;
+        }
+
+        // 4. 如果 profile 中没有，尝试从存储根目录查找
+        const storageUrls = getUrl(profile, RDF_PREDICATES.SOLID_STORAGE);
+
+        if (storageUrls) {
+          const storageUrl = Array.isArray(storageUrls) ? storageUrls[0] : storageUrls;
+
+          try {
+            const storageDataset = await getSolidDataset(storageUrl, { fetch: this.fetchFn });
+            const storageThing = getThing(storageDataset, storageUrl);
+
+            if (storageThing) {
+              const privateTypeIndexLink = getUrl(storageThing, 'http://www.w3.org/ns/solid/terms#privateTypeIndex');
+              if (privateTypeIndexLink) {
+                const typeIndexUrl = Array.isArray(privateTypeIndexLink) ? privateTypeIndexLink[0] : privateTypeIndexLink;
+                console.log(`Found Private TypeIndex in storage: ${typeIndexUrl}`);
+                return typeIndexUrl;
+              }
+
+              const publicTypeIndexLink = getUrl(storageThing, 'http://www.w3.org/ns/solid/terms#publicTypeIndex');
+              if (publicTypeIndexLink) {
+                const typeIndexUrl = Array.isArray(publicTypeIndexLink) ? publicTypeIndexLink[0] : publicTypeIndexLink;
+                console.log(`Found Public TypeIndex in storage: ${typeIndexUrl}`);
+                return typeIndexUrl;
+              }
+            }
+          } catch (error) {
+            console.log('Could not access storage directory:', error);
+          }
+        }
+      } else {
+        console.warn('Could not find profile in WebID document, trying fallback methods');
+      }
+
+      // 5. 尝试标准位置作为 fallback
+      const standardLocations = [
+        `${this.podUrl}settings/privateTypeIndex.ttl`,
+        `${this.podUrl}settings/publicTypeIndex.ttl`,
+        `${this.podUrl}settings/typeIndex.ttl`
+      ];
+
+      for (const location of standardLocations) {
+        try {
+          await getSolidDataset(location, { fetch: this.fetchFn });
+          console.log(`Found TypeIndex at standard location: ${location}`);
+          return location;
+        } catch {
+          // 继续尝试下一个位置
         }
       }
 
-      // 3. 最后尝试标准位置
-      const standardTypeIndexUrl = `${this.podUrl}settings/typeIndex.ttl`;
-      try {
-        await getSolidDataset(standardTypeIndexUrl, { fetch: this.fetchFn });
-        console.log(`Found TypeIndex at standard location: ${standardTypeIndexUrl}`);
-        return standardTypeIndexUrl;
-      } catch {
-        console.log('No TypeIndex found');
-        return null;
-      }
+      console.log('No TypeIndex found');
+      return null;
     } catch (error) {
       console.error('Error finding TypeIndex:', error);
       return null;
