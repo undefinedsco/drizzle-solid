@@ -1097,15 +1097,47 @@ export class PodDialect {
     }
 
     try {
+      // 从 resourcePath 提取 containerPath
+      const descriptor = this.resolveTableResource(table);
+      let containerPath = table.config.containerPath || '/data/';
+      let instanceContainer = `${this.podUrl.replace(/\/$/, '')}${containerPath}`;
+
+      if (descriptor.mode === 'ldp') {
+        // 从实际的 containerUrl 提取路径
+        const containerUrl = descriptor.containerUrl;
+        const podUrlBase = this.podUrl.replace(/\/$/, '');
+        if (containerUrl.startsWith(podUrlBase)) {
+          containerPath = containerUrl.substring(podUrlBase.length);
+          instanceContainer = containerUrl.replace(/\/$/, '') + '/';
+        }
+      }
+
+      const rdfClass = typeof table.config.rdfClass === 'string'
+        ? table.config.rdfClass
+        : (table.config.rdfClass as any).value || String(table.config.rdfClass);
+
       const entry: TypeIndexEntry = {
-        rdfClass: table.config.rdfClass,
-        containerPath: table.config.containerPath,
+        rdfClass,
+        containerPath,
         forClass: table.config.name,
-        instanceContainer: `${this.podUrl.replace(/\/$/, '')}${table.config.containerPath}`,
-        isPublic: (table as any)._.config?.isPublic || false // 从 table config 中获取 isPublic
+        instanceContainer,
+        isPublic: (table as any)._.config?.isPublic || false
       };
 
+      // 检查 TypeIndex 中是否已存在，如果路径不同则更新
       try {
+        const existingEntry = await this.typeIndexManager.discoverSpecificType(rdfClass);
+
+        if (existingEntry && existingEntry.instanceContainer !== instanceContainer) {
+          console.warn(
+            `[registerTable] ⚠️  TypeIndex has different path for ${table.config.name}:\n` +
+            `  - TypeIndex: ${existingEntry.instanceContainer}\n` +
+            `  - Configured: ${instanceContainer}\n` +
+            `  Updating TypeIndex to use configured path...`
+          );
+        }
+
+        // 总是注册/更新到 TypeIndex（这会覆盖旧的注册）
         await this.typeIndexManager.registerType(entry);
       } catch (error: unknown) {
         const message = error instanceof Error ? error.message : String(error);
@@ -1122,7 +1154,7 @@ export class PodDialect {
           console.warn('[registerTable] TypeIndex registration failed. Continuing without registration.', error);
         }
       }
-      console.log(`Table ${table.config.name} registered to TypeIndex`);
+      console.log(`Table ${table.config.name} registered to TypeIndex with path: ${instanceContainer}`);
     } catch (error) {
       console.error(`Failed to register table ${table.config.name}:`, error);
       throw error;
