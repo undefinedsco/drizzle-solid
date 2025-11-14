@@ -1187,7 +1187,7 @@ export class PodDialect {
     }
   }
 
-  // 确保容器存在
+  // 确保容器存在（递归创建父目录）
   private async ensureContainerExists(containerUrl: string): Promise<void> {
     try {
       const targetContainer = this.normalizeContainerKey(containerUrl);
@@ -1201,13 +1201,21 @@ export class PodDialect {
       });
 
       if (checkResponse.status === 401 || checkResponse.status === 403) {
-        console.log(`[INSERT] 容器 ${targetContainer} 不允许 HEAD，视为已存在`);
+        console.log(`[Container] ${targetContainer} 不允许 HEAD，视为已存在`);
         this.markContainerPrepared(targetContainer);
         return;
       }
 
       if (checkResponse.status === 404) {
-        console.log(`[INSERT] 创建容器: ${targetContainer}`);
+        // 先递归创建父容器
+        const parentContainer = this.getParentContainer(targetContainer);
+        if (parentContainer && parentContainer !== targetContainer) {
+          console.log(`[Container] 先创建父容器: ${parentContainer}`);
+          await this.ensureContainerExists(parentContainer);
+        }
+
+        // 再创建当前容器
+        console.log(`[Container] 创建容器: ${targetContainer}`);
         const createResponse = await this.session.fetch(targetContainer, {
           method: 'PUT',
           headers: {
@@ -1217,26 +1225,52 @@ export class PodDialect {
         });
 
         if (createResponse.ok) {
-          console.log(`[INSERT] 容器创建成功: ${createResponse.status}`);
+          console.log(`[Container] 容器创建成功: ${createResponse.status}`);
           this.markContainerPrepared(targetContainer);
         } else if (createResponse.status === 409) {
-          console.log(`[INSERT] 容器已存在（409冲突）: ${targetContainer}`);
+          console.log(`[Container] 容器已存在（409冲突）: ${targetContainer}`);
           this.markContainerPrepared(targetContainer);
         } else {
           throw new Error(`Failed to create container: ${createResponse.status} ${createResponse.statusText}`);
         }
       } else if (checkResponse.status === 200) {
-        console.log(`[INSERT] 容器已存在: ${targetContainer}`);
+        console.log(`[Container] 容器已存在: ${targetContainer}`);
         this.markContainerPrepared(targetContainer);
       } else if (checkResponse.status === 409) {
-        console.log(`[INSERT] 容器已存在（409冲突）: ${targetContainer}`);
+        console.log(`[Container] 容器已存在（409冲突）: ${targetContainer}`);
         this.markContainerPrepared(targetContainer);
       } else if (!checkResponse.ok) {
         throw new Error(`Failed to check container: ${checkResponse.status} ${checkResponse.statusText}`);
       }
     } catch (error) {
-      console.error('[INSERT] 确保容器存在时出错:', error);
+      console.error('[Container] 确保容器存在时出错:', error);
       throw error;
+    }
+  }
+
+  /**
+   * 获取父容器 URL
+   * 例如: https://pod.com/alice/data/users/ -> https://pod.com/alice/data/
+   */
+  private getParentContainer(containerUrl: string): string | null {
+    try {
+      const url = new URL(containerUrl);
+      const pathParts = url.pathname.split('/').filter(part => part.length > 0);
+
+      // 如果已经是根目录或只有一层，返回 null
+      if (pathParts.length <= 1) {
+        return null;
+      }
+
+      // 移除最后一个路径部分
+      pathParts.pop();
+
+      // 重建父容器 URL
+      url.pathname = '/' + pathParts.join('/') + '/';
+      return url.toString();
+    } catch (error) {
+      console.error('[Container] 解析父容器 URL 失败:', error);
+      return null;
     }
   }
 
