@@ -69,6 +69,12 @@ npm run test:sparql           # Test native SPARQL execution
 - Runtime validation via Zod schemas
 - Type inference for insert/update/select operations
 
+**Conflict Resolution** (`src/core/conflict-resolution.ts`)
+- Handles concurrent write conflicts (412 Precondition Failed errors)
+- Automatic retry with exponential backoff
+- Multiple merge strategies: last-write-wins, field-level-merge, timestamp-based, user-resolution
+- Leverages Solid's ETag mechanism for optimistic concurrency control
+
 ### Data Flow
 
 1. **Query Building**: Use Drizzle query builders (select, insert, update, delete)
@@ -120,5 +126,109 @@ npm run test:sparql           # Test native SPARQL execution
 
 See `examples/` directory for complete walkthroughs:
 - `01-server-setup.ts`: Pod creation and server setup
-- `02-authentication.ts`: Session management patterns  
+- `02-authentication.ts`: Session management patterns
 - `03-basic-usage.ts`: CRUD operations and query examples
+
+### Handling Concurrent Write Conflicts
+
+When multiple applications (or multiple instances of the same application) write to the same Solid resource simultaneously, 412 Precondition Failed errors can occur. The `ConflictResolver` handles these conflicts automatically.
+
+#### Basic Usage - Automatic Retry
+
+```typescript
+import { getSolidDataset, setThing, buildThing } from '@inrupt/solid-client';
+import { saveWithConflictResolution } from 'drizzle-solid';
+
+// Simple retry with default settings (last-write-wins, 3 retries)
+const result = await saveWithConflictResolution(
+  session.fetch,
+  'https://pod.example/data/notes.ttl',
+  async (dataset) => {
+    const thing = buildThing(createThing({ name: 'note1' }))
+      .addStringNoLocale('https://schema.org/name', 'My Note')
+      .addStringNoLocale('https://schema.org/description', 'Updated content')
+      .build();
+
+    return setThing(dataset, thing);
+  }
+);
+
+if (result.success) {
+  console.log(`Saved after ${result.retries} retries`);
+} else {
+  console.error(`Failed: ${result.error}`);
+}
+```
+
+#### Advanced Usage - Field-Level Merge
+
+```typescript
+import { ConflictResolver } from 'drizzle-solid';
+
+// Create resolver with field-level merge strategy
+const resolver = new ConflictResolver(session.fetch, {
+  strategy: 'field-level-merge',
+  maxRetries: 5,
+  retryDelay: 100,
+  logging: true
+});
+
+// Save specific Thing with merge
+const localThing = buildThing(createThing({ url: noteUrl }))
+  .addStringNoLocale('https://schema.org/name', 'Updated Title')
+  .addDatetime('https://schema.org/dateModified', new Date())
+  .build();
+
+const result = await resolver.saveThingWithMerge(
+  'https://pod.example/data/notes.ttl',
+  noteUrl,
+  localThing,
+  [
+    'https://schema.org/name',
+    'https://schema.org/dateModified'
+  ]
+);
+```
+
+#### Timestamp-Based Merge
+
+```typescript
+// Automatically choose the most recent version based on dateModified
+const resolver = new ConflictResolver(session.fetch, {
+  strategy: 'timestamp-based',
+  maxRetries: 3
+});
+
+await resolver.saveThingWithMerge(
+  resourceUrl,
+  thingUrl,
+  updatedThing,
+  predicates
+);
+```
+
+#### Custom Merge Strategy
+
+```typescript
+// Define custom conflict resolution logic
+const resolver = new ConflictResolver(session.fetch, {
+  strategy: 'user-resolution',
+  resolver: (local, remote, predicates) => {
+    // Custom logic: merge arrays, keep highest numeric values, etc.
+    return buildThing(remote)
+      .addStringNoLocale('https://schema.org/name',
+        getStringNoLocale(local, 'https://schema.org/name'))
+      .build();
+  }
+});
+```
+
+### Merge Strategies Explained
+
+1. **last-write-wins** (default): Your local changes completely overwrite the remote version. Simple but may lose concurrent modifications from other apps.
+
+2. **field-level-merge**: Only updates the predicates you specify, preserving other fields from the remote version. Best for selective updates when multiple apps modify different fields.
+
+3. **timestamp-based**: Compares `dateModified` timestamps and keeps the most recent version. Useful when temporal ordering matters.
+
+4. **user-resolution**: Provide a custom function to merge conflicts according to your application's business logic.

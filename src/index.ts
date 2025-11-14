@@ -157,3 +157,13 @@ export {
 
 // 命名空间辅助
 export { namespace, VCARD, FOAF, LDP, SCHEMA } from './namespaces';
+
+// 并发冲突解析
+export {
+  ConflictResolver,
+  createConflictResolver,
+  saveWithConflictResolution,
+  type MergeStrategy,
+  type ConflictResolutionConfig,
+  type ConflictResolutionResult
+} from './core/conflict-resolution';
