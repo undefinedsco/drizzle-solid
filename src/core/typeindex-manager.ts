@@ -190,31 +190,73 @@ export class TypeIndexManager {
 
   /**
    * 创建 TypeIndex（自动链接到 profile）
+   * @param isPublic 是否创建公开 TypeIndex，默认为 false (创建私有)
+   * @deprecated 建议使用 createPrivateTypeIndex() 或 createPublicTypeIndex()
    */
-  async createTypeIndex(): Promise<string> {
-    // 使用标准位置，自动链接到 profile
-    const typeIndexUrl = `${this.podUrl}settings/typeIndex.ttl`;
-    
+  async createTypeIndex(isPublic: boolean = false): Promise<string> {
+    if (isPublic) {
+      return this.createPublicTypeIndex();
+    } else {
+      return this.createPrivateTypeIndex();
+    }
+  }
+
+  /**
+   * 创建私有 TypeIndex
+   */
+  async createPrivateTypeIndex(): Promise<string> {
+    const typeIndexUrl = `${this.podUrl}settings/privateTypeIndex.ttl`;
+
     try {
       // 1. 创建 TypeIndex 文档
       const typeIndexThing = buildThing(createThing({ url: typeIndexUrl }))
         .addUrl(RDF_PREDICATES.RDF_TYPE, 'http://www.w3.org/ns/solid/terms#TypeIndex')
-        .addStringNoLocale(RDF_PREDICATES.FOAF_NAME, 'Type Index')
-        .addStringNoLocale('http://purl.org/dc/terms/description', 'Type index for this Pod')
+        .addStringNoLocale(RDF_PREDICATES.FOAF_NAME, 'Private Type Index')
+        .addStringNoLocale('http://purl.org/dc/terms/description', 'Private type index for this Pod')
         .build();
 
       const dataset = setThing(createSolidDataset(), typeIndexThing);
-      
+
       // 保存 TypeIndex 文档
       await saveSolidDatasetAt(typeIndexUrl, dataset, { fetch: this.fetchFn });
-      
+
       // 2. 自动链接到用户的 profile
-      await this.linkTypeIndexToProfile(typeIndexUrl);
-      
-      console.log(`TypeIndex created and linked to profile: ${typeIndexUrl}`);
+      await this.linkTypeIndexToProfile(typeIndexUrl, false);
+
+      console.log(`Private TypeIndex created and linked to profile: ${typeIndexUrl}`);
       return typeIndexUrl;
     } catch (error) {
-      console.error('Error creating TypeIndex:', error);
+      console.error('Error creating private TypeIndex:', error);
+      throw error;
+    }
+  }
+
+  /**
+   * 创建公开 TypeIndex
+   */
+  async createPublicTypeIndex(): Promise<string> {
+    const typeIndexUrl = `${this.podUrl}settings/publicTypeIndex.ttl`;
+
+    try {
+      // 1. 创建 TypeIndex 文档
+      const typeIndexThing = buildThing(createThing({ url: typeIndexUrl }))
+        .addUrl(RDF_PREDICATES.RDF_TYPE, 'http://www.w3.org/ns/solid/terms#TypeIndex')
+        .addStringNoLocale(RDF_PREDICATES.FOAF_NAME, 'Public Type Index')
+        .addStringNoLocale('http://purl.org/dc/terms/description', 'Public type index for this Pod')
+        .build();
+
+      const dataset = setThing(createSolidDataset(), typeIndexThing);
+
+      // 保存 TypeIndex 文档
+      await saveSolidDatasetAt(typeIndexUrl, dataset, { fetch: this.fetchFn });
+
+      // 2. 自动链接到用户的 profile
+      await this.linkTypeIndexToProfile(typeIndexUrl, true);
+
+      console.log(`Public TypeIndex created and linked to profile: ${typeIndexUrl}`);
+      return typeIndexUrl;
+    } catch (error) {
+      console.error('Error creating public TypeIndex:', error);
       throw error;
     }
   }
@@ -222,7 +264,7 @@ export class TypeIndexManager {
   /**
    * 将 TypeIndex 链接到用户的 profile
    */
-  private async linkTypeIndexToProfile(typeIndexUrl: string): Promise<void> {
+  private async linkTypeIndexToProfile(typeIndexUrl: string, isPublic: boolean): Promise<void> {
     try {
       // 获取用户的 profile
       const profileDataset = await getSolidDataset(this.webId, { fetch: this.fetchFn });
@@ -232,17 +274,23 @@ export class TypeIndexManager {
         throw new Error('Could not find profile in WebID document');
       }
 
+      // 根据可见性选择正确的谓词
+      const predicate = isPublic
+        ? 'http://www.w3.org/ns/solid/terms#publicTypeIndex'
+        : 'http://www.w3.org/ns/solid/terms#privateTypeIndex';
+
       // 添加 TypeIndex 链接到 profile
       const updatedProfile = buildThing(profile)
-        .addUrl('http://www.w3.org/ns/solid/terms#typeIndex', typeIndexUrl)
+        .addUrl(predicate, typeIndexUrl)
         .build();
 
       const updatedDataset = setThing(profileDataset, updatedProfile);
-      
+
       // 保存更新后的 profile
       await saveSolidDatasetAt(this.webId, updatedDataset, { fetch: this.fetchFn });
-      
-      console.log(`TypeIndex linked to profile: ${typeIndexUrl}`);
+
+      const visibility = isPublic ? 'public' : 'private';
+      console.log(`${visibility} TypeIndex linked to profile: ${typeIndexUrl}`);
     } catch (error) {
       console.error('Error linking TypeIndex to profile:', error);
       throw error;

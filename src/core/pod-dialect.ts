@@ -1032,7 +1032,8 @@ export class PodDialect {
         if (message.includes('TypeIndex not found')) {
           console.warn('[registerTable] TypeIndex missing. Attempting to create.');
           try {
-            const typeIndexUrl = await this.typeIndexManager.createTypeIndex();
+            // 根据 isPublic 创建对应的 TypeIndex
+            const typeIndexUrl = await this.typeIndexManager.createTypeIndex(entry.isPublic || false);
             await this.typeIndexManager.registerType(entry, typeIndexUrl);
           } catch (creationError: unknown) {
             console.warn('[registerTable] Unable to create TypeIndex. Continuing without registration.', creationError);
