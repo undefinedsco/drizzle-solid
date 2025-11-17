@@ -20,10 +20,9 @@ describe('PodDialect resolveTableUrls source selection', () => {
     const usersTable = podTable('users', {
       id: string('id').primaryKey().predicate('https://schema.org/identifier')
     }, {
-      resourcePath: 'https://pod.example.com/data/users.ttl',
+      base: 'https://pod.example.com/data/users.ttl',
       rdfClass: 'https://schema.org/Person',
-      namespace: { prefix: 'schema', uri: 'https://schema.org/' },
-      autoRegister: false
+      namespace: { prefix: 'schema', uri: 'https://schema.org/' }
     });
 
     const resource = (dialect as any).resolveTableResource(usersTable);
@@ -50,10 +49,9 @@ describe('PodDialect resolveTableUrls source selection', () => {
     const postsTable = podTable('posts', {
       id: string('id').primaryKey().predicate('https://schema.org/identifier')
     }, {
-      resourcePath: 'shared/posts.ttl',
+      base: 'shared/posts.ttl',
       rdfClass: 'https://schema.org/CreativeWork',
-      namespace: { prefix: 'schema', uri: 'https://schema.org/' },
-      autoRegister: false
+      namespace: { prefix: 'schema', uri: 'https://schema.org/' }
     });
 
     const resource = (dialect as any).resolveTableResource(postsTable);
@@ -74,23 +72,22 @@ describe('PodDialect resolveTableUrls source selection', () => {
     expect(sources).toEqual(['https://example.com/profile/shared/posts.ttl']);
   });
 
-  it('returns SPARQL source objects for endpoint-backed tables', () => {
+  it('derives resource path from container-style base values', () => {
     const dialect = new PodDialect({ session: createSession() });
 
     const logTable = podTable('logs', {
       id: string('id').primaryKey().predicate('https://schema.org/identifier')
     }, {
-      resourcePath: 'https://pod.example.com/sparql',
+      base: 'logs/',
       rdfClass: 'https://schema.org/Message',
-      namespace: { prefix: 'schema', uri: 'https://schema.org/' },
-      autoRegister: false,
-      resourceMode: 'sparql'
+      namespace: { prefix: 'schema', uri: 'https://schema.org/' }
     });
 
     const resource = (dialect as any).resolveTableResource(logTable);
     expect(resource).toEqual({
-      mode: 'sparql',
-      endpoint: 'https://pod.example.com/sparql'
+      mode: 'ldp',
+      containerUrl: 'https://example.com/profile/logs/',
+      resourceUrl: 'https://example.com/profile/logs/logs.ttl'
     });
 
     const plan = {
@@ -101,6 +98,6 @@ describe('PodDialect resolveTableUrls source selection', () => {
     } as unknown as SelectQueryPlan;
 
     const sources = (dialect as any).collectSelectSources(plan);
-    expect(sources).toEqual([{ type: 'sparql', value: 'https://pod.example.com/sparql' }]);
+    expect(sources).toEqual(['https://example.com/profile/logs/logs.ttl']);
   });
 });

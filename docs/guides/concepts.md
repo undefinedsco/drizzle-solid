@@ -7,7 +7,7 @@ Drizzle Solid 建立在 Solid 规范之上，通过 SQL 风格的 API 操作 RDF
 - **Pod (Personal Online Datastore)**：用户私有的数据空间，每个 Pod 可以托管在不同的服务器上。
 - **Community Solid Server (CSS)**：本项目测试与示例使用的开源 Solid 服务器实现。
 
-在 Drizzle Solid 中，每张表都会指定 `containerPath`，方言会在绑定的 Pod 中定位或创建对应的容器与 Turtle 资源：
+在 Drizzle Solid 中，每张表需要指定目标 Turtle 资源的 `base`（可以是相对 Pod 的路径或绝对 URL），方言会在绑定的 Pod 中定位或创建对应的容器与资源：
 
 ```ts
 import { podTable, string, int } from 'drizzle-solid';
@@ -17,12 +17,13 @@ export const profiles = podTable('profiles', {
   name: string('name').notNull(),
   age: int('age')
 }, {
-  containerPath: '/profiles/',
+  // 资源文件：/profiles/profiles.ttl
+  base: '/profiles/profiles.ttl',
   rdfClass: 'https://schema.org/Person'
 });
 ```
 
-> `containerPath` 必须以 `/` 结尾；底层资源将命名为 `<container>/profiles.ttl`。
+> `base` 可以是相对路径（自动拼到当前 Pod 根）或绝对 URL；CRUD 前请调用 `db.init([table])` 以确保容器/资源存在。
 
 ## WebID
 WebID 是用户在 Solid 生态中的唯一身份 URL，例如 `https://localhost:3001/alice/profile/card#me`。集成测试会在登录后的 `session.info.webId` 中暴露该地址。
@@ -52,10 +53,17 @@ const contacts = podTable('contacts', {
   nickname: string('nickname').predicate(FOAF.nick),
   favorite: string('favorite').predicate(LINQ.profileFavorite)
 }, {
-  resourcePath: 'idp:///contacts/index.ttl',
+  // 目标资源（必填，可相对 Pod 基路径）
+  base: 'idp:///contacts/index.ttl',
   rdfClass: FOAF.Person,
-  namespace: LINQ
+  namespace: LINQ,
+  // 可选 TypeIndex 注册，默认不注册
+  typeIndex: 'private' // 'public' | 'private' | undefined
 });
+
+const db = drizzle(session);
+// 初始化容器/资源，再进行 CRUD
+await db.init([contacts]);
 ```
 
 ## 权限与 ACL

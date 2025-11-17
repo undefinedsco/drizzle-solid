@@ -108,4 +108,28 @@ export class PodDatabase<TSchema extends Record<string, unknown> = Record<string
   async addSourcesFromTypeIndex(): Promise<void> {
     return await this.dialect.addSourcesFromTypeIndex();
   }
+
+  async init<TTable extends PodTable<any>>(...tables: Array<TTable | TTable[]>): Promise<void> {
+    const flattened: PodTable<any>[] = [];
+    for (const entry of tables) {
+      if (!entry) continue;
+      if (Array.isArray(entry)) {
+        for (const table of entry) {
+          if (table) {
+            flattened.push(table);
+          }
+        }
+      } else {
+        flattened.push(entry);
+      }
+    }
+
+    for (const table of flattened) {
+      if (typeof table.init === 'function') {
+        await table.init(this.dialect);
+      } else {
+        await this.dialect.registerTable(table);
+      }
+    }
+  }
 }

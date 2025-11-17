@@ -1,4 +1,4 @@
-import { describe } from '@jest/globals';
+import { describe } from 'vitest';
 
 export const ENABLE_REAL_TESTS = process.env.SOLID_ENABLE_REAL_TESTS !== 'false';
 

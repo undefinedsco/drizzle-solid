@@ -42,7 +42,7 @@ describe('PodDialect resource URL normalization', () => {
   const fetchMock = vi.fn() as vi.MockedFunction<typeof fetch>;
 const table = new PodTable('profile', {}, {
   containerPath: '/profile/',
-  resourcePath: 'idp:///profile/card',
+  base: 'idp:///profile/card',
   rdfClass: 'http://xmlns.com/foaf/0.1/Person'
   });
 

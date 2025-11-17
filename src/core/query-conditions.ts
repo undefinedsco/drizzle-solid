@@ -83,6 +83,11 @@ export function like(column: PodColumnBase | string, pattern: string): QueryCond
   return createBinaryCondition(column, 'LIKE', pattern);
 }
 
+// REGEX 条件（自定义正则）
+export function regex(column: PodColumnBase | string, pattern: string, flags?: string): QueryCondition {
+  return createBinaryCondition(column, 'REGEX', { pattern, flags });
+}
+
 // IN 条件
 export function inArray(column: PodColumnBase | string, values: any[]): QueryCondition {
   const { columnName, tableName } = resolveColumnAndTable(column);
@@ -171,6 +176,7 @@ export const conditions = {
   lt,
   lte,
   like,
+  regex,
   inArray,
   notInArray,
   isNull,

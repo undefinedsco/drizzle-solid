@@ -8,7 +8,7 @@ export interface TypeIndexEntry {
   instanceContainer?: string; // 实例容器路径（自动从 webId 推导）
   classRegistry?: string;    // 类注册表路径
   table?: any;               // 可选的预定义表结构
-  isPublic?: boolean;        // 是否注册到公开 TypeIndex (默认 false，注册到私有)
+  visibility?: 'public' | 'private'; // TypeIndex 可见性
 }
 
 export interface DiscoveredTable {
@@ -24,8 +24,7 @@ export interface TypeIndexConfig {
   webId: string;
   podUrl: string;
   fetch?: typeof fetch;
-  autoCreate?: boolean;      // 是否自动创建 TypeIndex
-  autoRegister?: boolean;    // 是否自动注册新类型
+  autoCreate?: boolean;
 }
 
 export class TypeIndexManager {
@@ -47,8 +46,7 @@ export class TypeIndexManager {
       webId: this.webId,
       podUrl: this.podUrl,
       fetch: this.fetchFn,
-      autoCreate: true,
-      autoRegister: true
+      autoCreate: true
     };
   }
 
@@ -165,9 +163,9 @@ export class TypeIndexManager {
 
       // 5. 尝试标准位置作为 fallback
       const standardLocations = [
-        `${this.podUrl}settings/privateTypeIndex.ttl`,
-        `${this.podUrl}settings/publicTypeIndex.ttl`,
-        `${this.podUrl}settings/typeIndex.ttl`
+        this.joinWithPodBase('settings/privateTypeIndex.ttl'),
+        this.joinWithPodBase('settings/publicTypeIndex.ttl'),
+        this.joinWithPodBase('settings/typeIndex.ttl')
       ];
 
       for (const location of standardLocations) {
@@ -205,7 +203,7 @@ export class TypeIndexManager {
    * 创建私有 TypeIndex
    */
   async createPrivateTypeIndex(): Promise<string> {
-    const typeIndexUrl = `${this.podUrl}settings/privateTypeIndex.ttl`;
+    const typeIndexUrl = this.joinWithPodBase('settings/privateTypeIndex.ttl');
 
     try {
       // 1. 创建 TypeIndex 文档
@@ -235,7 +233,7 @@ export class TypeIndexManager {
    * 创建公开 TypeIndex
    */
   async createPublicTypeIndex(): Promise<string> {
-    const typeIndexUrl = `${this.podUrl}settings/publicTypeIndex.ttl`;
+    const typeIndexUrl = this.joinWithPodBase('settings/publicTypeIndex.ttl');
 
     try {
       // 1. 创建 TypeIndex 文档
@@ -303,9 +301,9 @@ export class TypeIndexManager {
   async registerType(entry: TypeIndexEntry, typeIndexUrl?: string): Promise<void> {
     let targetTypeIndexUrl = typeIndexUrl;
 
-    // 如果没有指定 TypeIndex URL，根据 isPublic 字段选择合适的 TypeIndex
+    // 如果没有指定 TypeIndex URL，根据可见性选择合适的 TypeIndex
     if (!targetTypeIndexUrl) {
-      const foundUrl = await this.findTypeIndexByVisibility(entry.isPublic || false);
+      const foundUrl = await this.findTypeIndexByVisibility(entry.visibility === 'public');
       if (!foundUrl) {
         throw new Error('TypeIndex not found. Please create one first.');
       }
@@ -340,7 +338,7 @@ export class TypeIndexManager {
       // 保存更新后的 TypeIndex
       await saveSolidDatasetAt(targetTypeIndexUrl, dataset, { fetch: this.fetchFn });
 
-      const visibility = entry.isPublic ? 'public' : 'private';
+      const visibility = entry.visibility === 'public' ? 'public' : 'private';
       console.log(`Type ${entry.forClass} registered to ${visibility} TypeIndex: ${targetTypeIndexUrl}`);
     } catch (error) {
       console.error('Error registering type:', error);
@@ -381,8 +379,8 @@ export class TypeIndexManager {
 
       // Fallback 到标准位置
       const standardLocation = isPublic
-        ? `${this.podUrl}settings/publicTypeIndex.ttl`
-        : `${this.podUrl}settings/privateTypeIndex.ttl`;
+        ? this.joinWithPodBase('settings/publicTypeIndex.ttl')
+        : this.joinWithPodBase('settings/privateTypeIndex.ttl');
 
       try {
         await getSolidDataset(standardLocation, { fetch: this.fetchFn });
@@ -395,6 +393,35 @@ export class TypeIndexManager {
     } catch (error) {
       console.error(`Error finding ${isPublic ? 'public' : 'private'} TypeIndex:`, error);
       return null;
+    }
+  }
+
+  private joinWithPodBase(path: string): string {
+    try {
+      const base = this.getUserBaseUrl();
+      return new URL(path, base).toString();
+    } catch {
+      return `${this.getUserBaseUrl()}${path}`.replace(/\/+$/, '');
+    }
+  }
+
+  private getUserBaseUrl(): string {
+    const normalize = (base: string): string => (base.endsWith('/') ? base : `${base}/`);
+
+    if (this.podUrl && this.podUrl.trim().length > 0) {
+      try {
+        const pod = new URL(this.podUrl);
+        return normalize(`${pod.origin}${pod.pathname.replace(/\/+$/, '')}`);
+      } catch {
+        return normalize(this.podUrl);
+      }
+    }
+
+    try {
+      const url = new URL(this.webId);
+      return normalize(`${url.origin}`);
+    } catch {
+      return normalize(this.webId);
     }
   }
 

@@ -34,7 +34,7 @@ describe('Zod 集成测试', () => {
       profile: json('profile'),
       metadata: object('metadata')
     }, {
-      resourcePath: 'idp:///users/index.ttl',
+      base: 'idp:///users/index.ttl',
       rdfClass: RDF_CLASSES.SCHEMA_PERSON,
       namespace: schemaNamespace
     });
@@ -302,7 +302,7 @@ describe('Zod 集成测试', () => {
 
     it('应该处理空的表定义', () => {
       const emptyTable = podTable('empty', {}, {
-        resourcePath: 'idp:///empty/index.ttl',
+        base: 'idp:///empty/index.ttl',
         rdfClass: RDF_CLASSES.SCHEMA_PERSON,
         namespace: schemaNamespace
       });
@@ -316,7 +316,7 @@ describe('Zod 集成测试', () => {
         id: int('id').primaryKey(),
         name: string('name').notNull()
       }, {
-        resourcePath: 'idp:///invalid/index.ttl',
+        base: 'idp:///invalid/index.ttl',
         rdfClass: RDF_CLASSES.SCHEMA_PERSON,
         namespace: schemaNamespace
       });

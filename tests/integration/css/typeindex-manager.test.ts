@@ -33,12 +33,6 @@ describe('CSS integration: TypeIndexManager', () => {
     }
   });
 
-  afterAll(async () => {
-    if (session) {
-      await session.logout().catch(() => undefined);
-    }
-  });
-
   test('registers and discovers a type registration', async () => {
     const timestamp = Date.now();
     const entry: TypeIndexEntry = {

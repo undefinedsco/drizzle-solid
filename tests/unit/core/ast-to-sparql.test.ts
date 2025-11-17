@@ -1,6 +1,6 @@
 import { describe, it, expect, beforeEach } from 'vitest';
 import { ASTToSPARQLConverter } from '@src/core/ast-to-sparql';
-import { eq, and, inArray, isNull } from '@src/core/query-conditions';
+import { eq, and, inArray, isNull, regex as regexCond } from '@src/core/query-conditions';
 
 // Mock PodTable
 const mockTable = {
@@ -38,10 +38,10 @@ const mockTable = {
   },
   config: {
     name: 'users',
-    resourcePath: '/users/index.ttl',
+    base: '/users/index.ttl',
     rdfClass: 'https://schema.org/Person',
     namespace: { prefix: 'schema', uri: 'https://schema.org/' },
-    autoRegister: true
+    typeIndex: 'private'
   },
   getContainerPath: () => '/users/',
   getRdfClass: () => 'https://schema.org/Person',
@@ -59,6 +59,65 @@ describe('ASTToSPARQLConverter', () => {
 
   beforeEach(() => {
     converter = new ASTToSPARQLConverter(podUrl);
+  });
+
+  describe('convertSelectPlan', () => {
+    it('应该使用 IR 计划生成 SELECT 查询', () => {
+      const condition = eq(mockTable.columns.name, 'Alice');
+      const plan = {
+        baseTable: mockTable,
+        baseAlias: 'users',
+        select: undefined,
+        selectAll: true,
+        where: undefined,
+        conditionTree: condition,
+        joins: undefined,
+        joinFilters: undefined,
+        groupBy: undefined,
+        orderBy: undefined,
+        distinct: false,
+        limit: undefined,
+        offset: undefined,
+        aliasToTable: new Map<string, any>([['users', mockTable]]),
+        tableToAlias: new Map<any, string>([[mockTable, 'users']])
+      } as any;
+
+      const result = converter.convertSelectPlan(plan);
+      expect(result.type).toBe('SELECT');
+      expect(result.query).toContain('FILTER');
+      expect(result.query).toContain('Alice');
+    });
+
+    it('应该遵循 IR 计划中的 select/order/limit', () => {
+      const plan = {
+        baseTable: mockTable,
+        baseAlias: 'users',
+        select: {
+          userName: mockTable.columns.name
+        },
+        selectAll: false,
+        where: undefined,
+        conditionTree: undefined,
+        joins: undefined,
+        joinFilters: undefined,
+        groupBy: undefined,
+        orderBy: [
+          { rawColumn: 'name', direction: 'desc' }
+        ],
+        distinct: true,
+        limit: 5,
+        offset: 2,
+        aliasToTable: new Map<string, any>([['users', mockTable]]),
+        tableToAlias: new Map<any, string>([[mockTable, 'users']])
+      } as any;
+
+      const result = converter.convertSelectPlan(plan);
+      expect(result.query).toContain('ORDER BY DESC (?name)');
+      expect(result.query).toContain('LIMIT 5');
+      expect(result.query).toContain('OFFSET 2');
+      expect(result.query).toContain('?subject schema:name ?name');
+      expect(result.query).toContain('?name');
+    });
   });
 
   describe('构造函数', () => {
@@ -139,6 +198,16 @@ describe('ASTToSPARQLConverter', () => {
       
       expect(result.query).toContain('"John"');
       expect(result.query).toContain('"john@example.com"');
+    });
+
+    it('应该支持 IR plan 输入', () => {
+      const plan = {
+        table: mockTable,
+        rows: [{ name: 'Carol', email: 'carol@example.com' }]
+      };
+      const result = converter.convertInsert(plan);
+      expect(result.query).toContain('"Carol"');
+      expect(result.query).toContain('"carol@example.com"');
     });
   });
 
@@ -476,7 +545,7 @@ describe('ASTToSPARQLConverter', () => {
   });
 
   describe('@id 查询的 SPARQL 模式顺序', () => {
-    it('应该将 FILTER 放在 BIND 之前', () => {
+    it('应该在 @id 查询中注入 FILTER 约束', () => {
       const ast = {
         type: 'select',
         select: ['id', 'name', 'email'],
@@ -489,15 +558,7 @@ describe('ASTToSPARQLConverter', () => {
 
       // 检查生成的 SPARQL 查询
       expect(result.query).toContain('FILTER');
-      expect(result.query).toContain('BIND');
-
-      // 确保 FILTER 在 BIND 之前
-      const filterIndex = result.query.indexOf('FILTER');
-      const bindIndex = result.query.indexOf('BIND');
-
-      expect(filterIndex).toBeGreaterThan(-1);
-      expect(bindIndex).toBeGreaterThan(-1);
-      expect(filterIndex).toBeLessThan(bindIndex);
+      expect(result.query).not.toContain('BIND(');
     });
 
     it('应该正确处理 subject 字段的过滤', () => {
@@ -515,10 +576,7 @@ describe('ASTToSPARQLConverter', () => {
       expect(result.query).toContain('FILTER');
       expect(result.query).toContain('https://example.com/profile/card#me');
 
-      // 确保 FILTER 在 BIND 之前
-      const filterIndex = result.query.indexOf('FILTER');
-      const bindIndex = result.query.indexOf('BIND');
-      expect(filterIndex).toBeLessThan(bindIndex);
+      expect(result.query).not.toContain('BIND(');
     });
 
     it('应该正确构建包含类型约束和过滤器的 WHERE 子句', () => {
@@ -544,10 +602,33 @@ describe('ASTToSPARQLConverter', () => {
       // 应该包含 name 过滤器
       expect(result.query).toContain('?name');
 
-      // FILTER 应该在 BIND 之前
-      const filterIndex = result.query.indexOf('FILTER');
-      const bindIndex = result.query.indexOf('BIND');
-      expect(filterIndex).toBeLessThan(bindIndex);
+      expect(result.query).not.toContain('BIND(');
+    });
+  });
+
+  describe('generateSubjectUri', () => {
+    it('should resolve fragment ids against table base', () => {
+      const subject = converter.generateSubjectUri({ id: '#me' }, mockTable);
+      expect(subject).toBe('https://example.com/users/index.ttl#me');
+    });
+
+    it('should resolve simple identifiers against table base', () => {
+      const subject = converter.generateSubjectUri({ id: 'profile' }, mockTable);
+      expect(subject).toBe('https://example.com/users/index.ttl#profile');
+    });
+
+    it('should preserve absolute ids', () => {
+      const absolute = 'https://pod.example.com/profile/card#me';
+      const subject = converter.generateSubjectUri({ id: absolute }, mockTable);
+      expect(subject).toBe(absolute);
+    });
+  });
+
+  describe('regex conditions', () => {
+    it('should build regex filter for regex condition', () => {
+      const condition = regexCond(mockTable.columns.name as any, '^Search.*', 'i');
+      const whereClause = converter.buildWhereClauseForCondition(condition, mockTable);
+      expect(whereClause).toContain('REGEX(STR(?name), "^Search.*", "i")');
     });
   });
 });

@@ -216,7 +216,6 @@ describe('TypeIndexManager', () => {
         rdfClass: 'https://schema.org/Person',
         containerPath: '/people/',
         forClass: 'Person'
-        // isPublic 未设置，默认为 false
       };
 
       await manager.registerType(entry);
@@ -233,7 +232,7 @@ describe('TypeIndexManager', () => {
       );
     });
 
-    it('should register to public TypeIndex when isPublic=true', async () => {
+    it('should register to public TypeIndex when visibility=public', async () => {
       const { getSolidDataset, getThing, getUrl, saveSolidDatasetAt } = await import('@inrupt/solid-client');
       const manager = new TypeIndexManager(originalWebId, podUrl);
 
@@ -249,7 +248,7 @@ describe('TypeIndexManager', () => {
         rdfClass: 'https://schema.org/BlogPosting',
         containerPath: '/posts/',
         forClass: 'BlogPost',
-        isPublic: true
+        visibility: 'public'
       };
 
       await manager.registerType(entry);
@@ -289,7 +288,7 @@ describe('TypeIndexManager', () => {
         rdfClass: 'https://schema.org/Event',
         containerPath: '/events/',
         forClass: 'Event',
-        isPublic: false
+        visibility: 'private'
       };
 
       await manager.registerType(entry);

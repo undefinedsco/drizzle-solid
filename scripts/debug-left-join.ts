@@ -14,9 +14,8 @@ async function main() {
     id: string('id').primaryKey(),
     name: string('name').notNull()
   }, {
-    containerPath: usersPath,
-    rdfClass: 'https://schema.org/Person',
-    autoRegister: false
+    base: `${usersPath}users.ttl`,
+    rdfClass: 'https://schema.org/Person'
   });
 
   const postsTable = podTable('posts', {
@@ -24,15 +23,15 @@ async function main() {
     title: string('title').notNull(),
     authorId: string('authorId').notNull()
   }, {
-    containerPath: postsPath,
-    rdfClass: 'https://schema.org/CreativeWork',
-    autoRegister: false
+    base: `${postsPath}posts.ttl`,
+    rdfClass: 'https://schema.org/CreativeWork'
   });
 
   const usersContainer = await ensureContainer(session, usersPath);
   const postsContainer = await ensureContainer(session, postsPath);
   const usersResource = `${usersContainer}${usersTable.config.name}.ttl`;
   const postsResource = `${postsContainer}${postsTable.config.name}.ttl`;
+  await db.init([usersTable, postsTable]);
 
   try {
     await db.insert(usersTable).values([

@@ -15,7 +15,7 @@ describe('Compile-time Types', () => {
         email: field('email', 'https://schema.org/email', 'string'),
         isActive: field('isActive', 'https://schema.org/isActive', 'boolean')
       }, {
-        resourcePath: 'idp:///users/index.ttl',
+        base: 'idp:///users/index.ttl',
         rdfClass: 'https://schema.org/Person',
         namespace: { prefix: 'schema', uri: 'https://schema.org/' }
       });
@@ -50,7 +50,7 @@ describe('Compile-time Types', () => {
   describe('typedTable builder', () => {
     it('应该支持链式调用构建表', () => {
       const usersTable = typedTable('users', {
-        resourcePath: 'idp:///users/index.ttl',
+        base: 'idp:///users/index.ttl',
         rdfClass: 'https://schema.org/Person',
         namespace: { prefix: 'schema', uri: 'https://schema.org/' }
       })
@@ -77,7 +77,7 @@ describe('Compile-time Types', () => {
         email: field('email', 'https://schema.org/email', 'string'),
         isActive: field('isActive', 'https://schema.org/isActive', 'boolean')
       }, {
-        resourcePath: 'idp:///users/index.ttl',
+        base: 'idp:///users/index.ttl',
         rdfClass: 'https://schema.org/Person',
         namespace: { prefix: 'schema', uri: 'https://schema.org/' }
       });
@@ -93,7 +93,7 @@ describe('Compile-time Types', () => {
   describe('复杂场景', () => {
     it('应该支持复杂的表定义', () => {
       const postsTable = typedTable('posts', {
-        resourcePath: 'idp:///posts/index.ttl',
+        base: 'idp:///posts/index.ttl',
         rdfClass: 'https://schema.org/BlogPosting',
         namespace: { prefix: 'schema', uri: 'https://schema.org/' }
       })

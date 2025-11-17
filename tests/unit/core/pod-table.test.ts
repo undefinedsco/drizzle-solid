@@ -38,7 +38,7 @@ describe('PodTable', () => {
     };
 
     options = {
-      resourcePath: 'idp:///users/index.ttl',
+      base: 'idp:///users/index.ttl',
       rdfClass: 'https://schema.org/Person',
       namespace: schemaNamespace
     };
@@ -54,7 +54,7 @@ describe('PodTable', () => {
     });
 
     it('应该设置正确的配置', () => {
-      expect(table.config.containerPath).toBe('/users/');
+      expect(table.config.base).toBe('/users/index.ttl');
       expect(table.config.rdfClass).toBe('https://schema.org/Person');
       expect(table.config.namespace).toEqual(schemaNamespace);
     });
@@ -276,7 +276,7 @@ describe('类型推断', () => {
       email: string('email').notNull(),
       createdAt: date('createdAt'),
     }, {
-      resourcePath: 'idp:///users/index.ttl',
+      base: 'idp:///users/index.ttl',
       rdfClass: RDF_CLASSES.SCHEMA_PERSON,
       namespace: schemaNamespace
     });
@@ -318,7 +318,7 @@ describe('类型推断', () => {
       authorId: int('authorId').notNull().reference(RDF_CLASSES.SCHEMA_PERSON),
       createdAt: date('createdAt'),
     }, {
-      resourcePath: 'idp:///posts/index.ttl',
+      base: 'idp:///posts/index.ttl',
       rdfClass: RDF_CLASSES.SCHEMA_BLOG_POSTING,
       namespace: schemaNamespace
     });
@@ -380,7 +380,7 @@ describe('新的列定义函数', () => {
       avatar: json('avatar'),
       preferences: object('preferences')
     }, {
-      resourcePath: 'idp:///people/index.ttl',
+      base: 'idp:///people/index.ttl',
       rdfClass: RDF_CLASSES.SCHEMA_PERSON,
       namespace: schemaNamespace
     });
@@ -454,7 +454,7 @@ describe('JSON 和 Object 类型推断', () => {
       profile: object('profile'),
       createdAt: date('createdAt'),
     }, {
-      resourcePath: 'idp:///users/index.ttl',
+      base: 'idp:///users/index.ttl',
       rdfClass: RDF_CLASSES.SCHEMA_PERSON,
       namespace: schemaNamespace
     });

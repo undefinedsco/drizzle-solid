@@ -30,7 +30,7 @@ const mockTable = new PodTable('users', {
   id: new PodIntegerColumn('id', { primaryKey: true }),
   name: new PodStringColumn('name', { required: true })
 }, {
-  resourcePath: 'idp:///users/index.ttl',
+  base: 'idp:///users/index.ttl',
   rdfClass: 'https://schema.org/Person',
   namespace: { prefix: 'schema', uri: 'https://schema.org/' }
 });
@@ -229,6 +229,30 @@ describe('SelectQueryBuilder', () => {
     const result = builder.distinct();
     expect(result).toBe(builder);
   });
+
+  it('toIR 应该捕获基本查询信息', () => {
+    builder
+      .from(mockTable)
+      .where({ name: 'John' })
+      .orderBy('name', 'desc')
+      .limit(5);
+
+    const ir = builder.toIR();
+
+    expect(ir.baseTable).toBe(mockTable);
+    expect(ir.baseAlias).toBe('users');
+    expect(ir.limit).toBe(5);
+    expect(ir.orderBy?.[0]).toMatchObject({ rawColumn: 'name', direction: 'desc' });
+    expect(ir.conditionTree).toEqual({
+      type: 'binary_expr',
+      operator: '=',
+      column: 'name',
+      left: { column: 'name' },
+      right: { value: 'John' },
+      value: 'John',
+      table: 'users'
+    });
+  });
 });
 
 describe('InsertQueryBuilder', () => {
@@ -244,6 +268,14 @@ describe('InsertQueryBuilder', () => {
   it('应该支持 values 方法', () => {
     const result = builder.values({ name: 'John' });
     expect(result).toBe(builder);
+  });
+
+  it('toIR 应该导出表和行数据', () => {
+    builder.values({ name: 'John' });
+    const plan = builder.toIR();
+    expect(plan.table).toBe(mockTable);
+    expect(plan.rows).toHaveLength(1);
+    expect(plan.rows[0]).toEqual({ name: 'John' });
   });
 });
 

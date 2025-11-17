@@ -38,7 +38,7 @@ describe('Driver Tests', () => {
       name: string('name').notNull().predicate('https://schema.org/name'),
       count: int('count').predicate('https://schema.org/quantitativeValue')
     }, {
-      resourcePath: 'idp:///test/index.ttl',
+      base: 'idp:///test/index.ttl',
       rdfClass: 'https://schema.org/Thing',
       namespace: { prefix: 'schema', uri: 'https://schema.org/' }
     });

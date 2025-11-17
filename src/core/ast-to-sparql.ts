@@ -1,9 +1,10 @@
 // AST 到 SPARQL 转换器 - 使用 sparqljs 重构版本
 import { SQL } from 'drizzle-orm';
-import { PodTable, PodColumnBase } from './pod-table';
+import { PodTable, PodColumnBase, type PodTableMapping } from './pod-table';
 import type { QueryCondition } from './query-conditions';
 import { AggregateExpression, isAggregateExpression } from './aggregates';
 import * as sparqljs from 'sparqljs';
+import type { SelectQueryPlan } from './select-plan';
 
 // SPARQL 查询类型
 export interface SPARQLQuery {
@@ -77,13 +78,56 @@ export class ASTToSPARQLConverter {
     };
   }
 
+  convertSelectPlan(plan: SelectQueryPlan): SPARQLQuery {
+    const orderByDescriptors = plan.orderBy
+      ?.map((descriptor) => {
+        const columnName = descriptor.reference?.column ?? descriptor.rawColumn;
+        if (!columnName) {
+          return undefined;
+        }
+        return {
+          column: columnName,
+          direction: descriptor.direction
+        };
+      })
+      .filter((value): value is { column: string; direction: 'asc' | 'desc' } => !!value);
+
+    const ast: any = {
+      select: plan.select,
+      columns: plan.selectAll ? '*' : undefined,
+      where: plan.conditionTree ?? plan.where,
+      limit: plan.limit,
+      offset: plan.offset,
+      orderBy: orderByDescriptors && orderByDescriptors.length > 0 ? orderByDescriptors : undefined,
+      distinct: plan.distinct
+    };
+
+    return this.convertSelect(ast, plan.baseTable);
+  }
+
   // 转换 INSERT 查询 - 使用 sparqljs
-  convertInsert(values: any[], table: PodTable): SPARQLQuery {
+  convertInsert(valuesOrPlan: any[] | { table: PodTable; rows: any[] }, table?: PodTable): SPARQLQuery {
+    if (!table && !valuesOrPlan) {
+      throw new Error('INSERT operation requires a target table');
+    }
+    let rows: any[];
+    let targetTable: PodTable;
+    if (Array.isArray(valuesOrPlan)) {
+      rows = valuesOrPlan;
+      if (!table) {
+        throw new Error('INSERT operation requires a target table');
+      }
+      targetTable = table;
+    } else {
+      rows = valuesOrPlan.rows;
+      targetTable = valuesOrPlan.table;
+    }
+
     // 检查是否有重复的ID
     const existingIds = new Set<string>();
     const duplicateIds: string[] = [];
     
-    for (const record of values) {
+    for (const record of rows) {
       if (record.id) {
         if (existingIds.has(record.id)) {
           duplicateIds.push(record.id);
@@ -104,7 +148,7 @@ export class ASTToSPARQLConverter {
         updateType: 'insert',
         insert: [{
           type: 'bgp',
-          triples: this.buildInsertTriples(values, table)
+          triples: this.buildInsertTriples(rows, targetTable)
         }]
       }]
     };
@@ -118,50 +162,31 @@ export class ASTToSPARQLConverter {
 
   // 转换 UPDATE 查询 - 使用 DELETE/INSERT 组合
   convertUpdate(setData: any, whereConditions: any, table: PodTable): SPARQLQuery {
-    // 构建资源 URI
-    const resourceUri = this.generateSubjectUri(whereConditions, table);
-    
-    // 使用更简单的 DELETE WHERE + INSERT DATA 组合方式
-    // 这种方式对大多数 Solid 服务器更兼容
+    const targetRecords = this.extractSubjectRecords(whereConditions);
+    if (targetRecords.length === 0) {
+      throw new Error('UPDATE operation requires an id or @id condition to target a specific resource');
+    }
+
     const prefixLines = Object.entries(this.prefixes)
       .map(([prefix, uri]) => `PREFIX ${prefix}: <${uri}>`)
       .join('\n');
-    
-    const deleteStatements: string[] = [];
-    const insertTriples: string[] = [];
 
-    Object.entries(setData).forEach(([columnName, originalValue], index) => {
-      const column = table.columns[columnName];
-      if (!column) {
-        return;
+    const statements: string[] = [];
+
+    for (const record of targetRecords) {
+      const resourceUri = this.generateSubjectUri(record, table);
+      const updateBlock = this.buildUpdateStatementsForRecord(resourceUri, setData, table);
+      if (updateBlock) {
+        statements.push(updateBlock);
       }
+    }
 
-      let value = originalValue;
-      if (typeof value === 'string') {
-        const trimmed = value.trim();
-        value = trimmed.length > 0 ? trimmed : null;
-      }
-
-      const predicate = this.getPredicateForColumn(column, table);
-      const variableName = `?value${index}`;
-
-      deleteStatements.push(`DELETE WHERE {\n  <${resourceUri}> <${predicate}> ${variableName} .\n}`);
-      if (value !== null && value !== undefined) {
-        const formattedValue = this.formatValue(value, column);
-        insertTriples.push(`  <${resourceUri}> <${predicate}> ${formattedValue} .`);
-      }
-    });
-
-    const deleteBlock = deleteStatements.length > 0
-      ? `${deleteStatements.join(';\n')}\n;\n`
-      : '';
-
-    const insertBlock = insertTriples.length > 0
-      ? `INSERT DATA {\n${insertTriples.join('\n')}\n}`
-      : '';
+    if (statements.length === 0) {
+      throw new Error('No valid update statements generated for provided data');
+    }
 
     const query = `${prefixLines}
-${deleteBlock}${insertBlock}`.trimEnd();
+${statements.join(';\n')}`.trimEnd();
 
     return {
       type: 'UPDATE',
@@ -178,18 +203,25 @@ ${deleteBlock}${insertBlock}`.trimEnd();
 
     let query: string;
 
-    if (whereConditions && Object.keys(whereConditions).length > 0) {
-      const resourceUri = this.generateSubjectUri(whereConditions, table);
-      query = `${prefixLines}
-DELETE WHERE {
-  <${resourceUri}> ?p ?o .
-}`;
-    } else {
+    if (!whereConditions) {
       query = `${prefixLines}
 DELETE WHERE {
   ?subject rdf:type <${table.config.rdfClass}> .
   ?subject ?p ?o .
 }`;
+    } else {
+      const targetRecords = this.extractSubjectRecords(whereConditions);
+      if (targetRecords.length === 0) {
+        throw new Error('DELETE operation requires an id or @id condition to target a specific resource');
+      }
+
+      const deleteBlocks = targetRecords.map((record) => {
+        const resourceUri = this.generateSubjectUri(record, table);
+        return `DELETE WHERE {\n  <${resourceUri}> ?p ?o .\n}`;
+      });
+
+      query = `${prefixLines}
+${deleteBlocks.join(';\n')}`;
     }
 
     return {
@@ -313,32 +345,41 @@ DELETE WHERE {
     });
 
     // 添加属性模式（使用 OPTIONAL 处理可选属性）
+    const requiredTriples: sparqljs.Triple[] = [];
+    const optionalTriples: sparqljs.Triple[] = [];
+
     Object.entries(table.columns).forEach(([columnName, column]) => {
       if (columnName === 'id') return; // 跳过 id 字段
 
       const predicate = this.getPredicateForColumn(column, table);
-      const triple: any = {
-        subject: { termType: 'Variable', value: 'subject' },
-        predicate: { termType: 'NamedNode', value: predicate },
-        object: { termType: 'Variable', value: columnName }
+      const triple: sparqljs.Triple = {
+        subject: { termType: 'Variable', value: 'subject' } as any,
+        predicate: { termType: 'NamedNode', value: predicate } as any,
+        object: { termType: 'Variable', value: columnName } as any
       };
 
       if (column.options.required) {
-        // 必需字段直接添加到 BGP
-        patterns.push({
+        requiredTriples.push(triple);
+      } else {
+        optionalTriples.push(triple);
+      }
+    });
+
+    if (requiredTriples.length > 0) {
+      patterns.push({
+        type: 'bgp',
+        triples: requiredTriples
+      });
+    }
+
+    optionalTriples.forEach((triple) => {
+      patterns.push({
+        type: 'optional',
+        patterns: [{
           type: 'bgp',
           triples: [triple]
-        });
-      } else {
-        // 可选字段使用 OPTIONAL
-        patterns.push({
-          type: 'optional',
-          patterns: [{
-            type: 'bgp',
-            triples: [triple]
-          }]
-        });
-      }
+        }]
+      });
     });
 
     // 添加 WHERE 条件过滤器 (必须在 BIND 之前)
@@ -346,21 +387,6 @@ DELETE WHERE {
       const filters = this.buildFilterPatterns(ast.where, table);
       patterns.push(...filters);
     }
-
-    // 生成 id 变量，方便 ORDER BY / SELECT 使用 (放在 FILTER 之后)
-    patterns.push({
-      type: 'bind',
-      variable: { termType: 'Variable', value: 'id' },
-      expression: {
-        type: 'operation',
-        operator: 'replace',
-        args: [
-          { type: 'operation', operator: 'str', args: [{ termType: 'Variable', value: 'subject' }] },
-          { termType: 'Literal', value: '^.*[#/]', datatype: { termType: 'NamedNode', value: 'http://www.w3.org/2001/XMLSchema#string' }, language: '' },
-          { termType: 'Literal', value: '', datatype: { termType: 'NamedNode', value: 'http://www.w3.org/2001/XMLSchema#string' }, language: '' }
-        ]
-      }
-    } as any);
 
     return patterns;
   }
@@ -402,10 +428,6 @@ DELETE WHERE {
     }
 
     return [];
-  }
-
-  private isQueryCondition(value: any): value is QueryCondition {
-    return value && typeof value === 'object' && 'type' in value && 'operator' in value;
   }
 
   private buildConditionExpression(condition: QueryCondition, table: PodTable): any | null {
@@ -524,6 +546,29 @@ DELETE WHERE {
         ];
         if (flags) {
           args.push({ termType: 'Literal', value: flags });
+        }
+        return {
+          type: 'operation',
+          operator: 'regex',
+          args
+        };
+      }
+      case 'REGEX': {
+        const patternValue = typeof rawValue === 'object' && rawValue !== null
+          ? String(rawValue.pattern ?? '')
+          : String(rawValue ?? '');
+        if (!patternValue) {
+          return null;
+        }
+        const flagsValue = typeof rawValue === 'object' && rawValue !== null
+          ? rawValue.flags
+          : undefined;
+        const args: any[] = [
+          { type: 'operation', operator: 'str', args: [variable] },
+          { termType: 'Literal', value: patternValue }
+        ];
+        if (flagsValue) {
+          args.push({ termType: 'Literal', value: String(flagsValue) });
         }
         return {
           type: 'operation',
@@ -944,10 +989,26 @@ DELETE WHERE {
 
   // 获取列的谓词
   private getPredicateForColumn(column: any, table: PodTable): string {
+    if (typeof (table as any).getMapping === 'function') {
+      const mapping = (table as any).getMapping() as PodTableMapping;
+      const mapped = mapping?.columns?.[column.name];
+      if (mapped?.predicate) {
+        return mapped.predicate;
+      }
+    }
     // 优先级：显式predicate > namespace + columnName > 标准默认映射 > fallback
     if (column.predicate && typeof column.predicate === 'string') return column.predicate;
     if (column.options?.predicate) return column.options.predicate;
-    if (typeof column.getPredicate === 'function') return column.getPredicate(table.config.namespace);
+    if (typeof column.getPredicate === 'function') {
+      try {
+        return column.getPredicate(table.config.namespace);
+      } catch (error) {
+        // fall through to default map
+        if (process.env.DEBUG?.includes('sparql')) {
+          console.warn('getPredicate fallback for column', column.name, error);
+        }
+      }
+    }
 
     // 如果设置了namespace，优先用namespace + columnName
     const namespace = table.config.namespace;
@@ -989,6 +1050,7 @@ DELETE WHERE {
 
   // 生成主体 URI
   generateSubjectUri(record: any, table: PodTable): string {
+    const normalizedRecord = this.normalizeSubjectInput(record);
     const preferString = (value: unknown): string | null => {
       if (typeof value === 'string' && value.length > 0) {
         return value;
@@ -996,32 +1058,32 @@ DELETE WHERE {
       return null;
     };
 
-    const toAbsolute = (path: string | null | undefined): string | null => {
-      if (!path || path.length === 0) {
-        return null;
-      }
-      const base = this.podUrl.endsWith('/') ? this.podUrl : `${this.podUrl}/`;
-      try {
-        const url = new URL(path, base).toString();
-        return url.replace(/\/$/, '');
-      } catch {
-        return null;
-      }
-    };
-
-    const directSubject = preferString(record.subject)
-      ?? preferString(record['@id'])
-      ?? preferString(record.uri);
+    const directSubject = preferString(normalizedRecord.subject)
+      ?? preferString(normalizedRecord['@id'])
+      ?? preferString(normalizedRecord.uri);
     if (directSubject) {
       return directSubject;
     }
 
+    const templatedSubject = this.generateSubjectFromTemplate(record, table);
+    if (templatedSubject) {
+      return templatedSubject;
+    }
+
     const resolveBase = (): string => {
-      const fromResource = toAbsolute(table.config.resourcePath);
+      const configuredResource =
+        (typeof (table as any).getResourcePath === 'function' && (table as any).getResourcePath()) ||
+        (table as any).config?.base;
+
+      const fromResource = this.toAbsolutePath(configuredResource);
       if (fromResource) {
         return fromResource;
       }
-      const fromContainer = toAbsolute(table.config.containerPath);
+
+      const configuredContainer =
+        (typeof (table as any).getContainerPath === 'function' && (table as any).getContainerPath()) ||
+        undefined;
+      const fromContainer = this.toAbsolutePath(configuredContainer);
       if (fromContainer) {
         return fromContainer;
       }
@@ -1032,7 +1094,7 @@ DELETE WHERE {
       return this.podUrl.replace(/\/$/, '');
     };
 
-    const idValue = preferString(record.id);
+    const idValue = preferString(normalizedRecord.id);
     if (idValue) {
       if (idValue.includes('://')) {
         return idValue;
@@ -1071,6 +1133,213 @@ DELETE WHERE {
     }
 
     return '';
+  }
+
+  private generateSubjectFromTemplate(record: any, table: PodTable): string | null {
+    const template =
+      typeof (table as any).getSubjectTemplate === 'function'
+        ? (table as any).getSubjectTemplate()
+        : table.config.subjectTemplate;
+    if (!template) {
+      return null;
+    }
+    const applied = this.applySubjectTemplate(template, record);
+    if (!applied) {
+      return null;
+    }
+    const absolute = this.toAbsolutePath(applied);
+    return absolute ?? null;
+  }
+
+  private applySubjectTemplate(template: string, record: any): string | null {
+    if (!template.includes('{')) {
+      return template;
+    }
+
+    let missingReplacement = false;
+    const replaced = template.replace(/\{([^}]+)\}/g, (match, key, offset) => {
+      const rawValue = record?.[key];
+      if (rawValue === undefined || rawValue === null) {
+        missingReplacement = true;
+        return '';
+      }
+      let value = String(rawValue);
+      const previousChar = offset > 0 ? template[offset - 1] : '';
+      if (previousChar === '#' && value.startsWith('#')) {
+        value = value.slice(1);
+      }
+      return value;
+    });
+
+    return missingReplacement ? null : replaced;
+  }
+
+  private toAbsolutePath(path: string | null | undefined): string | null {
+    if (!path || path.length === 0) {
+      return null;
+    }
+    if (/^[a-zA-Z][\w+.-]*:\/\//.test(path)) {
+      return path.replace(/\/$/, '');
+    }
+    const sanitized = path.replace(/^(\.\/)+/, '');
+    const trimmed = sanitized.replace(/^\/+/, '');
+    const userPath = this.extractUserPathFromWebId().replace(/^\/+|\/+$/g, '');
+    const needsPrefix =
+      userPath.length > 0 &&
+      trimmed.length > 0 &&
+      trimmed !== userPath &&
+      !trimmed.startsWith(`${userPath}/`);
+
+    const relative = trimmed.length === 0
+      ? userPath
+      : needsPrefix ? `${userPath}/${trimmed}` : trimmed;
+
+    const base = this.podUrl.endsWith('/') ? this.podUrl : `${this.podUrl}/`;
+    const normalized = relative && !relative.startsWith('/') ? `/${relative}` : `/${relative ?? ''}`;
+    try {
+      const url = new URL(normalized, base).toString();
+      return url.replace(/\/$/, '');
+    } catch {
+      return null;
+    }
+  }
+
+  private normalizeSubjectInput(record: any): Record<string, any> {
+    if (record && typeof record === 'object' && 'type' in record && 'operator' in record) {
+      const extracted = this.extractSubjectRecord(record as QueryCondition);
+      return extracted ?? {};
+    }
+    return record ?? {};
+  }
+
+  private extractSubjectRecords(where: any): Record<string, any>[] {
+    if (!where) {
+      return [];
+    }
+
+    if (this.isQueryCondition(where)) {
+      if (where.operator?.toUpperCase() === 'IN' && where.column && (where.column === '@id' || where.column === 'id')) {
+        const key = where.column;
+        const values = this.extractConditionValues(where);
+        return values.map((value) => ({ [key]: value }));
+      }
+      const record = this.extractSubjectRecord(where);
+      return record ? [record] : [];
+    }
+
+    if (typeof where === 'object' && (where.id || where['@id'])) {
+      return [where];
+    }
+
+    return [];
+  }
+
+  private extractSubjectRecord(where: any): Record<string, any> | null {
+    if (!where) {
+      return null;
+    }
+
+    if (this.isQueryCondition(where)) {
+      const idValue = this.findConditionValue(where, 'id');
+      const iriValue = this.findConditionValue(where, '@id');
+      const record: Record<string, any> = {};
+      if (iriValue) {
+        record['@id'] = iriValue;
+      }
+      if (idValue) {
+        record.id = idValue;
+      }
+      return Object.keys(record).length > 0 ? record : null;
+    }
+
+    if (typeof where === 'object') {
+      if (where.id || where['@id']) {
+        return where;
+      }
+    }
+
+    return null;
+  }
+
+  private buildUpdateStatementsForRecord(resourceUri: string, setData: Record<string, any>, table: PodTable): string | null {
+    const deleteStatements: string[] = [];
+    const insertTriples: string[] = [];
+
+    Object.entries(setData).forEach(([columnName, originalValue], index) => {
+      const column = table.columns[columnName];
+      if (!column) {
+        return;
+      }
+
+      let value = originalValue;
+      if (typeof value === 'string') {
+        const trimmed = value.trim();
+        value = trimmed.length > 0 ? trimmed : null;
+      }
+
+      const predicate = this.getPredicateForColumn(column, table);
+      const variableName = `?value${index}`;
+
+      deleteStatements.push(`DELETE WHERE {\n  <${resourceUri}> <${predicate}> ${variableName} .\n}`);
+      if (value !== null && value !== undefined) {
+        const formattedValue = this.formatValue(value, column);
+        insertTriples.push(`  <${resourceUri}> <${predicate}> ${formattedValue} .`);
+      }
+    });
+
+    if (deleteStatements.length === 0 && insertTriples.length === 0) {
+      return null;
+    }
+
+    const deleteBlock = deleteStatements.length > 0 ? deleteStatements.join(';\n') : '';
+    const insertBlock = insertTriples.length > 0 ? `INSERT DATA {\n${insertTriples.join('\n')}\n}` : '';
+
+    return [deleteBlock, insertBlock].filter(Boolean).join(';\n');
+  }
+
+  private isQueryCondition(value: any): value is QueryCondition {
+    return value && typeof value === 'object' && 'type' in value && 'operator' in value;
+  }
+
+  private findConditionValue(condition: QueryCondition, column: string): string | undefined {
+    if (!condition) {
+      return undefined;
+    }
+
+    switch (condition.type) {
+      case 'binary_expr': {
+        const targetColumn = condition.column ?? condition.left?.column;
+        if (targetColumn === column && ['=', '=='].includes((condition.operator ?? '').toUpperCase())) {
+          const raw = condition.value ?? condition.right?.value;
+          if (typeof raw === 'string') {
+            return raw;
+          }
+        }
+        return undefined;
+      }
+      case 'logical_expr': {
+        for (const child of condition.conditions ?? []) {
+          const value = this.findConditionValue(child, column);
+          if (value) {
+            return value;
+          }
+        }
+        return undefined;
+      }
+      default:
+        return undefined;
+    }
+  }
+
+  private extractConditionValues(condition: QueryCondition): string[] {
+    if (!condition) {
+      return [];
+    }
+    const raw = condition.value ?? condition.right?.value;
+    if (!Array.isArray(raw)) {
+      return [];
+    }
+    return raw.filter((entry): entry is string => typeof entry === 'string');
   }
 
   // 格式化值 - 使用 Column 的统一格式化方法

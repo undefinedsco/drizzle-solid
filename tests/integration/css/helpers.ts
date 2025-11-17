@@ -4,6 +4,7 @@ import { config as loadEnv } from 'dotenv';
 type FetchLike = typeof fetch;
 
 let envBootstrapped = false;
+let sharedSessionPromise: Promise<Session> | null = null;
 
 function bootstrapEnv(): void {
   if (envBootstrapped) return;
@@ -12,12 +13,9 @@ function bootstrapEnv(): void {
   envBootstrapped = true;
 }
 
-export async function createTestSession(): Promise<Session> {
+async function createSessionInstance(): Promise<Session> {
   bootstrapEnv();
 
-  // 使用真实的 alice 账户进行认证
-  const session = new Session();
-  
   const clientId = process.env.SOLID_CLIENT_ID;
   const clientSecret = process.env.SOLID_CLIENT_SECRET;
   const oidcIssuer = process.env.SOLID_OIDC_ISSUER;
@@ -26,23 +24,74 @@ export async function createTestSession(): Promise<Session> {
     throw new Error('Missing SOLID_CLIENT_ID, SOLID_CLIENT_SECRET, or SOLID_OIDC_ISSUER in environment');
   }
 
-  try {
-    await session.login({
-      clientId,
-      clientSecret,
-      oidcIssuer,
-      tokenType: 'DPoP'
-    });
+  const session = new Session();
+  await session.login({
+    clientId,
+    clientSecret,
+    oidcIssuer,
+    tokenType: 'DPoP'
+  });
 
-    console.log('   ✅ Session创建成功');
-    console.log(`   🆔 Session WebID: ${session.info.webId || 'N/A'}`);
-    console.log(`   🔐 Session已认证: ${session.info.isLoggedIn}`);
+  console.log('   ✅ Session创建成功');
+  console.log(`   🆔 Session WebID: ${session.info.webId || 'N/A'}`);
+  console.log(`   🔐 Session已认证: ${session.info.isLoggedIn}`);
 
-    return session;
-  } catch (error) {
-    console.error('   ❌ Session认证失败:', error);
-    throw error;
+  return session;
+}
+
+async function createSessionInstanceWithRetry(attempts = 3, delayMs = 2000): Promise<Session> {
+  let lastError: unknown;
+  for (let i = 0; i < attempts; i++) {
+    try {
+      return await createSessionInstance();
+    } catch (error) {
+      lastError = error;
+      const attempt = i + 1;
+      console.warn(`[session] login attempt ${attempt}/${attempts} failed:`, error instanceof Error ? error.message : error);
+      if (attempt < attempts) {
+        await new Promise((resolve) => setTimeout(resolve, delayMs));
+      }
+    }
   }
+  throw lastError instanceof Error ? lastError : new Error(String(lastError));
+}
+
+async function getSharedSession(): Promise<Session> {
+  if (!sharedSessionPromise) {
+    sharedSessionPromise = createSessionInstanceWithRetry().catch((error) => {
+      sharedSessionPromise = null;
+      throw error;
+    });
+  }
+  return await sharedSessionPromise;
+}
+
+export async function resetSharedSession(): Promise<void> {
+  if (!sharedSessionPromise) {
+    return;
+  }
+  try {
+    const session = await sharedSessionPromise;
+    await session.logout().catch(() => undefined);
+  } finally {
+    sharedSessionPromise = null;
+  }
+}
+
+export async function createTestSession(options?: { shared?: boolean }): Promise<Session> {
+  const useShared = options?.shared !== false;
+  if (useShared) {
+    return await getSharedSession();
+  }
+  return await createSessionInstanceWithRetry();
+}
+
+// 预热全局会话，确保多套件复用同一 session
+// 仅在启用真实集成测试时提前触发
+if (process.env.SOLID_ENABLE_REAL_TESTS !== 'false') {
+  void getSharedSession().catch(() => {
+    /* noop:失败时由首次调用重新尝试并抛错 */
+  });
 }
 
 function derivePodBaseFromWebId(webId: string): string {

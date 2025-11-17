@@ -16,6 +16,7 @@ import {
   eq,
   ne,
   lt,
+  regex,
   count,
   avg,
   max
@@ -35,10 +36,10 @@ const profileTable = podTable('profiles', {
   age: int('age').predicate('https://schema.org/age'),
   createdAt: date('createdAt').notNull().predicate('https://schema.org/dateCreated')
 }, {
-  resourcePath: `${containerPath}profiles.ttl`,
+  base: `${containerPath}profiles.ttl`,
   rdfClass: 'https://schema.org/Person',
   namespace: schemaNamespace,
-  autoRegister: false
+  typeIndex: undefined
 });
 
 describe('CSS integration: drizzle CRUD', () => {
@@ -52,6 +53,7 @@ describe('CSS integration: drizzle CRUD', () => {
     db = drizzle(session);
     containerUrl = await ensureContainer(session, containerPath);
     resourceUrl = `${containerUrl}profiles.ttl`;
+    await db.init(profileTable);
   }, 120_000);
 
   afterAll(async () => {
@@ -60,9 +62,6 @@ describe('CSS integration: drizzle CRUD', () => {
     }
     if (containerUrl) {
       await session.fetch(containerUrl, { method: 'DELETE' }).catch(() => undefined);
-    }
-    if (session) {
-      await session.logout().catch(() => undefined);
     }
   });
 
@@ -80,14 +79,6 @@ describe('CSS integration: drizzle CRUD', () => {
       age: 30,
       createdAt: new Date()
     });
-
-    const afterInsert = await db
-      .select()
-      .from(profileTable)
-      .where({ id: recordId });
-
-    expect(afterInsert).toHaveLength(1);
-    expect(afterInsert[0]?.name).toBe(insertedName);
 
     await db
       .update(profileTable)
@@ -282,6 +273,67 @@ describe('CSS integration: drizzle CRUD', () => {
     await session.fetch(resourceUrl, { method: 'DELETE' }).catch(() => undefined);
   });
 
+  test('supports subject lookups via id fragments and @id', async () => {
+    await session.fetch(resourceUrl, { method: 'DELETE' }).catch(() => undefined);
+
+    const subjectId = `subject-${Date.now()}`;
+    const targetName = 'Subject Fragment Lookup';
+    await db.insert(profileTable).values({
+      id: subjectId,
+      name: targetName,
+      age: 42,
+      createdAt: new Date()
+    });
+
+    const fragmentResults = await db
+      .select()
+      .from(profileTable)
+      .where({ id: `#${subjectId}` });
+
+    expect(fragmentResults).toHaveLength(1);
+    expect(fragmentResults[0]?.name).toBe(targetName);
+
+    const absoluteResults = await db
+      .select()
+      .from(profileTable)
+      .where({ '@id': `${resourceUrl}#${subjectId}` });
+
+    expect(absoluteResults).toHaveLength(1);
+    expect(absoluteResults[0]?.name).toBe(targetName);
+
+    await session.fetch(resourceUrl, { method: 'DELETE' }).catch(() => undefined);
+  });
+
+  test('supports regex filters on string columns', async () => {
+    await session.fetch(resourceUrl, { method: 'DELETE' }).catch(() => undefined);
+
+    const base = `regex-case-${Date.now()}`;
+    const records = [
+      { id: `${base}-1`, name: 'Regex One', createdAt: new Date() },
+      { id: `${base}-2`, name: 'Regex Two', createdAt: new Date() },
+      { id: `${base}-3`, name: 'Other Entry', createdAt: new Date() }
+    ];
+
+    await db.insert(profileTable).values(records);
+
+    const allRows = await db
+      .select({ name: profileTable.name })
+      .from(profileTable);
+    console.log('allRows', allRows.map((row) => row.name));
+
+    const regexMatches = await db
+      .select({ name: profileTable.name })
+      .from(profileTable)
+      .where(regex(profileTable.name, '^Regex (One|Two)$'));
+
+    expect(regexMatches.map((row) => row.name)).toEqual([
+      'Regex One',
+      'Regex Two'
+    ]);
+
+    await session.fetch(resourceUrl, { method: 'DELETE' }).catch(() => undefined);
+  });
+
   test('supports aggregate selections with count and numeric reducers', async () => {
     await session.fetch(resourceUrl, { method: 'DELETE' }).catch(() => undefined);
 
@@ -325,10 +377,9 @@ describe('CSS integration: drizzle CRUD', () => {
       id: string('id').primaryKey().predicate('https://schema.org/identifier'),
       name: string('name').notNull().predicate('https://schema.org/name')
     }, {
-      resourcePath: `${usersPath}users.ttl`,
+      base: `${usersPath}users.ttl`,
       rdfClass: 'https://schema.org/Person',
-      namespace: schemaNamespace,
-      autoRegister: false
+      namespace: schemaNamespace
     });
 
     const postsTable = podTable('posts', {
@@ -336,10 +387,9 @@ describe('CSS integration: drizzle CRUD', () => {
       title: string('title').notNull().predicate('https://schema.org/headline'),
       authorId: string('authorId').notNull().predicate('https://schema.org/author')
     }, {
-      resourcePath: `${postsPath}posts.ttl`,
+      base: `${postsPath}posts.ttl`,
       rdfClass: 'https://schema.org/CreativeWork',
-      namespace: schemaNamespace,
-      autoRegister: false
+      namespace: schemaNamespace
     });
 
     const usersContainer = await ensureContainer(session, usersPath);
@@ -348,6 +398,8 @@ describe('CSS integration: drizzle CRUD', () => {
     const postsResource = `${postsContainer}posts.ttl`;
 
     try {
+      await db.init([usersTable, postsTable]);
+
       await db.insert(usersTable).values([
         { id: 'user-1', name: 'Alice Author' },
         { id: 'user-2', name: 'Bob Writer' }

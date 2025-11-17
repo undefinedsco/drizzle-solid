@@ -6,6 +6,7 @@ import { ASTToSPARQLConverter, type SPARQLQuery } from './ast-to-sparql';
 import { ComunicaSPARQLExecutor, SolidSPARQLExecutor } from './sparql-executor';
 import { TypeIndexManager, TypeIndexEntry, TypeIndexConfig, DiscoveredTable } from './typeindex-manager';
 import type { SelectQueryPlan } from './select-plan';
+import type { InsertQueryPlan, UpdateQueryPlan, DeleteQueryPlan } from './pod-session';
 
 // 最小 Solid Session 接口定义
 export interface SolidAuthSession {
@@ -33,6 +34,7 @@ export interface PodOperation {
   where?: Record<string, unknown> | QueryCondition;
   select?: Record<string, unknown>;
   values?: unknown | unknown[];
+  plan?: SelectQueryPlan | InsertQueryPlan | UpdateQueryPlan | DeleteQueryPlan;
   joins?: Array<{
     type: 'leftJoin' | 'rightJoin' | 'innerJoin' | 'fullJoin';
     table: PodTable;
@@ -232,26 +234,13 @@ export class PodDialect {
     table: PodTable,
     resourceUrl: string
   ): Promise<string[]> {
+    const plan = this.buildSubjectLookupPlan(table, condition);
+    const sparqlQuery = this.sparqlConverter.convertSelectPlan(plan);
     const normalizedUrl = this.normalizeResourceUrl(resourceUrl);
-    const prefixLines = this.buildPrefixLines();
-    const whereClause = this.sparqlConverter.buildWhereClauseForCondition(condition, table);
-    console.log('[UPDATE] Complex update where clause:', whereClause);
-
-    const query = `${prefixLines}\nSELECT ?subject WHERE {\n${whereClause}\n}`;
-    console.log('[UPDATE] Complex update select query:', query);
-
-    const rows = await this.executeOnResource(normalizedUrl, {
-      type: 'SELECT',
-      query,
-      prefixes: this.sparqlConverter.getPrefixes()
-    });
+    const rows = await this.executeOnResource(normalizedUrl, sparqlQuery);
 
     return (rows as Array<Record<string, any>>)
-      .map((row) => {
-        const subject = row.subject as any;
-        if (!subject) return null;
-        return typeof subject === 'string' ? subject : subject.value ?? null;
-      })
+      .map((row) => this.extractSubjectFromRow(row))
       .filter((value): value is string => Boolean(value));
   }
 
@@ -315,6 +304,13 @@ export class PodDialect {
 
   private isQueryCondition(value: any): value is QueryCondition {
     return value && typeof value === 'object' && 'type' in value && 'operator' in value;
+  }
+
+  private isSubjectResolutionError(error: unknown): boolean {
+    if (!(error instanceof Error)) {
+      return false;
+    }
+    return error.message.includes('requires an id or @id condition');
   }
 
   private derivePodUrlFromWebId(webId: string): string {
@@ -828,7 +824,9 @@ export class PodDialect {
 
       switch (operation.type) {
         case 'select': {
-          if (operation.sql) {
+          if (operation.plan) {
+            sparqlQuery = this.sparqlConverter.convertSelectPlan(operation.plan);
+          } else if (operation.sql) {
             const ast = this.sparqlConverter.parseDrizzleAST(operation.sql, operation.table);
             sparqlQuery = this.sparqlConverter.convertSelect(ast, operation.table);
           } else {
@@ -865,7 +863,10 @@ export class PodDialect {
           // 2. SPARQL INSERT 本身不会覆盖已存在的三元组
           // 3. 如果需要防止重复，应该由业务层处理（通过 WHERE NOT EXISTS 或先 SELECT）
 
-          sparqlQuery = this.sparqlConverter.convertInsert(values, operation.table);
+          const insertPlan = this.isInsertPlan(operation.plan)
+            ? operation.plan
+            : { table: operation.table, rows: values };
+          sparqlQuery = this.sparqlConverter.convertInsert(insertPlan, insertPlan.table);
           break;
         }
 
@@ -894,16 +895,34 @@ export class PodDialect {
             await this.ensureResourceExists(normalizedResourceUrl, { createIfMissing: false });
           }
 
-          // ✅ 优化：直接生成 SPARQL UPDATE，不需要先 SELECT
-          // 所有 Drizzle WHERE 条件都可以直接转成 SPARQL WHERE 子句
-          // 性能提升：从 1+N 次请求降到 1 次请求
-          sparqlQuery = this.sparqlConverter.convertUpdate(operation.data, operation.where, operation.table);
+          const updatePlan = this.isUpdatePlan(operation.plan)
+            ? operation.plan
+            : {
+                table: operation.table,
+                data: operation.data,
+                where: operation.where as QueryCondition
+              };
 
-          // 旧实现（已废弃，保留代码但不使用）：
-          // if (this.isQueryCondition(operation.where)) {
-          //   return await this.executeComplexUpdate(operation, operation.where as QueryCondition);
-          // }
+          const ensuredCondition = await this.ensureIdentifierCondition(
+            updatePlan.where,
+            updatePlan.table,
+            normalizedResourceUrl
+          );
 
+          if (!ensuredCondition) {
+            console.warn('[UPDATE] No matching subjects found for provided condition, skipping update.');
+            return [];
+          }
+
+          try {
+            sparqlQuery = this.sparqlConverter.convertUpdate(updatePlan.data, ensuredCondition, updatePlan.table);
+          } catch (error) {
+            if (this.isSubjectResolutionError(error)) {
+              console.warn('[UPDATE] Subject resolution failed after rewrite:', error);
+              return [];
+            }
+            throw error;
+          }
           break;
         }
 
@@ -924,7 +943,31 @@ export class PodDialect {
             }];
           }
 
-          sparqlQuery = this.sparqlConverter.convertDelete(operation.where, operation.table);
+          const deletePlan = this.isDeletePlan(operation.plan)
+            ? operation.plan
+            : {
+                table: operation.table,
+                where: operation.where as QueryCondition | undefined
+              };
+
+          let deleteCondition = deletePlan.where;
+          if (deleteCondition) {
+            deleteCondition = await this.ensureIdentifierCondition(deleteCondition, deletePlan.table, normalizedResourceUrl);
+            if (!deleteCondition) {
+              console.warn('[DELETE] No matching subjects found for provided condition, skipping delete.');
+              return [];
+            }
+          }
+
+          try {
+            sparqlQuery = this.sparqlConverter.convertDelete(deleteCondition, deletePlan.table);
+          } catch (error) {
+            if (this.isSubjectResolutionError(error)) {
+              console.warn('[DELETE] Subject resolution failed after rewrite:', error);
+              return [];
+            }
+            throw error;
+          }
           break;
         }
 
@@ -944,6 +987,108 @@ export class PodDialect {
     }
   }
 
+
+  private buildIdInConditionFromSubjects(subjects: string[]): QueryCondition | null {
+    if (!subjects || subjects.length === 0) {
+      return null;
+    }
+    return {
+      type: 'binary_expr',
+      operator: 'IN',
+      column: '@id',
+      left: { column: '@id' },
+      right: { value: subjects },
+      value: subjects
+    };
+  }
+
+  private isInsertPlan(plan: PodOperation['plan']): plan is InsertQueryPlan {
+    return Boolean(plan && typeof (plan as InsertQueryPlan).table !== 'undefined' && Array.isArray((plan as InsertQueryPlan).rows));
+  }
+
+  private isUpdatePlan(plan: PodOperation['plan']): plan is UpdateQueryPlan {
+    return Boolean(plan && typeof (plan as UpdateQueryPlan).table !== 'undefined' && 'data' in (plan as UpdateQueryPlan));
+  }
+
+  private isDeletePlan(plan: PodOperation['plan']): plan is DeleteQueryPlan {
+    if (!plan || typeof (plan as DeleteQueryPlan).table === 'undefined') {
+      return false;
+    }
+    return !('rows' in (plan as Record<string, unknown>)) && !('data' in (plan as Record<string, unknown>));
+  }
+
+  private buildSubjectLookupPlan(table: PodTable, condition: QueryCondition): SelectQueryPlan {
+    const alias = table.config.name ?? 'table';
+    return {
+      baseTable: table,
+      baseAlias: alias,
+      selectAll: true,
+      conditionTree: condition,
+      aliasToTable: new Map([[alias, table]]),
+      tableToAlias: new Map([[table, alias]])
+    };
+  }
+
+  private extractSubjectFromRow(row: Record<string, any>): string | null {
+    const subject = (row as any).subject ?? (row as any)['?subject'];
+    if (!subject) {
+      return null;
+    }
+    if (typeof subject === 'string') {
+      return subject;
+    }
+    if (typeof subject.value === 'string') {
+      return subject.value;
+    }
+    return null;
+  }
+
+  private conditionTargetsIdentifier(condition?: QueryCondition): boolean {
+    if (!condition) {
+      return false;
+    }
+    if (condition.column && (condition.column === '@id' || condition.column === 'id')) {
+      return true;
+    }
+
+    if (condition.type === 'logical_expr' && condition.conditions) {
+      return condition.conditions.some((child) => this.conditionTargetsIdentifier(child));
+    }
+
+    if (condition.type === 'unary_expr' && condition.left) {
+      return this.conditionTargetsIdentifier(condition.left as QueryCondition);
+    }
+
+    return false;
+  }
+
+  private async ensureIdentifierCondition(
+    condition: QueryCondition | undefined,
+    table: PodTable,
+    resourceUrl: string
+  ): Promise<QueryCondition | null> {
+    if (!condition) {
+      return null;
+    }
+
+    if (this.conditionTargetsIdentifier(condition)) {
+      return condition;
+    }
+
+    return await this.rewriteWhereConditionWithSubjects(condition, table, resourceUrl);
+  }
+
+  private async rewriteWhereConditionWithSubjects(
+    condition: QueryCondition | undefined,
+    table: PodTable,
+    resourceUrl: string
+  ): Promise<QueryCondition | null> {
+    if (!condition) {
+      return null;
+    }
+    const subjects = await this.findSubjectsForCondition(condition, table, resourceUrl);
+    return this.buildIdInConditionFromSubjects(subjects);
+  }
 
   // 处理 Drizzle 的 SQL 对象
   async executeSql(sql: SQL, table: PodTable): Promise<unknown[]> {
@@ -1434,6 +1579,16 @@ export class PodDialect {
 
   // 完全替换convertSelect方法
   private convertSelect(operation: PodOperation): SPARQLQuery {
+    if (operation.where && this.isQueryCondition(operation.where)) {
+      const ast = {
+        where: operation.where,
+        limit: operation.limit,
+        offset: operation.offset,
+        orderBy: operation.orderBy,
+        distinct: operation.distinct
+      };
+      return this.sparqlConverter.convertSelect(ast, operation.table);
+    }
     const table = operation.table;
     const rdfClass = table.config.rdfClass || 'http://example.org/Entity';
     const namespace = table.config.namespace || '';
@@ -1551,7 +1706,11 @@ export class PodDialect {
               if (!trimmed) {
                 return null;
               }
-              return isUriString(trimmed) ? `<${trimmed}>` : formatLiteral(trimmed);
+              if (isUriString(trimmed)) {
+                return `<${trimmed}>`;
+              }
+              const derived = this.buildSubjectUriFromFragment(trimmed, table);
+              return derived ? `<${derived}>` : null;
             })
             .filter((value): value is string => Boolean(value));
 
@@ -1566,30 +1725,26 @@ export class PodDialect {
 
         if (key === 'id') {
           filteredByIdentifier = true;
-          const fragments = values
+          const subjects = values
             .map((value) => {
               if (typeof value !== 'string') {
                 return null;
               }
-              const trimmed = value.trim().replace(/^#/, '');
-              return trimmed.length > 0 ? trimmed : null;
+              const derived = this.buildSubjectUriFromFragment(value, table);
+              return derived ? `<${derived}>` : null;
             })
-            .filter((fragment): fragment is string => Boolean(fragment));
+            .filter((subject): subject is string => Boolean(subject));
 
-          if (fragments.length === 0) {
+          if (subjects.length === 0) {
             continue;
           }
 
-          const conditions = fragments.map((fragment) => {
-            const escaped = escapeForRegex(fragment);
-            return `REGEX(STR(?subject), "#${escaped}$")`;
-          });
-
-          const filterClause = conditions.length === 1
-            ? conditions[0]
-            : conditions.map((clause) => `(${clause})`).join(' || ');
-
-          wherePatterns.push(`FILTER(${filterClause})`);
+          if (subjects.length === 1) {
+            wherePatterns.push(`FILTER(?subject = ${subjects[0]})`);
+          } else {
+            const valuesClause = subjects.join(' ');
+            wherePatterns.push(`VALUES ?subject { ${valuesClause} }`);
+          }
           continue;
         }
 

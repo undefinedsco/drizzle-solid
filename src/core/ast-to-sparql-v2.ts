@@ -453,7 +453,9 @@ export class SparqlJSConverter {
    */
   private generateSubjectUri(record: any, table: PodTable): string {
     const userPath = this.extractUserPathFromWebId();
-    const containerPath = table.config.containerPath || '/data/';
+    const containerPath =
+      (typeof (table as any).getContainerPath === 'function' && (table as any).getContainerPath()) ||
+      '/data/';
     const fullContainerPath = containerPath.startsWith(userPath) ? 
       containerPath : 
       userPath + containerPath.replace(/^\//, '');

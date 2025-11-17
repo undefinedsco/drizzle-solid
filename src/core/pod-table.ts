@@ -171,7 +171,18 @@ export class ColumnBuilder<TType extends ColumnBuilderDataType> {
   }
 
   primaryKey(): ColumnBuilder<TType> {
-    this.options = { ...this.options, primaryKey: true, required: true };
+    const predicate = this.name === 'id'
+      ? '@id'
+      : this.options.predicate;
+    this.options = {
+      ...this.options,
+      primaryKey: true,
+      required: true,
+      predicate
+    };
+    if (predicate) {
+      this._predicateUri = predicate;
+    }
     return this;
   }
 
@@ -253,17 +264,30 @@ export type InferUpdateData<TTable extends PodTable<Record<string, PodColumnBase
 
 // 表配置选项
 export interface PodTableOptions {
-  resourcePath?: string;  // 可选：写入时必须指定，读取时可从 TypeIndex 自动发现
+  base?: string; // 资源基础路径，支持绝对或相对
   rdfClass: RdfTermInput;
-  namespace?: NamespaceConfig; // 默认命名空间
-  autoRegister?: boolean;
-  isPublic?: boolean; // 是否注册到公开 TypeIndex (默认 false，注册到私有)
-  /** @deprecated 将在未来版本移除，请使用 resourcePath 上的 `sparql:` 前缀 */
-  resourceMode?: 'ldp' | 'sparql';
-  /** @deprecated 将在未来版本移除，请使用 resourcePath 上的 `sparql:` 前缀 */
-  sparqlEndpoint?: string;
-  /** @deprecated 自动从 resourcePath 推导，无需手动指定 */
-  containerPath?: string;
+  namespace?: NamespaceConfig;
+  typeIndex?: 'private' | 'public';
+  subjectTemplate?: string;
+  graph?: string;
+}
+
+export interface PodColumnMapping {
+  column: string;
+  predicate: string;
+  kind: 'datatype' | 'object';
+  datatype?: string;
+  referenceTarget?: string;
+  isArray?: boolean;
+}
+
+export interface PodTableMapping {
+  name: string;
+  rdfClass: string;
+  subjectTemplate: string;
+  graph?: string;
+  namespace?: NamespaceConfig;
+  columns: Record<string, PodColumnMapping>;
 }
 
 // 列类型基类
@@ -305,6 +329,9 @@ export abstract class PodColumnBase {
   primaryKey(): this {
     this.options.primaryKey = true;
     this.options.required = true; // 主键自动为 required
+    if (!this.options.predicate && this.name === 'id') {
+      this.options.predicate = '@id';
+    }
     return this;
   }
 
@@ -381,15 +408,20 @@ export class PodTable<TColumns extends Record<string, PodColumnBase> = Record<st
   
   public config: {
     name: string;
-    containerPath: string;
-    resourcePath: string;
+    base: string;
     rdfClass: string;
     namespace?: NamespaceConfig;
-    autoRegister: boolean;
-    resourceMode: 'ldp' | 'sparql';
-    sparqlEndpoint?: string;
+    typeIndex?: 'private' | 'public';
+    subjectTemplate: string;
+    graph?: string;
   };
+  public mapping: PodTableMapping;
   
+  private resourcePath: string;
+  private containerPath: string;
+  private initialized = false;
+  private subjectTemplate: string;
+  private hasCustomSubjectTemplate: boolean;
   public columns: TColumns;
 
   // 为了兼容 drizzle-zod，添加必要的属性
@@ -414,17 +446,25 @@ export class PodTable<TColumns extends Record<string, PodColumnBase> = Record<st
     columns: TColumns,
     options: PodTableOptions
   ) {
-    const resourceConfig = this.resolveResourceConfig(options);
+    const baseConfig = this.resolveBase(options.base, name);
+    this.resourcePath = baseConfig.resourcePath;
+    this.containerPath = baseConfig.containerPath;
+    const subjectTemplateInfo = this.resolveSubjectTemplate(
+      options.subjectTemplate,
+      baseConfig.resourcePath,
+      name
+    );
+    this.subjectTemplate = subjectTemplateInfo.template;
+    this.hasCustomSubjectTemplate = subjectTemplateInfo.isCustom;
 
     this.config = {
       name,
-      containerPath: resourceConfig.containerPath,
-      resourcePath: resourceConfig.resourcePath,
+      base: baseConfig.resourcePath,
       rdfClass: resolveTermIri(options.rdfClass),
       namespace: options.namespace,
-      autoRegister: options.autoRegister !== false,
-      resourceMode: resourceConfig.mode,
-      sparqlEndpoint: resourceConfig.sparqlEndpoint
+      typeIndex: options.typeIndex,
+      subjectTemplate: this.subjectTemplate,
+      graph: options.graph
     };
     
     this.columns = columns;
@@ -454,6 +494,8 @@ export class PodTable<TColumns extends Record<string, PodColumnBase> = Record<st
       inferInsert: {} as InferInsertData<PodTable<TColumns>>,
       inferUpdate: {} as InferUpdateData<PodTable<TColumns>>
     };
+
+    this.mapping = this.buildTableMapping();
   }
 
   // 添加 drizzle-zod 需要的 getSQL 方法
@@ -466,7 +508,7 @@ export class PodTable<TColumns extends Record<string, PodColumnBase> = Record<st
 
   // 获取容器路径
   getContainerPath(): string {
-    return this.config.containerPath;
+    return this.containerPath;
   }
 
   // 获取 RDF 类
@@ -479,120 +521,67 @@ export class PodTable<TColumns extends Record<string, PodColumnBase> = Record<st
     return this.config.namespace;
   }
 
-  private resolveResourceConfig(options: PodTableOptions): {
-    mode: 'ldp' | 'sparql';
-    resourcePath: string;
-    containerPath: string;
-    sparqlEndpoint?: string;
-  } {
-    // 如果没有 resourcePath，返回默认配置（稍后从 TypeIndex 发现）
-    if (!options.resourcePath) {
+  getSubjectTemplate(): string {
+    return this.subjectTemplate;
+  }
+
+  getMapping(): PodTableMapping {
+    return this.mapping;
+  }
+
+  private resolveBase(base: string | undefined, tableName: string): { resourcePath: string; containerPath: string } {
+    if (!base || base.trim().length === 0) {
       return {
-        mode: 'ldp',
-        resourcePath: '', // 空路径，稍后从 TypeIndex 自动发现
-        containerPath: options.containerPath || '/data/'
+        resourcePath: '',
+        containerPath: '/data/'
       };
     }
 
-    const rawPath = options.resourcePath.trim();
-    const explicitMode = options.resourceMode;
-    const containerOverride = options.containerPath?.trim();
+    const normalizedInput = this.normalizeBaseInput(base);
+    const normalizedPath = this.normalizeResourcePath(normalizedInput);
 
-    const { scheme, path } = this.parseResourcePath(rawPath);
-
-    let sparqlEndpoint = options.sparqlEndpoint?.trim();
-    if (!sparqlEndpoint && scheme === 'sparql') {
-      sparqlEndpoint = path;
-    }
-
-    if (!sparqlEndpoint && !explicitMode && rawPath.startsWith('sparql:')) {
-      sparqlEndpoint = rawPath.replace(/^sparql:\s*/, '').trim();
-    }
-
-    const inferModeFromScheme = (): 'ldp' | 'sparql' => {
-      if (scheme === 'sparql') return 'sparql';
-      if (scheme === 'idp' || scheme === 'ldp' || scheme === 'pod' || scheme === undefined) {
-        return 'ldp';
-      }
-      return 'ldp';
-    };
-
-    const mode: 'ldp' | 'sparql' = explicitMode ?? (sparqlEndpoint ? 'sparql' : inferModeFromScheme());
-
-    if (mode === 'sparql') {
-      const endpointSource = sparqlEndpoint && sparqlEndpoint.length > 0
-        ? sparqlEndpoint
-        : path;
-
-      const endpoint = this.normalizeSparqlEndpoint(endpointSource);
-
-      if (!endpoint || endpoint.length === 0) {
-        throw new Error('SPARQL tables require an endpoint (resourcePath can start with "sparql:")');
-      }
+    if (normalizedPath.endsWith('/')) {
+      const containerPath = this.ensureTrailingSlash(normalizedPath);
       return {
-        mode: 'sparql',
-        resourcePath: endpoint,
-        containerPath: containerOverride ? this.ensureTrailingSlash(containerOverride) : '/',
-        sparqlEndpoint: endpoint
+        resourcePath: `${containerPath}${tableName}.ttl`,
+        containerPath
       };
     }
 
-    const normalizedPath = this.normalizeResourcePath(path);
+    const containerPath = this.ensureTrailingSlash(this.deriveContainerPath(normalizedPath));
     return {
-      mode: 'ldp',
       resourcePath: normalizedPath,
-      containerPath: containerOverride
-        ? this.ensureTrailingSlash(containerOverride)
-        : this.ensureTrailingSlash(this.deriveContainerPath(normalizedPath))
+      containerPath,
     };
   }
 
-  private parseResourcePath(rawPath: string): { scheme?: string; path: string } {
-    const trimmed = rawPath.trim();
+  private normalizeBaseInput(rawBase: string): string {
+    const trimmed = rawBase.trim();
     if (trimmed.length === 0) {
-      throw new Error('podTable requires a non-empty resourcePath');
+      throw new Error('podTable requires a non-empty base');
     }
 
     const schemeMatch = trimmed.match(/^([a-zA-Z][\w+.-]*):\/\/(.*)$/);
     if (schemeMatch) {
       const [, scheme, remainder] = schemeMatch;
-      const remainderTrimmed = remainder.trim();
       const normalizedScheme = scheme.toLowerCase();
+      const remainderTrimmed = remainder.trim();
 
       if (normalizedScheme === 'http' || normalizedScheme === 'https') {
         const rest = remainderTrimmed.length === 0 ? '' : remainderTrimmed;
-        return { scheme: normalizedScheme, path: `${normalizedScheme}://${rest}` };
+        return `${normalizedScheme}://${rest}`;
       }
 
       const normalizedRemainder = remainderTrimmed.length === 0 ? '/' : remainderTrimmed;
-      return { scheme: normalizedScheme, path: normalizedRemainder.startsWith('/') ? normalizedRemainder : `/${normalizedRemainder}` };
+      return normalizedRemainder.startsWith('/') ? normalizedRemainder : `/${normalizedRemainder}`;
     }
 
-    if (trimmed.startsWith('sparql:')) {
-      const remainder = trimmed.replace(/^sparql:\s*/, '').trim();
-      return { scheme: 'sparql', path: remainder.length === 0 ? '/' : remainder };
-    }
-
-    return { path: trimmed };
-  }
-
-  private normalizeSparqlEndpoint(endpoint: string): string {
-    const trimmed = endpoint.trim();
-    if (trimmed.length === 0) {
-      return trimmed;
-    }
-
-    if (/^[a-zA-Z][\w+.-]*:\/\//.test(trimmed)) {
-      return trimmed;
-    }
-
-    const normalized = trimmed.startsWith('/') ? trimmed : trimmed.replace(/^\.\/?/, '/');
-    return this.normalizeResourcePath(normalized);
+    return trimmed;
   }
 
   private normalizeResourcePath(resourcePath: string): string {
     if (typeof resourcePath !== 'string' || resourcePath.trim().length === 0) {
-      throw new Error('podTable requires a non-empty resourcePath');
+      throw new Error('podTable requires a non-empty base');
     }
     if (/^[a-zA-Z][\w+.-]*:\/\//.test(resourcePath)) {
       return resourcePath;
@@ -621,18 +610,41 @@ export class PodTable<TColumns extends Record<string, PodColumnBase> = Record<st
     return path.endsWith('/') ? path : `${path}/`;
   }
 
-  // 获取资源访问模式
-  getResourceMode(): 'ldp' | 'sparql' {
-    return this.config.resourceMode;
-  }
-
-  // 获取 SPARQL 端点（仅在 resourceMode === 'sparql' 时使用）
-  getSparqlEndpoint(): string | undefined {
-    return this.config.sparqlEndpoint;
-  }
-
   getResourcePath(): string {
-    return this.config.resourcePath;
+    return this.resourcePath;
+  }
+
+  async init(initializer: PodTableInitializer): Promise<void> {
+    await initializer.registerTable(this);
+  }
+
+  isInitialized(): boolean {
+    return this.initialized;
+  }
+
+  markInitialized(initialized = true): void {
+    this.initialized = initialized;
+  }
+
+  /**
+   * 动态更新 base（TypeIndex 自动发现等场景）
+   */
+  setBase(base: string): void {
+    const resolved = this.resolveBase(base, this.config.name);
+    this.resourcePath = resolved.resourcePath;
+    this.containerPath = resolved.containerPath;
+    this.config.base = resolved.resourcePath;
+    if ((this as any)._?.config) {
+      (this as any)._!.config.base = this.config.base;
+    }
+    if (!this.hasCustomSubjectTemplate) {
+      this.subjectTemplate = this.buildDefaultSubjectTemplate(this.config.base, this.config.name);
+      this.config.subjectTemplate = this.subjectTemplate;
+      if ((this as any)._?.config) {
+        (this as any)._!.config.subjectTemplate = this.subjectTemplate;
+      }
+    }
+    this.mapping = this.buildTableMapping();
   }
 
   // 获取所有列
@@ -649,6 +661,87 @@ export class PodTable<TColumns extends Record<string, PodColumnBase> = Record<st
   hasColumn(name: string): boolean {
     return name in this.columns;
   }
+
+  private resolveSubjectTemplate(
+    template: string | undefined,
+    resourcePath: string,
+    tableName: string
+  ): { template: string; isCustom: boolean } {
+    if (template && template.trim().length > 0) {
+      return { template: template.trim(), isCustom: true };
+    }
+    return {
+      template: this.buildDefaultSubjectTemplate(resourcePath, tableName),
+      isCustom: false
+    };
+  }
+
+  private buildDefaultSubjectTemplate(resourcePath: string, tableName = 'resource'): string {
+    const basePath =
+      resourcePath && resourcePath.length > 0
+        ? resourcePath
+        : `/${tableName}.ttl`;
+    const trimmed = basePath.endsWith('#') ? basePath.slice(0, -1) : basePath;
+    if (trimmed.includes('{')) {
+      return trimmed;
+    }
+    return `${trimmed}#{id}`;
+  }
+
+  private buildTableMapping(): PodTableMapping {
+    const mappedColumns: Record<string, PodColumnMapping> = {};
+    for (const column of Object.values(this.columns)) {
+      mappedColumns[column.name] = this.buildColumnMapping(column);
+    }
+
+    return {
+      name: this.config.name,
+      rdfClass: this.config.rdfClass,
+      subjectTemplate: this.subjectTemplate,
+      graph: this.config.graph,
+      namespace: this.config.namespace,
+      columns: mappedColumns
+    };
+  }
+
+  private buildColumnMapping(column: PodColumnBase): PodColumnMapping {
+    const predicate = column.name === 'id'
+      ? '@id'
+      : column.getPredicate(this.config.namespace);
+    return {
+      column: column.name,
+      predicate,
+      kind: column.isReference() ? 'object' : 'datatype',
+      datatype: this.inferColumnDatatype(column),
+      referenceTarget: column.getReferenceTarget(),
+      isArray: column.options.isArray ?? false
+    };
+  }
+
+
+  private inferColumnDatatype(column: PodColumnBase): string | undefined {
+    switch (column.dataType) {
+      case 'string':
+        return 'http://www.w3.org/2001/XMLSchema#string';
+      case 'integer':
+        return 'http://www.w3.org/2001/XMLSchema#integer';
+      case 'boolean':
+        return 'http://www.w3.org/2001/XMLSchema#boolean';
+      case 'datetime':
+        return 'http://www.w3.org/2001/XMLSchema#dateTime';
+      case 'json':
+      case 'object':
+        return 'http://www.w3.org/2001/XMLSchema#json';
+      case 'uri':
+        return undefined;
+      default:
+        return undefined;
+    }
+  }
+}
+
+export interface PodTableInitializer {
+  registerTable(table: PodTable<any>): Promise<void>;
 }
 
 export function boolean(name: string, options: PodColumnOptions = {}): ColumnBuilder<'boolean'> {

@@ -36,6 +36,9 @@ const profileTable = podTable('profile', {
 const session = new Session(); // 已认证的session
 const db = drizzle(session);
 
+// 初始化需要使用的表（创建容器、资源并注册 TypeIndex）
+await db.init([profileTable]);
+
 // 查询数据
 const profiles = await db.select().from(profileTable);
 
@@ -98,7 +101,17 @@ const userTable = podTable('users', {
   age: int('age'),               // foaf:age
   verified: boolean('verified'),     // 自定义谓词
   createdAt: date('createdAt')   // dcterms:created
+}, {
+  // 目标 Turtle 资源，必填，可以是相对 Pod 路径或绝对 URL
+  base: 'data/users.ttl',
+  // 主体类型
+  rdfClass: 'https://schema.org/Person',
+  // 可选：注册 TypeIndex，默认不注册
+  typeIndex: 'private' // 'public' | 'private' | undefined
 });
+
+// 初始化：在 CRUD 前确保容器/资源存在（会按 base 自动创建）
+await db.init([userTable]);
 ```
 
 ### 支持的列类型
@@ -252,7 +265,7 @@ const LINQ = namespace('linq', 'https://linq.dev/ns/', {
 const customTable = podTable('custom', {
   title: string('title').predicate(LINQ.favorite)
 }, {
-  resourcePath: 'idp:///custom/index.ttl',
+  base: 'idp:///custom/index.ttl', // 目标资源
   rdfClass: 'https://schema.org/CreativeWork',
   namespace: LINQ
 });
@@ -273,6 +286,18 @@ await session.login({
 const db = drizzle(session);
 ```
 
+### `base` / `@id` / `id` 与 Pod 根的关系
+
+- `podUrl`（Pod 根）由 WebID 推导，所有相对路径都基于它解析。
+- `base` 是表的目标 Turtle 资源（必填），可为相对路径或绝对 URL。示例：`base: '/data/contacts.ttl'` → `https://pod.example/data/contacts.ttl`。
+- 写入：
+  - 提供 `@id` 则直接作为 subject；
+  - 提供 `id`（或库自动生成）则 subject 形如 `base#<id>`（或按表的 subject 模板选择 `#`/`/`）。
+- 查询：
+  - `where({ '@id': 'https://…#foo' })` 精确匹配该 subject；
+  - `where({ id: 'foo' })` 匹配 fragment 为 `foo` 且落在该表 `base` 下的 subject。
+- `base` 同时决定存储地址（PUT/PATCH 目标）和 subject 生成；`podUrl` 只负责解析相对的 `base`。
+
 ## 🏗️ 架构
 
 Drizzle Solid基于以下组件构建：
@@ -292,6 +317,14 @@ Drizzle Solid基于以下组件构建：
 ## 🤝 贡献
 
 欢迎贡献代码！请阅读 [CONTRIBUTING.md](CONTRIBUTING.md) 了解测试要求、提交流程与验证内容。
+
+在提交 PR 之前，请同步运行完整的 CSS 集成测试（覆盖 CRUD、TypeIndex 等场景）：
+
+```bash
+SOLID_ENABLE_REAL_TESTS=true npx vitest run tests/integration/css --runInBand
+```
+
+> `SOLID_ENABLE_REAL_TESTS=true` 会启用真实 Pod，`--runInBand` 保证所有 suite 共用一个会话并顺序执行，避免对 OIDC 服务造成并发压力。
 
 ## 📄 许可证
 

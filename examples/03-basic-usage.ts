@@ -297,6 +297,8 @@ async function main() {
     console.log('============================================================');
     const db = drizzle(session);
     console.log('✅ drizzle-solid数据库连接已建立');
+    console.log('⚙️  初始化 tasks 表');
+    await db.init([taskTable]);
     
     // 3. 执行CRUD操作
     createdIds = await demonstrateCreate(db);

@@ -23,7 +23,6 @@ const users = podTable('users', {
 }, {
   containerPath: '/users/',
   rdfClass: RDF_CLASSES.SCHEMA_PERSON,
-  autoRegister: true
 });
 
 // 项目表
@@ -38,7 +37,6 @@ const projects = podTable('projects', {
 }, {
   containerPath: '/projects/',
   rdfClass: 'https://myapp.com/vocab#Project',
-  autoRegister: true
 });
 
 // 任务表
@@ -56,7 +54,6 @@ const tasks = podTable('tasks', {
 }, {
   containerPath: '/tasks/',
   rdfClass: 'https://myapp.com/vocab#Task',
-  autoRegister: true
 });
 
 // 项目成员表（多对多关系）
@@ -69,7 +66,6 @@ const projectMembers = podTable('projectMembers', {
 }, {
   containerPath: '/project-members/',
   rdfClass: 'https://myapp.com/vocab#ProjectMember',
-  autoRegister: true
 });
 
 // 评论表
@@ -82,7 +78,6 @@ const comments = podTable('comments', {
 }, {
   containerPath: '/comments/',
   rdfClass: RDF_CLASSES.APP_COMMENT,
-  autoRegister: true
 });
 
 /**

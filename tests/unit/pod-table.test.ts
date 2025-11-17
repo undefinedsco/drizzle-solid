@@ -5,6 +5,8 @@
 import { podTable, string, int, date } from '@src/index';
 
 describe('PodTable Tests', () => {
+  const schemaNamespace = { prefix: 'schema', uri: 'https://schema.org/' } as const;
+
   test('should create table with columns', () => {
     const table = podTable('users', {
       id: string('id').primaryKey(),
@@ -12,8 +14,9 @@ describe('PodTable Tests', () => {
       age: int('age'),
       createdAt: date('createdAt')
     }, {
-      resourcePath: 'idp:///users/index.ttl',
-      rdfClass: 'https://schema.org/Person'
+      base: 'idp:///users/index.ttl',
+      rdfClass: 'https://schema.org/Person',
+      namespace: schemaNamespace
     });
 
     expect(table).toBeDefined();
@@ -31,8 +34,9 @@ describe('PodTable Tests', () => {
       title: string('title').notNull(),
       priority: int('priority')
     }, {
-      resourcePath: 'idp:///tasks/index.ttl',
-      rdfClass: 'https://schema.org/Task'
+      base: 'idp:///tasks/index.ttl',
+      rdfClass: 'https://schema.org/Task',
+      namespace: schemaNamespace
     });
 
     // Test direct field access (added in our modifications)

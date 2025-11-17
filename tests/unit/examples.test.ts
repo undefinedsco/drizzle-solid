@@ -45,7 +45,7 @@ describe('Examples Functionality Tests', () => {
       createdAt: date('createdAt').notNull().predicate('https://schema.org/dateCreated'),
       updatedAt: date('updatedAt').notNull().predicate('https://schema.org/dateModified')
     }, {
-      resourcePath: 'idp:///tasks/index.ttl',
+      base: 'idp:///tasks/index.ttl',
       rdfClass: 'https://schema.org/Task',
       namespace: { prefix: 'schema', uri: 'https://schema.org/' }
     });
@@ -105,7 +105,7 @@ describe('Examples Functionality Tests', () => {
       id: string('id').primaryKey().predicate('https://schema.org/identifier'),
       name: string('name').notNull().predicate('https://schema.org/name')
     }, {
-      resourcePath: 'idp:///test/index.ttl',
+      base: 'idp:///test/index.ttl',
       rdfClass: 'https://schema.org/Thing',
       namespace: { prefix: 'schema', uri: 'https://schema.org/' }
     });

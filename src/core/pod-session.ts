@@ -4,13 +4,30 @@ import { PodDialect, type PodOperation } from './pod-dialect';
 import { PodTable, PodColumnBase, type InferTableData, type InferInsertData, type InferUpdateData } from './pod-table';
 import { QueryCondition, inArray } from './query-conditions';
 import { AggregateExpression, isAggregateExpression } from './aggregates';
+import type { SelectQueryPlan } from './select-plan';
 
 export type SelectField = PodColumnBase | string | AggregateExpression;
 export type SelectFieldMap = Record<string, SelectField>;
 
+export interface InsertQueryPlan<TTable extends PodTable<any> = PodTable<any>> {
+  table: TTable;
+  rows: InferInsertData<TTable>[];
+}
+
+export interface UpdateQueryPlan<TTable extends PodTable<any> = PodTable<any>> {
+  table: TTable;
+  data: InferUpdateData<TTable>;
+  where: QueryCondition;
+}
+
+export interface DeleteQueryPlan<TTable extends PodTable<any> = PodTable<any>> {
+  table: TTable;
+  where?: QueryCondition;
+}
+
 type JoinType = 'leftJoin' | 'rightJoin' | 'innerJoin' | 'fullJoin';
 
-interface ColumnReference {
+export interface ColumnReference {
   table: PodTable<any>;
   alias: string;
   column: string;
@@ -19,6 +36,72 @@ interface ColumnReference {
 interface ResolvedJoinCondition {
   left: ColumnReference;
   right: ColumnReference;
+}
+
+function createLiteralCondition(
+  alias: string | undefined,
+  column: string,
+  value: any
+): QueryCondition {
+  if (value === undefined || value === null) {
+    return {
+      type: 'unary_expr',
+      operator: 'IS NULL',
+      column,
+      left: { column },
+      table: alias
+    };
+  }
+
+  if (Array.isArray(value)) {
+    return {
+      type: 'binary_expr',
+      operator: 'IN',
+      column,
+      left: { column },
+      right: { value },
+      value,
+      table: alias
+    };
+  }
+
+  return {
+    type: 'binary_expr',
+    operator: '=',
+    column,
+    left: { column },
+    right: { value },
+    value,
+    table: alias
+  };
+}
+
+function buildConditionTreeFromObject(
+  conditions: Record<string, any> | undefined,
+  alias?: string
+): QueryCondition | undefined {
+  if (!conditions) {
+    return undefined;
+  }
+
+  const entries = Object.entries(conditions);
+  if (entries.length === 0) {
+    return undefined;
+  }
+
+  const nodes = entries.map(([column, value]) =>
+    createLiteralCondition(alias, column, value)
+  );
+
+  if (nodes.length === 1) {
+    return nodes[0];
+  }
+
+  return {
+    type: 'logical_expr',
+    operator: 'AND',
+    conditions: nodes
+  };
 }
 
 export class PodAsyncSession {
@@ -51,6 +134,23 @@ export class PodAsyncSession {
     return this.options;
   }
 
+  private async ensureInitialized(table: PodTable<any>): Promise<void> {
+    if (table && typeof table.isInitialized === 'function') {
+      if (!table.isInitialized()) {
+        if (typeof table.init === 'function') {
+          await table.init(this.dialect);
+        } else {
+          await this.dialect.registerTable(table);
+        }
+      }
+      return;
+    }
+
+    if (table) {
+      await this.dialect.registerTable(table);
+    }
+  }
+
   // 执行查询操作
   async execute(operation: PodOperation): Promise<any[]> {
     if (this.options.logger) {
@@ -73,12 +173,12 @@ export class PodAsyncSession {
       throw new Error(`Unsupported operation type: ${operation.type}`);
     }
     
-    await this.dialect.registerTable(operation.table);
+    await this.ensureInitialized(operation.table);
 
     if (Array.isArray(operation.joins)) {
       for (const join of operation.joins) {
         if (join?.table) {
-          await this.dialect.registerTable(join.table);
+          await this.ensureInitialized(join.table);
         }
       }
     }
@@ -91,7 +191,7 @@ export class PodAsyncSession {
     if (this.options.logger) {
       console.log('Executing SQL AST:', sql);
     }
-    await this.dialect.registerTable(table);
+    await this.ensureInitialized(table);
     return await this.dialect.executeSql(sql, table);
   }
 
@@ -101,7 +201,7 @@ export class PodAsyncSession {
     condition: QueryCondition
   ): Promise<any[]> {
     console.log('[PodAsyncSession] Executing complex update for table:', table.config.name);
-    await this.dialect.registerTable(table);
+    await this.ensureInitialized(table);
     return await this.dialect.executeComplexUpdate(
       {
         type: 'update',
@@ -118,7 +218,7 @@ export class PodAsyncSession {
     condition: QueryCondition
   ): Promise<any[]> {
     console.log('[PodAsyncSession] Executing complex delete for table:', table.config.name);
-    await this.dialect.registerTable(table);
+    await this.ensureInitialized(table);
     return await this.dialect.executeComplexDelete(
       {
         type: 'delete',
@@ -397,7 +497,7 @@ export class SelectQueryBuilder<TTable extends PodTable<any> = PodTable<any>> {
         continue;
       }
 
-      this.joinFilters.push(this.createConditionFromLiteral(targetAlias, column, value));
+      this.joinFilters.push(createLiteralCondition(targetAlias, column, value));
     }
 
     this.whereConditions = Object.keys(baseConditions).length > 0 ? baseConditions : undefined;
@@ -416,47 +516,54 @@ export class SelectQueryBuilder<TTable extends PodTable<any> = PodTable<any>> {
     }
   }
 
-  private createConditionFromLiteral(alias: string, column: string, value: any): QueryCondition {
-    if (value === undefined) {
-      return {
-        type: 'unary_expr',
-        operator: 'IS NULL',
-        column,
-        left: { column },
-        table: alias
-      };
+  private normalizeWhereConditions(): QueryCondition | undefined {
+    if (this.conditionTree) {
+      return this.conditionTree;
+    }
+    const alias = this.primaryAlias ?? this.selectedTable?.config.name;
+    return buildConditionTreeFromObject(this.whereConditions, alias);
+  }
+  public toIR(): SelectQueryPlan {
+    const wherePayload = this.normalizeWhereConditions();
+    return this.buildQueryPlan(wherePayload);
+  }
+
+  private buildQueryPlan(whereCondition?: QueryCondition): SelectQueryPlan {
+    if (!this.selectedTable) {
+      throw new Error('No table specified for SELECT query');
     }
 
-    if (value === null) {
-      return {
-        type: 'unary_expr',
-        operator: 'IS NULL',
-        column,
-        left: { column },
-        table: alias
-      };
-    }
-
-    if (Array.isArray(value)) {
-      return {
-        type: 'binary_expr',
-        operator: 'IN',
-        column,
-        left: { column },
-        right: { value },
-        value,
-        table: alias
-      };
-    }
+    const planJoins = this.joins.map((join) => ({
+      type: join.type,
+      table: join.table,
+      alias: join.alias,
+      conditions: (join.resolvedConditions ?? []).map(({ left, right }) => ({
+        left,
+        right
+      }))
+    }));
 
     return {
-      type: 'binary_expr',
-      operator: '=',
-      column,
-      left: { column },
-      right: { value },
-      value,
-      table: alias
+      baseTable: this.selectedTable,
+      baseAlias: this.primaryAlias ?? this.selectedTable.config.name,
+      select: this.selectedFields,
+      selectAll: !this.selectedFields,
+      where: this.whereConditions,
+      conditionTree: whereCondition,
+      joins: planJoins.length > 0 ? planJoins : undefined,
+      joinFilters: this.joinFilters.length > 0 ? [...this.joinFilters] : undefined,
+      groupBy: this.groupByColumns.length > 0 ? [...this.groupByColumns] : undefined,
+      orderBy: this.orderByClauses.length > 0
+        ? this.orderByClauses.map((clause) => ({
+            rawColumn: clause.column,
+            direction: clause.direction
+          }))
+        : undefined,
+      distinct: this.isDistinct || undefined,
+      limit: this.limitCount,
+      offset: this.offsetCount,
+      aliasToTable: new Map(this.aliasToTable),
+      tableToAlias: new Map(this.tableAliases)
     };
   }
 
@@ -500,7 +607,8 @@ export class SelectQueryBuilder<TTable extends PodTable<any> = PodTable<any>> {
       // 使用 SQL AST 执行
       return await this.session.executeSql(this.sql, this.selectedTable) as InferTableData<TTable>[];
     } else {
-      const wherePayload = this.conditionTree ?? this.whereConditions;
+      const plan = this.toIR();
+      const wherePayload = plan.conditionTree;
       const operation: PodOperation = {
         type: 'select',
         table: this.selectedTable,
@@ -510,18 +618,25 @@ export class SelectQueryBuilder<TTable extends PodTable<any> = PodTable<any>> {
         orderBy: this.orderByClauses.length > 0 ? this.orderByClauses : undefined,
         distinct: this.isDistinct || undefined
       };
-
       const hasJoins = this.joins.length > 0;
+      const useAggregateFallback = this.shouldUseAggregateFallback();
+
+      if (hasJoins || useAggregateFallback) {
+        plan.select = undefined;
+        plan.selectAll = true;
+      }
+      operation.plan = plan;
 
       if (this.groupByColumns.length === 0 && this.hasMixedAggregateSelection()) {
         throw new Error('Mixed aggregate and non-aggregate selections require groupBy columns');
       }
 
-      if (!hasJoins && !this.shouldUseAggregateFallback()) {
+      if (!hasJoins && !useAggregateFallback) {
         if (this.selectedFields) {
           operation.select = this.selectedFields;
         }
-        const directResults = await this.session.execute(operation) as Record<string, any>[];
+        let directResults = await this.session.execute(operation) as Record<string, any>[];
+        directResults = this.applySubjectMetadata(directResults);
         if (this.selectedFields) {
           return directResults.map((row) => this.projectSelectedRow(row)) as InferTableData<TTable>[];
         }
@@ -530,13 +645,16 @@ export class SelectQueryBuilder<TTable extends PodTable<any> = PodTable<any>> {
 
       if (hasJoins) {
         operation.select = undefined;
-      } else if (!this.shouldUseAggregateFallback()) {
+      } else if (!useAggregateFallback) {
         operation.select = this.selectedFields;
       } else {
         operation.select = undefined;
       }
 
       let intermediateRows = await this.session.execute(operation) as Record<string, any>[];
+      if (!hasJoins) {
+        intermediateRows = this.applySubjectMetadata(intermediateRows);
+      }
 
       if (hasJoins) {
         intermediateRows = this.normalizeBaseRows(intermediateRows);
@@ -544,7 +662,7 @@ export class SelectQueryBuilder<TTable extends PodTable<any> = PodTable<any>> {
         intermediateRows = this.applyJoinFilters(intermediateRows);
       }
 
-      if (this.shouldUseAggregateFallback()) {
+      if (useAggregateFallback) {
         return this.handleAggregateFallback(intermediateRows) as InferTableData<TTable>[];
       }
 
@@ -865,6 +983,29 @@ export class SelectQueryBuilder<TTable extends PodTable<any> = PodTable<any>> {
     const hasAggregate = fields.some((field) => isAggregateExpression(field));
     const hasNonAggregate = fields.some((field) => !isAggregateExpression(field));
     return hasAggregate && hasNonAggregate;
+  }
+
+  private applySubjectMetadata(rows: Record<string, any>[]): Record<string, any>[] {
+    return rows.map((row) => this.attachSubjectMetadata(row));
+  }
+
+  private attachSubjectMetadata(row: Record<string, any>): Record<string, any> {
+    const subjectValue = row.subject;
+    if (typeof subjectValue === 'string' && subjectValue.length > 0) {
+      if (row['@id'] === undefined) {
+        row['@id'] = subjectValue;
+      }
+      if (row.uri === undefined) {
+        row.uri = subjectValue;
+      }
+      if (row.id === undefined) {
+        const derivedId = this.extractIdFromSubject(subjectValue);
+        if (derivedId !== undefined) {
+          row.id = derivedId;
+        }
+      }
+    }
+    return row;
   }
 
   private normalizeBaseRows(rows: Record<string, any>[]): Record<string, any>[] {
@@ -1192,6 +1333,18 @@ export class SelectQueryBuilder<TTable extends PodTable<any> = PodTable<any>> {
     return regex.test(value);
   }
 
+
+  async selectIdsByCondition(table: PodTable, condition: QueryCondition): Promise<string[]> {
+    const builder = this.select({ id: table.getColumn('id') ?? table.columns.id })
+      .from(table)
+      .where(condition)
+      .select({ '@id': table.columns.id });
+    const rows = await builder;
+    return rows
+      .map((row: any) => row.id || row['@id'])
+      .filter((value: unknown): value is string => typeof value === 'string' && value.length > 0);
+  }
+
   // 使查询构建器可等待
   then<TResult1 = any[], TResult2 = never>(
     onfulfilled?: ((value: any[]) => TResult1 | PromiseLike<TResult1>) | undefined | null,
@@ -1220,16 +1373,26 @@ export class InsertQueryBuilder<TTable extends PodTable<any> = PodTable<any>> {
     return this;
   }
 
+  public toIR = (): InsertQueryPlan<TTable> => {
+    const values = this.insertValues;
+    if (!values) {
+      throw new Error('No values specified for INSERT query');
+    }
+    return {
+      table: this.table,
+      rows: Array.isArray(values) ? values : [values]
+    };
+  };
+
   async execute(): Promise<InferTableData<TTable>[]> {
     if (this.sql) {
-      // 使用 SQL AST 执行
       return await this.session.executeSql(this.sql, this.table) as InferTableData<TTable>[];
     } else if (this.insertValues) {
-      // 使用简化操作
       const operation: PodOperation = {
         type: 'insert',
         table: this.table,
-        values: this.insertValues
+        values: this.insertValues,
+        plan: this.toIR()
       };
       return await this.session.execute(operation) as InferTableData<TTable>[];
     } else {
@@ -1237,7 +1400,6 @@ export class InsertQueryBuilder<TTable extends PodTable<any> = PodTable<any>> {
     }
   }
 
-  // 使查询构建器可等待
   then<TResult1 = any[], TResult2 = never>(
     onfulfilled?: ((value: any[]) => TResult1 | PromiseLike<TResult1>) | undefined | null,
     onrejected?: ((reason: any) => TResult2 | PromiseLike<TResult2>) | undefined | null
@@ -1299,23 +1461,40 @@ export class UpdateQueryBuilder<TTable extends PodTable<any> = PodTable<any>> {
     return {};
   }
 
+  private normalizeWhereConditionsForUpdate(): QueryCondition | undefined {
+    if (this.conditionTree) {
+      return this.conditionTree;
+    }
+    return buildConditionTreeFromObject(this.whereConditions);
+  }
+
+  public toIR = (): UpdateQueryPlan<TTable> => {
+    if (!this.updateData) {
+      throw new Error('No data specified for UPDATE query');
+    }
+    const whereCondition = this.normalizeWhereConditionsForUpdate();
+    if (!whereCondition) {
+      throw new Error('UPDATE operation requires where conditions to locate target resources');
+    }
+    return {
+      table: this.table,
+      data: this.updateData,
+      where: whereCondition
+    };
+  };
+
   async execute(): Promise<any[]> {
     if (this.sql) {
-      // 使用 SQL AST 执行
       return await this.session.executeSql(this.sql, this.table);
     } else if (this.updateData) {
-      // 使用简化操作
+      const plan = this.toIR();
       const operation: PodOperation = {
         type: 'update',
         table: this.table,
-        data: this.updateData,
-        where: this.whereConditions ?? this.conditionTree
+        data: plan.data,
+        where: plan.where,
+        plan
       };
-
-      if (this.conditionTree && (!this.whereConditions || Object.keys(this.whereConditions).length === 0)) {
-        return await this.session.executeComplexUpdate(this.table, this.updateData, this.conditionTree);
-      }
-
       return await this.session.execute(operation);
     } else {
       throw new Error('No data specified for UPDATE query');
@@ -1370,21 +1549,32 @@ export class DeleteQueryBuilder<TTable extends PodTable<any> = PodTable<any>> {
     return {};
   }
 
+  private normalizeWhereConditionsForDelete(): QueryCondition | undefined {
+    if (this.conditionTree) {
+      return this.conditionTree;
+    }
+    return buildConditionTreeFromObject(this.whereConditions);
+  }
+
+  public toIR = (): DeleteQueryPlan<TTable> => {
+    const whereCondition = this.normalizeWhereConditionsForDelete();
+    return {
+      table: this.table,
+      where: whereCondition
+    };
+  };
+
   async execute(): Promise<any[]> {
     if (this.sql) {
-      // 使用 SQL AST 执行
       return await this.session.executeSql(this.sql, this.table);
     } else {
-      // 使用简化操作
+      const plan = this.toIR();
       const operation: PodOperation = {
         type: 'delete',
         table: this.table,
-        where: this.whereConditions ?? this.conditionTree
+        where: plan.where,
+        plan
       };
-
-      if (this.conditionTree && (!this.whereConditions || Object.keys(this.whereConditions).length === 0)) {
-        return await this.session.executeComplexDelete(this.table, this.conditionTree);
-      }
 
       return await this.session.execute(operation);
     }

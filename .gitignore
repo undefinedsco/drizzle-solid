@@ -90,3 +90,10 @@ jspm_packages/
 
 # DynamoDB Local files
 .dynamodb/ 
+
+# AI
+.codex
+.claude
+.cursor
+openspec
+.npm-cache
