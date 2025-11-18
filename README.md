@@ -283,21 +283,21 @@ await db.delete(userTable)
 
 ### 自定义命名空间
 
-Drizzle Solid 不再内置 vocab 常量，请从 RDF vocab 库（例如 `@inrupt/vocab-common-rdf`）导入需要的术语，并手动提供 `namespace` 配置：
+Drizzle Solid 不再内置 vocab 常量，请从 RDF vocab 库（例如 `@inrupt/vocab-common-rdf`）导入需要的术语；若需要扩展缺失字段，可使用 `extendNamespace`：
 
 ```typescript
-import { podTable, string } from 'drizzle-solid';
+import { podTable, string, extendNamespace } from 'drizzle-solid';
 import { SCHEMA_INRUPT as SCHEMA } from '@inrupt/vocab-common-rdf';
 
-const LINQ = {
-  prefix: 'linq',
-  uri: 'https://linq.dev/ns/'
-} as const;
-const LINQ_FAVORITE = `${LINQ.uri}profile#favorite`;
+const LINQ = extendNamespace(
+  { prefix: 'linq', uri: 'https://linq.dev/ns/' },
+  { favorite: 'profile#favorite' },
+  { namespace: 'https://linq.dev/ns/' }
+);
 
 const customTable = podTable('custom', {
   title: string('title').predicate(`${SCHEMA.NAMESPACE}title`),
-  favorite: string('favorite').predicate(LINQ_FAVORITE)
+  favorite: string('favorite').predicate(LINQ.favorite)
 }, {
   base: 'idp:///custom/index.ttl', // 目标资源
   rdfClass: `${SCHEMA.NAMESPACE}CreativeWork`,

@@ -44,20 +44,20 @@ const profiles = podTable('profiles', {
 如果未调用 `.predicate(...)`，需要在 `namespace` 中包含同名条目，否则构建时会抛错。推荐做法是结合 `@inrupt/vocab-common-rdf` 等库直接引用现成的 vocab，并手动提供 `namespace` 对象：
 
 ```ts
-import { podTable, string, uri } from 'drizzle-solid';
+import { podTable, string, uri, extendNamespace } from 'drizzle-solid';
 import { VCARD, FOAF } from '@inrupt/vocab-common-rdf';
 
-const LINQ_NAMESPACE = {
-  prefix: 'linq',
-  uri: 'https://linq.dev/ns/'
-} as const;
-const LINQ_FAVORITE = `${LINQ_NAMESPACE.uri}profile#favorite`;
+const LINQ_NAMESPACE = extendNamespace(
+  { prefix: 'linq', uri: 'https://linq.dev/ns/' },
+  { profileFavorite: 'profile#favorite' },
+  { namespace: 'https://linq.dev/ns/' }
+);
 
 const contacts = podTable('contacts', {
   webId: string('webId').primaryKey(),
   name: string('name').predicate(VCARD.fn),
   nickname: string('nickname').predicate(FOAF.nick),
-  favorite: string('favorite').predicate(LINQ_FAVORITE),
+  favorite: string('favorite').predicate(LINQ_NAMESPACE.profileFavorite),
   organization: uri('organization')
     .predicate('https://schema.org/member')
     .inverse() // RDF 中存储为 <org> schema:member <person>

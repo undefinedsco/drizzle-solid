@@ -251,22 +251,25 @@ export type InferColumnType<T extends PodColumnBase> =
   T extends { dataType: 'datetime' } ? Date :
   T extends { dataType: 'json' } ? unknown :
   T extends { dataType: 'object' } ? Record<string, unknown> :
+  T extends { dataType: 'uri' } ? string :
   unknown;
 
+type Simplify<T> = { [K in keyof T]: T[K] } & {};
+
 // 推断表的数据类型
-export type InferTableData<TTable extends PodTable<Record<string, PodColumnBase>>> = {
+export type InferTableData<TTable extends PodTable<Record<string, PodColumnBase>>> = Simplify<{
   [K in keyof TTable['columns']]: InferColumnType<TTable['columns'][K]>
-};
+}>;
 
 // 推断插入数据类型（简化版本，所有字段都可选）
-export type InferInsertData<TTable extends PodTable<Record<string, PodColumnBase>>> = {
+export type InferInsertData<TTable extends PodTable<Record<string, PodColumnBase>>> = Simplify<{
   [K in keyof TTable['columns']]?: InferColumnType<TTable['columns'][K]>
-};
+}>;
 
 // 推断更新数据类型（所有列都可选）
-export type InferUpdateData<TTable extends PodTable<Record<string, PodColumnBase>>> = {
+export type InferUpdateData<TTable extends PodTable<Record<string, PodColumnBase>>> = Simplify<{
   [K in keyof TTable['columns']]?: InferColumnType<TTable['columns'][K]> | null
-};
+}>;
 
 // 表配置选项
 export interface PodTableOptions {

@@ -96,6 +96,8 @@ export {
   type ParsedRDFData
 } from './utils/rdf-validation';
 
+export { extendNamespace } from './utils/namespace';
+
 // RDF Schema 解析
 export {
   parseRDFSchema,
