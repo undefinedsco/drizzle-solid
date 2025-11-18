@@ -3,9 +3,10 @@
  */
 
 import { podTable, string, int, date } from '@src/index';
+import { SCHEMA_INRUPT as SCHEMA } from '@inrupt/vocab-common-rdf';
 
 describe('PodTable Tests', () => {
-  const schemaNamespace = { prefix: 'schema', uri: 'https://schema.org/' } as const;
+  const schemaNamespace = { prefix: SCHEMA.PREFIX, uri: SCHEMA.NAMESPACE };
 
   test('should create table with columns', () => {
     const table = podTable('users', {

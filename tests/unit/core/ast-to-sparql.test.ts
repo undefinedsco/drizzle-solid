@@ -10,7 +10,8 @@ const mockTable = {
     columns: {
       id: { name: 'id', dataType: 'integer' },
       name: { name: 'name', dataType: 'string' },
-      email: { name: 'email', dataType: 'string' }
+      email: { name: 'email', dataType: 'string' },
+      organization: { name: 'organization', dataType: 'string' }
     }
   },
   columns: {
@@ -34,6 +35,13 @@ const mockTable = {
       options: { required: false },
       getPredicate: (namespace: { uri: string }) => `${namespace.uri}email`,
       isReference: () => false
+    },
+    organization: {
+      name: 'organization',
+      dataType: 'string',
+      options: { required: false, inverse: true, referenceTarget: 'https://schema.org/Organization' },
+      getPredicate: () => 'https://schema.org/member',
+      isReference: () => true
     }
   },
   config: {
@@ -49,7 +57,8 @@ const mockTable = {
   getColumns: () => ({
     id: { name: 'id', dataType: 'integer' },
     name: { name: 'name', dataType: 'string' },
-    email: { name: 'email', dataType: 'string' }
+    email: { name: 'email', dataType: 'string' },
+    organization: { name: 'organization', dataType: 'string' }
   })
 } as any; // Mock object for testing, intentionally using any for simplicity
 
@@ -173,11 +182,28 @@ describe('ASTToSPARQLConverter', () => {
       expect(result.query).toContain('&&');
     });
 
+    it('引用列上的 IN 过滤应该使用 NamedNode', () => {
+      const condition = inArray(mockTable.columns.organization, [
+        'https://org.example/a',
+        'https://org.example/b'
+      ]);
+      const result = converter.convertSelect({ where: condition }, mockTable);
+
+      expect(result.query).toContain('<https://org.example/a>');
+      expect(result.query).toContain('<https://org.example/b>');
+      expect(result.query).not.toContain('\"https://org.example/a\"');
+    });
+
     it('应该支持 IS NULL 过滤', () => {
       const condition = isNull(mockTable.columns.email);
       const result = converter.convertSelect({ where: condition }, mockTable);
 
       expect(result.query).toContain('FILTER(!(BOUND(?email)))');
+    });
+
+    it('inverse 列应该反转三元组方向', () => {
+      const result = converter.convertSelect({ where: {} }, mockTable);
+      expect(result.query).toContain('?organization schema:member ?subject');
     });
   });
 
@@ -198,6 +224,12 @@ describe('ASTToSPARQLConverter', () => {
       
       expect(result.query).toContain('"John"');
       expect(result.query).toContain('"john@example.com"');
+    });
+
+    it('inverse 列写入时应交换三元组主体和客体', () => {
+      const values = [{ id: 'foo', organization: 'https://org.example/foo' }];
+      const result = converter.convertInsert(values, mockTable);
+      expect(result.query).toContain('<https://org.example/foo> schema:member <https://example.com/users/index.ttl#foo>');
     });
 
     it('应该支持 IR plan 输入', () => {
@@ -221,6 +253,14 @@ describe('ASTToSPARQLConverter', () => {
       expect(result.type).toBe('UPDATE');
       expect(result.query).toContain('DELETE');
       expect(result.query).toContain('INSERT');
+    });
+
+    it('inverse 列更新应删除并插入反向三元组', () => {
+      const data = { organization: 'https://org.example/new' };
+      const where = { id: 2 };
+      const result = converter.convertUpdate(data, where, mockTable);
+      expect(result.query).toContain('?value0 <https://schema.org/member> <https://example.com/users/index.ttl#');
+      expect(result.query).toContain('<https://org.example/new> <https://schema.org/member> <https://example.com/users/index.ttl#');
     });
   });
 

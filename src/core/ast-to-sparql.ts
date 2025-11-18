@@ -352,10 +352,18 @@ ${deleteBlocks.join(';\n')}`;
       if (columnName === 'id') return; // 跳过 id 字段
 
       const predicate = this.getPredicateForColumn(column, table);
+      const subjectVar = { termType: 'Variable', value: 'subject' } as any;
+      const valueVar = { termType: 'Variable', value: columnName } as any;
+      const { subject: tripleSubject, object: tripleObject } = this.resolveTripleTerms(
+        subjectVar,
+        valueVar,
+        column,
+        table
+      );
       const triple: sparqljs.Triple = {
-        subject: { termType: 'Variable', value: 'subject' } as any,
+        subject: tripleSubject,
         predicate: { termType: 'NamedNode', value: predicate } as any,
-        object: { termType: 'Variable', value: columnName } as any
+        object: tripleObject
       };
 
       if (column.options.required) {
@@ -510,14 +518,16 @@ ${deleteBlocks.join(';\n')}`;
       return null;
     }
 
+    const column = table.columns?.[columnName];
+
     if (rawValue === undefined) {
       return null;
     }
 
     const variable = { termType: 'Variable', value: columnName };
     const literalInput = Array.isArray(rawValue)
-      ? rawValue.map((item) => this.buildLiteralTerm(item, undefined))
-      : this.buildLiteralTerm(rawValue, undefined);
+      ? rawValue.map((item) => this.buildLiteralTerm(item, column))
+      : this.buildLiteralTerm(rawValue, column);
     const literalSingle = Array.isArray(literalInput) ? null : literalInput;
 
     switch (operator) {
@@ -681,6 +691,57 @@ ${deleteBlocks.join(';\n')}`;
     };
   }
 
+  private isInverseColumn(column: any, table?: PodTable): boolean {
+    if (!column) {
+      return false;
+    }
+    if (typeof column.isInverse === 'function') {
+      try {
+        return column.isInverse();
+      } catch {
+        // fall through to options/mapping
+      }
+    }
+    if (column.options?.inverse) {
+      return true;
+    }
+    if (table && typeof (table as any).getMapping === 'function') {
+      const mapping = (table as any).getMapping() as PodTableMapping;
+      return mapping?.columns?.[column.name]?.inverse === true;
+    }
+    return false;
+  }
+
+  private resolveTripleTerms(
+    subjectTerm: any,
+    valueTerm: any,
+    column: any,
+    table?: PodTable
+  ): { subject: any; object: any } {
+    if (this.isInverseColumn(column, table)) {
+      return {
+        subject: valueTerm,
+        object: subjectTerm
+      };
+    }
+    return {
+      subject: subjectTerm,
+      object: valueTerm
+    };
+  }
+
+  private buildTripleStringPattern(
+    subject: string,
+    value: string,
+    predicate: string,
+    column: any,
+    table?: PodTable
+  ): string {
+    return this.isInverseColumn(column, table)
+      ? `${value} <${predicate}> ${subject}`
+      : `${subject} <${predicate}> ${value}`;
+  }
+
   // 构建字面量项
   private buildLiteralTerm(value: any, column?: any): any {
     // 处理引用类型（WebID等）
@@ -822,11 +883,12 @@ ${deleteBlocks.join(';\n')}`;
       
       const predicate = this.getPredicateForColumn(column, table);
       const variable = `?${columnName}`;
+      const triplePattern = this.buildTripleStringPattern(subject, variable, predicate, column, table);
       
       if (column.options.required) {
-        triples.push(`${subject} <${predicate}> ${variable} .`);
+        triples.push(`${triplePattern} .`);
       } else {
-        triples.push(`OPTIONAL { ${subject} <${predicate}> ${variable} } .`);
+        triples.push(`OPTIONAL { ${triplePattern} } .`);
       }
     }
     
@@ -902,19 +964,33 @@ ${deleteBlocks.join(';\n')}`;
           // 为数组的每个元素创建单独的三元组
           value.forEach(arrayItem => {
             if (arrayItem !== undefined && arrayItem !== null) {
-              triples.push({
+              const literalTerm = this.buildLiteralTerm(arrayItem, column);
+              const { subject: tripleSubject, object: tripleObject } = this.resolveTripleTerms(
                 subject,
+                literalTerm,
+                column,
+                table
+              );
+              triples.push({
+                subject: tripleSubject,
                 predicate: { termType: 'NamedNode', value: predicate },
-                object: this.buildLiteralTerm(arrayItem, column)
+                object: tripleObject
               });
             }
           });
         } else {
           // 普通单值属性
-          triples.push({
+          const literalTerm = this.buildLiteralTerm(value, column);
+          const { subject: tripleSubject, object: tripleObject } = this.resolveTripleTerms(
             subject,
+            literalTerm,
+            column,
+            table
+          );
+          triples.push({
+            subject: tripleSubject,
             predicate: { termType: 'NamedNode', value: predicate },
-            object: this.buildLiteralTerm(value, column)
+            object: tripleObject
           });
         }
       });
@@ -957,10 +1033,17 @@ ${deleteBlocks.join(';\n')}`;
       if (!column) return;
       
       const predicate = this.getPredicateForColumn(column, table);
-      triples.push({
+      const valueVar = { termType: 'Variable', value: `old_${columnName}` } as any;
+      const { subject: tripleSubject, object: tripleObject } = this.resolveTripleTerms(
         subject,
+        valueVar,
+        column,
+        table
+      );
+      triples.push({
+        subject: tripleSubject,
         predicate: { termType: 'NamedNode', value: predicate },
-        object: { termType: 'Variable', value: `old_${columnName}` }
+        object: tripleObject
       });
     });
     
@@ -977,10 +1060,17 @@ ${deleteBlocks.join(';\n')}`;
       if (!column) return;
       
       const predicate = this.getPredicateForColumn(column, table);
-      triples.push({
+      const literalTerm = this.buildLiteralTerm(value, column);
+      const { subject: tripleSubject, object: tripleObject } = this.resolveTripleTerms(
         subject,
+        literalTerm,
+        column,
+        table
+      );
+      triples.push({
+        subject: tripleSubject,
         predicate: { termType: 'NamedNode', value: predicate },
-        object: this.buildLiteralTerm(value, undefined)
+        object: tripleObject
       });
     });
     
@@ -1280,10 +1370,24 @@ ${deleteBlocks.join(';\n')}`;
       const predicate = this.getPredicateForColumn(column, table);
       const variableName = `?value${index}`;
 
-      deleteStatements.push(`DELETE WHERE {\n  <${resourceUri}> <${predicate}> ${variableName} .\n}`);
+      const deletePattern = this.buildTripleStringPattern(
+        `<${resourceUri}>`,
+        variableName,
+        predicate,
+        column,
+        table
+      );
+      deleteStatements.push(`DELETE WHERE {\n  ${deletePattern} .\n}`);
       if (value !== null && value !== undefined) {
-        const formattedValue = this.formatValue(value, column);
-        insertTriples.push(`  <${resourceUri}> <${predicate}> ${formattedValue} .`);
+        const formattedValue = this.formatColumnValue(value, column);
+        const insertPattern = this.buildTripleStringPattern(
+          `<${resourceUri}>`,
+          formattedValue,
+          predicate,
+          column,
+          table
+        );
+        insertTriples.push(`  ${insertPattern} .`);
       }
     });
 
@@ -1340,6 +1444,20 @@ ${deleteBlocks.join(';\n')}`;
       return [];
     }
     return raw.filter((entry): entry is string => typeof entry === 'string');
+  }
+
+  private formatColumnValue(value: any, column: any): string {
+    if (column?.options?.referenceTarget && typeof value === 'string') {
+      return `<${value}>`;
+    }
+    if (column?.dataType === 'uri' && typeof value === 'string') {
+      return `<${value}>`;
+    }
+    const formatted = this.formatValue(value, column);
+    if (Array.isArray(formatted)) {
+      return formatted.join(' ');
+    }
+    return formatted;
   }
 
   // 格式化值 - 使用 Column 的统一格式化方法

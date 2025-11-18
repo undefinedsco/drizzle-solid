@@ -10,6 +10,7 @@ import {
   PodJsonColumn,
   PodObjectColumn,
   podTable,
+  relations,
   string,
   int,
   boolean,
@@ -19,10 +20,12 @@ import {
   uri,
   text,
   RDF_CLASSES,
+  RDF_PREDICATES,
   type PodTableOptions
 } from '@src/core/pod-table';
+import { SCHEMA_INRUPT as SCHEMA } from '@inrupt/vocab-common-rdf';
 
-const schemaNamespace = { prefix: 'schema', uri: 'https://schema.org/' };
+const schemaNamespace = { prefix: SCHEMA.PREFIX, uri: SCHEMA.NAMESPACE };
 
 describe('PodTable', () => {
   let table: PodTable;
@@ -121,8 +124,8 @@ describe('PodColumn', () => {
     });
 
     it('应该生成正确的谓词', () => {
-      const predicate = column.getPredicate(schemaNamespace);
-      expect(predicate).toBe('https://schema.org/name');
+      const predicate = column.getPredicate({ prefix: SCHEMA.PREFIX, uri: `${SCHEMA.NAMESPACE}` });
+      expect(predicate).toBe(`${SCHEMA.NAMESPACE}name`);
     });
 
     it('应该使用自定义谓词', () => {
@@ -152,8 +155,8 @@ describe('PodColumn', () => {
     });
 
     it('应该生成正确的谓词', () => {
-      const predicate = column.getPredicate(schemaNamespace);
-      expect(predicate).toBe('https://schema.org/id');
+      const predicate = column.getPredicate({ prefix: SCHEMA.PREFIX, uri: `${SCHEMA.NAMESPACE}` });
+      expect(predicate).toBe(`${SCHEMA.NAMESPACE}id`);
     });
   });
 
@@ -171,8 +174,8 @@ describe('PodColumn', () => {
     });
 
     it('应该生成正确的谓词', () => {
-      const predicate = column.getPredicate(schemaNamespace);
-      expect(predicate).toBe('https://schema.org/active');
+      const predicate = column.getPredicate({ prefix: SCHEMA.PREFIX, uri: `${SCHEMA.NAMESPACE}` });
+      expect(predicate).toBe(`${SCHEMA.NAMESPACE}active`);
     });
   });
 
@@ -185,7 +188,41 @@ describe('PodColumn', () => {
       expect(referenceColumn.isReference()).toBe(true);
       expect(referenceColumn.getReferenceTarget()).toBe('https://schema.org/Person');
     });
+
+  it('应该支持 inverse 标记', () => {
+    const column = new PodStringColumn('member', {});
+    expect(column.isInverse()).toBe(false);
+    column.inverse();
+    expect(column.isInverse()).toBe(true);
   });
+
+  it('relations 应该挂载关系元数据', () => {
+    const posts = podTable('posts', {
+      id: string('id'),
+      authorId: string('authorId').reference('https://schema.org/Person')
+    }, {
+      base: 'idp:///posts.ttl',
+      rdfClass: 'https://schema.org/Article',
+      namespace: schemaNamespace
+    });
+
+    const users = podTable('users', {
+      id: string('id'),
+      name: string('name')
+    }, {
+      base: 'idp:///users.ttl',
+      rdfClass: 'https://schema.org/Person',
+      namespace: schemaNamespace
+    });
+
+    relations(users, ({ many }) => ({
+      posts: many(posts, { fields: [posts.getColumn('authorId')!] })
+    }));
+
+    expect((users as any).relations?.posts?.type).toBe('many');
+    expect((users as any).relations?.posts?.table).toBe(posts);
+  });
+});
 });
 
 describe('PodColumn 选项', () => {
@@ -209,6 +246,22 @@ describe('PodColumn 选项', () => {
       predicate: 'https://example.com/custom' 
     });
     expect(column.options.predicate).toBe('https://example.com/custom');
+  });
+});
+
+describe('inverse 谓词映射', () => {
+  it('应该在表映射中记录 inverse 列', () => {
+    const table = podTable('members', {
+      org: string('org')
+        .predicate(RDF_PREDICATES.FOAF_NAME)
+        .inverse()
+    }, {
+      base: 'idp:///members/index.ttl',
+      rdfClass: RDF_CLASSES.SCHEMA_PERSON
+    });
+
+    expect(table.mapping.columns.org.inverse).toBe(true);
+    expect(table.getColumn('org')?.isInverse()).toBe(true);
   });
 });
 
@@ -408,8 +461,8 @@ describe('新的列类型', () => {
     });
 
     it('应该生成正确的谓词', () => {
-      const predicate = column.getPredicate(schemaNamespace);
-      expect(predicate).toBe('https://schema.org/preferences');
+      const predicate = column.getPredicate({ prefix: SCHEMA.PREFIX, uri: `${SCHEMA.NAMESPACE}` });
+      expect(predicate).toBe(`${SCHEMA.NAMESPACE}preferences`);
     });
 
     it('应该支持链式方法', () => {
@@ -433,8 +486,8 @@ describe('新的列类型', () => {
     });
 
     it('应该生成正确的谓词', () => {
-      const predicate = column.getPredicate(schemaNamespace);
-      expect(predicate).toBe('https://schema.org/profile');
+      const predicate = column.getPredicate({ prefix: SCHEMA.PREFIX, uri: `${SCHEMA.NAMESPACE}` });
+      expect(predicate).toBe(`${SCHEMA.NAMESPACE}profile`);
     });
 
     it('应该支持链式方法', () => {

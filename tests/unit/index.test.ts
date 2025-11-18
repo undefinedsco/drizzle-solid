@@ -31,8 +31,6 @@ describe('Index exports', () => {
       int,
       boolean,
       date,
-      namespace,
-      VCARD,
       RDF_PREDICATES,
       RDF_CLASSES
     } = await import('@src/index');
@@ -42,8 +40,6 @@ describe('Index exports', () => {
     expect(int).toBeDefined();
     expect(boolean).toBeDefined();
     expect(date).toBeDefined();
-    expect(namespace).toBeDefined();
-    expect(VCARD).toBeDefined();
     expect(RDF_PREDICATES).toBeDefined();
     expect(RDF_CLASSES).toBeDefined();
   });

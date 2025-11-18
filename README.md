@@ -93,14 +93,17 @@ npm run example:usage
 ### 表定义
 
 ```typescript
-import { podTable, string, int, boolean, date, eq, gte, and } from 'drizzle-solid';
+import { podTable, string, int, boolean, date, uri, eq, gte, and } from 'drizzle-solid';
 
 const userTable = podTable('users', {
   name: string('name'),           // foaf:name
   email: string('email'),         // foaf:mbox
   age: int('age'),               // foaf:age
   verified: boolean('verified'),     // 自定义谓词
-  createdAt: date('createdAt')   // dcterms:created
+  createdAt: date('createdAt'),   // dcterms:created
+  organization: uri('organization')
+    .predicate('https://schema.org/member') // <org> schema:member <person>
+    .inverse()
 }, {
   // 目标 Turtle 资源，必填，可以是相对 Pod 路径或绝对 URL
   base: 'data/users.ttl',
@@ -113,6 +116,31 @@ const userTable = podTable('users', {
 // 初始化：在 CRUD 前确保容器/资源存在（会按 base 自动创建）
 await db.init([userTable]);
 ```
+
+- 使用 `.inverse()` 可以把列映射为 `<object> predicate <subject>` 方向，适合例如 `<org> schema:member <person>` 这样的反向边；查询/写入都会自动交换 RDF 三元组的主体和宾语。
+
+### Drizzle 风格查询：`db.query` + `findByIRI`
+
+将 schema 传入 `drizzle(session, { schema })` 后，可通过 Drizzle 对齐的查询助手调用：
+
+```ts
+import * as schema from './schema';
+const db = drizzle(session, { schema });
+
+const users = await db.query.users.findMany({
+  where: { verified: true },
+  orderBy: [{ column: schema.users.name, direction: 'asc' }],
+  with: {
+    posts: true // 根据子表 referenceTarget + @id 预加载关联行
+  }
+});
+
+const alice = await db.query.users.findByIRI('https://pod.example/data/users.ttl#alice');
+```
+
+- `findMany/findFirst/findById/count` 与 Drizzle ORM 行为一致，复用现有 `select` 管道。
+- `with` 支持基于 `reference(target)` 的引用外键（通过 `@id` 关联），结果会嵌套数组挂在相应键上。
+- `findByIRI` 可直接接受绝对 IRI 或 fragment（无协议时按 `id` 匹配）。
 
 ### 支持的列类型
 
@@ -255,18 +283,24 @@ await db.delete(userTable)
 
 ### 自定义命名空间
 
-```typescript
-import { podTable, string, namespace } from 'drizzle-solid';
+Drizzle Solid 不再内置 vocab 常量，请从 RDF vocab 库（例如 `@inrupt/vocab-common-rdf`）导入需要的术语，并手动提供 `namespace` 配置：
 
-const LINQ = namespace('linq', 'https://linq.dev/ns/', {
-  favorite: 'profile#favorite'
-} as const);
+```typescript
+import { podTable, string } from 'drizzle-solid';
+import { SCHEMA_INRUPT as SCHEMA } from '@inrupt/vocab-common-rdf';
+
+const LINQ = {
+  prefix: 'linq',
+  uri: 'https://linq.dev/ns/'
+} as const;
+const LINQ_FAVORITE = `${LINQ.uri}profile#favorite`;
 
 const customTable = podTable('custom', {
-  title: string('title').predicate(LINQ.favorite)
+  title: string('title').predicate(`${SCHEMA.NAMESPACE}title`),
+  favorite: string('favorite').predicate(LINQ_FAVORITE)
 }, {
   base: 'idp:///custom/index.ttl', // 目标资源
-  rdfClass: 'https://schema.org/CreativeWork',
+  rdfClass: `${SCHEMA.NAMESPACE}CreativeWork`,
   namespace: LINQ
 });
 ```

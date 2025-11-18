@@ -7,18 +7,19 @@ import {
   getTableSchema,
   TableSchemaBuilder
 } from '@src/core/zod-integration';
-import { 
-  podTable, 
-  string, 
-  int, 
-  boolean, 
-  date, 
-  json, 
+import {
+  podTable,
+  string,
+  int,
+  boolean,
+  date,
+  json,
   object,
   RDF_CLASSES
 } from '@src/core/pod-table';
+import { SCHEMA_INRUPT as SCHEMA } from '@inrupt/vocab-common-rdf';
 
-const schemaNamespace = { prefix: 'schema', uri: 'https://schema.org/' };
+const schemaNamespace = { prefix: SCHEMA.PREFIX, uri: SCHEMA.NAMESPACE };
 
 describe('Zod 集成测试', () => {
   let usersTable: any; // Test table, using any for simplicity

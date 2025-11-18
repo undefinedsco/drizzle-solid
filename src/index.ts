@@ -6,6 +6,7 @@ export * from './solid';
 export { PodDialect } from './core/pod-dialect';
 export { PodAsyncSession } from './core/pod-session';
 export { PodDatabase } from './core/pod-database';
+export { findByIRI } from './utils/find-by-iri';
 
 // SPARQL 相关
 export { ASTToSPARQLConverter, type SPARQLQuery } from './core/ast-to-sparql';
@@ -157,9 +158,6 @@ export {
   max,
   type AggregateExpression
 } from './core/aggregates';
-
-// 命名空间辅助
-export { namespace, VCARD, FOAF, LDP, SCHEMA } from './namespaces';
 
 // 并发冲突解析
 export {

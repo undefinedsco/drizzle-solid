@@ -19,6 +19,7 @@ export interface PodColumnOptions {
   // Array support
   baseType?: ColumnBuilderDataType; // 数组元素的基础类型
   isArray?: boolean; // 是否为数组类型
+  inverse?: boolean; // 是否为逆向谓词（<object> predicate <subject>）
 }
 
 // 添加PodColumn接口扩展
@@ -208,6 +209,11 @@ export class ColumnBuilder<TType extends ColumnBuilderDataType> {
     return this;
   }
 
+  inverse(value = true): ColumnBuilder<TType> {
+    this.options = { ...this.options, inverse: value };
+    return this;
+  }
+
   reference(rdfClassUri: string): ColumnBuilder<TType> {
     // 验证是否是有效的 RDF Class URI
     if (!rdfClassUri.startsWith('http://') && !rdfClassUri.startsWith('https://')) {
@@ -279,6 +285,7 @@ export interface PodColumnMapping {
   datatype?: string;
   referenceTarget?: string;
   isArray?: boolean;
+  inverse?: boolean;
 }
 
 export interface PodTableMapping {
@@ -288,6 +295,17 @@ export interface PodTableMapping {
   graph?: string;
   namespace?: NamespaceConfig;
   columns: Record<string, PodColumnMapping>;
+  relations?: Record<string, RelationDefinition>;
+}
+
+export type RelationKind = 'one' | 'many';
+
+export interface RelationDefinition {
+  type: RelationKind;
+  table: PodTable<any>;
+  fields?: PodColumnBase[];
+  references?: PodColumnBase[];
+  relationName?: string;
 }
 
 // 列类型基类
@@ -302,6 +320,7 @@ export abstract class PodColumnBase {
   ) {}
 
   table?: PodTable<any>;
+  relationName?: string;
 
   // 获取 RDF 谓词
   getPredicate(tableNamespace?: NamespaceConfig): string {
@@ -353,6 +372,15 @@ export abstract class PodColumnBase {
   reference(targetClass: string): this {
     this.options.referenceTarget = targetClass;
     return this;
+  }
+
+  inverse(value = true): this {
+    this.options.inverse = value;
+    return this;
+  }
+
+  isInverse(): boolean {
+    return this.options.inverse === true;
   }
 }
 
@@ -416,6 +444,7 @@ export class PodTable<TColumns extends Record<string, PodColumnBase> = Record<st
     graph?: string;
   };
   public mapping: PodTableMapping;
+  public relations?: Record<string, RelationDefinition>;
   
   private resourcePath: string;
   private containerPath: string;
@@ -700,7 +729,8 @@ export class PodTable<TColumns extends Record<string, PodColumnBase> = Record<st
       subjectTemplate: this.subjectTemplate,
       graph: this.config.graph,
       namespace: this.config.namespace,
-      columns: mappedColumns
+      columns: mappedColumns,
+      relations: this.relations
     };
   }
 
@@ -714,7 +744,8 @@ export class PodTable<TColumns extends Record<string, PodColumnBase> = Record<st
       kind: column.isReference() ? 'object' : 'datatype',
       datatype: this.inferColumnDatatype(column),
       referenceTarget: column.getReferenceTarget(),
-      isArray: column.options.isArray ?? false
+      isArray: column.options.isArray ?? false,
+      inverse: column.isInverse()
     };
   }
 
@@ -888,6 +919,17 @@ type ResolvedColumns<T extends Record<string, ColumnInput>> = {
   [K in keyof T]: ResolveColumn<T[K]>;
 };
 
+type RelationBuilder = {
+  one: (table: PodTable<any>, options?: RelationOptions) => RelationDefinition;
+  many: (table: PodTable<any>, options?: RelationOptions) => RelationDefinition;
+};
+
+export interface RelationOptions {
+  fields?: PodColumnBase[];
+  references?: PodColumnBase[];
+  relationName?: string;
+}
+
 export function podTable<
   TName extends string,
   TColumns extends Record<string, ColumnInput>
@@ -940,6 +982,32 @@ export function podTable<
   }
 
   return new PodTable(name, processedColumns as ResolvedColumns<TColumns>, options);
+}
+
+export function relations<TTable extends PodTable<any>>(
+  table: TTable,
+  builder: (helpers: RelationBuilder) => Record<string, RelationDefinition>
+): Record<string, RelationDefinition> {
+  const helpers: RelationBuilder = {
+    one: (target, options = {}) => ({
+      type: 'one',
+      table: target,
+      fields: options.fields,
+      references: options.references,
+      relationName: options.relationName
+    }),
+    many: (target, options = {}) => ({
+      type: 'many',
+      table: target,
+      fields: options.fields,
+      references: options.references,
+      relationName: options.relationName
+    })
+  };
+
+  const defs = builder(helpers);
+  (table as any).relations = defs;
+  return defs;
 }
 
 

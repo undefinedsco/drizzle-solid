@@ -41,22 +41,31 @@ const profiles = podTable('profiles', {
 });
 ```
 
-如果未调用 `.predicate(...)`，需要在 `namespace` 中包含同名条目，否则构建时会抛错。推荐做法是搭配命名空间常量使用，例如结合 `@inrupt/vocab-common-rdf`：
+如果未调用 `.predicate(...)`，需要在 `namespace` 中包含同名条目，否则构建时会抛错。推荐做法是结合 `@inrupt/vocab-common-rdf` 等库直接引用现成的 vocab，并手动提供 `namespace` 对象：
 
 ```ts
-import { podTable, string, VCARD, FOAF } from 'drizzle-solid';
-import { LINQ } from '@/models/namespace';
+import { podTable, string, uri } from 'drizzle-solid';
+import { VCARD, FOAF } from '@inrupt/vocab-common-rdf';
+
+const LINQ_NAMESPACE = {
+  prefix: 'linq',
+  uri: 'https://linq.dev/ns/'
+} as const;
+const LINQ_FAVORITE = `${LINQ_NAMESPACE.uri}profile#favorite`;
 
 const contacts = podTable('contacts', {
   webId: string('webId').primaryKey(),
   name: string('name').predicate(VCARD.fn),
   nickname: string('nickname').predicate(FOAF.nick),
-  favorite: string('favorite').predicate(LINQ.profileFavorite)
+  favorite: string('favorite').predicate(LINQ_FAVORITE),
+  organization: uri('organization')
+    .predicate('https://schema.org/member')
+    .inverse() // RDF 中存储为 <org> schema:member <person>
 }, {
   // 目标资源（必填，可相对 Pod 基路径）
   base: 'idp:///contacts/index.ttl',
   rdfClass: FOAF.Person,
-  namespace: LINQ,
+  namespace: LINQ_NAMESPACE,
   // 可选 TypeIndex 注册，默认不注册
   typeIndex: 'private' // 'public' | 'private' | undefined
 });
@@ -64,6 +73,27 @@ const contacts = podTable('contacts', {
 const db = drizzle(session);
 // 初始化容器/资源，再进行 CRUD
 await db.init([contacts]);
+
+> `.inverse()` 会把列映射为 `<object> predicate <subject>`，适合同步 `<org> schema:member <person>` 这类反向边，Drizzle 在 SELECT/INSERT/UPDATE/DELETE 时会自动交换主体与宾语。
+
+### Drizzle 风格查询助手
+
+如果调用 `drizzle(session, { schema })` 传入表定义，`db.query.<table>` 会提供 Drizzle 对齐的 `findMany/findFirst/findById/count`，并支持：
+- `with`: 基于 `reference(target)` 的引用，按 `@id` 关联预加载子表数据（返回嵌套数组）。
+- `findByIRI`: 直接用绝对 IRI 或 fragment 查询单行。
+
+示例：
+
+```ts
+const db = drizzle(session, { schema: { users, posts } });
+
+const usersWithPosts = await db.query.users.findMany({
+  with: { posts: true },
+  orderBy: [{ column: users.id, direction: 'asc' }]
+});
+
+const alice = await db.query.users.findByIRI('https://pod.example/data/users.ttl#alice');
+```
 ```
 
 ## 权限与 ACL

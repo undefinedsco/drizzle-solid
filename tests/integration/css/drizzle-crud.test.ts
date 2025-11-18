@@ -1,10 +1,12 @@
 import { afterAll, beforeAll, describe, expect, test, vi } from 'vitest';
 import { drizzle } from '../../../src/driver';
+import { SCHEMA_INRUPT as SCHEMA } from '@inrupt/vocab-common-rdf';
 import {
   podTable,
   string,
   int,
   date,
+  uri,
   and,
   gte,
   inArray,
@@ -26,7 +28,7 @@ import type { Session } from '@inrupt/solid-client-authn-node';
 import { createTestSession, ensureContainer } from './helpers';
 
 const containerPath = `/drizzle-tests/${Date.now()}/`;
-const schemaNamespace = { prefix: 'schema', uri: 'https://schema.org/' } as const;
+const schemaNamespace = { prefix: SCHEMA.PREFIX, uri: SCHEMA.NAMESPACE };
 
 vi.setConfig({ testTimeout: 60_000 });
 
@@ -42,23 +44,42 @@ const profileTable = podTable('profiles', {
   typeIndex: undefined
 });
 
+const membershipTable = podTable('memberships', {
+  id: string('id').primaryKey().predicate('https://schema.org/identifier'),
+  memberName: string('memberName').predicate('https://schema.org/name'),
+  organization: uri('organization')
+    .predicate('https://schema.org/member')
+    .inverse()
+    .reference('https://schema.org/Organization')
+}, {
+  base: `${containerPath}memberships.ttl`,
+  rdfClass: 'https://schema.org/Person',
+  namespace: schemaNamespace
+});
+
 describe('CSS integration: drizzle CRUD', () => {
   let session: Session;
   let db: SolidDatabase;
   let containerUrl: string;
   let resourceUrl: string;
+  let membershipResourceUrl: string;
 
   beforeAll(async () => {
-    session = await createTestSession();
+    session = await createTestSession({ skipTypeIndex: true });
     db = drizzle(session);
     containerUrl = await ensureContainer(session, containerPath);
     resourceUrl = `${containerUrl}profiles.ttl`;
+    membershipResourceUrl = `${containerUrl}memberships.ttl`;
     await db.init(profileTable);
+    await db.init(membershipTable);
   }, 120_000);
 
   afterAll(async () => {
     if (resourceUrl) {
       await session.fetch(resourceUrl, { method: 'DELETE' }).catch(() => undefined);
+    }
+    if (membershipResourceUrl) {
+      await session.fetch(membershipResourceUrl, { method: 'DELETE' }).catch(() => undefined);
     }
     if (containerUrl) {
       await session.fetch(containerUrl, { method: 'DELETE' }).catch(() => undefined);
@@ -102,6 +123,52 @@ describe('CSS integration: drizzle CRUD', () => {
       .select()
       .from(profileTable)
       .where({ id: recordId });
+
+    expect(afterDelete).toHaveLength(0);
+  });
+
+  test('supports inverse predicate columns with membership edges', async () => {
+    await session.fetch(membershipResourceUrl, { method: 'DELETE' }).catch(() => undefined);
+
+    const memberId = `membership-${Date.now()}`;
+    const orgAlpha = `https://org.example/${Date.now()}/alpha`;
+    const orgBeta = `${orgAlpha}-beta`;
+
+    await db.insert(membershipTable).values({
+      id: memberId,
+      memberName: 'Inverse Edge Tester',
+      organization: orgAlpha
+    });
+
+    const initial = await db
+      .select()
+      .from(membershipTable)
+      .where({ id: memberId });
+
+    expect(initial).toHaveLength(1);
+    expect(initial[0]?.organization).toBe(orgAlpha);
+
+    await db
+      .update(membershipTable)
+      .set({ organization: orgBeta })
+      .where({ id: memberId });
+
+    const updated = await db
+      .select()
+      .from(membershipTable)
+      .where({ id: memberId });
+
+    expect(updated).toHaveLength(1);
+    expect(updated[0]?.organization).toBe(orgBeta);
+
+    await db
+      .delete(membershipTable)
+      .where({ id: memberId });
+
+    const afterDelete = await db
+      .select()
+      .from(membershipTable)
+      .where({ id: memberId });
 
     expect(afterDelete).toHaveLength(0);
   });
@@ -438,6 +505,91 @@ describe('CSS integration: drizzle CRUD', () => {
       await session.fetch(usersResource, { method: 'DELETE' }).catch(() => undefined);
       await session.fetch(postsContainer, { method: 'DELETE' }).catch(() => undefined);
       await session.fetch(usersContainer, { method: 'DELETE' }).catch(() => undefined);
+    }
+  });
+
+  test('supports db.query helpers with with + findByIRI', async () => {
+    const timestamp = Date.now();
+    const usersPath = `/drizzle-tests/query-users-${timestamp}/`;
+    const postsPath = `/drizzle-tests/query-posts-${timestamp}/`;
+
+    const usersTable = podTable('users', {
+      id: string('id').primaryKey().predicate('https://schema.org/identifier'),
+      name: string('name').notNull().predicate('https://schema.org/name')
+    }, {
+      base: `${usersPath}users.ttl`,
+      rdfClass: 'https://schema.org/Person',
+      namespace: schemaNamespace
+    });
+
+    const postsTable = podTable('posts', {
+      id: string('id').primaryKey().predicate('https://schema.org/identifier'),
+      title: string('title').notNull().predicate('https://schema.org/headline'),
+      authorId: string('authorId').notNull().predicate('https://schema.org/author').reference('https://schema.org/Person')
+    }, {
+      base: `${postsPath}posts.ttl`,
+      rdfClass: 'https://schema.org/CreativeWork',
+      namespace: schemaNamespace
+    });
+
+    const querySession = await createTestSession({ skipTypeIndex: true });
+    const usersContainer = await ensureContainer(querySession, usersPath);
+    const postsContainer = await ensureContainer(querySession, postsPath);
+    const usersResource = `${usersContainer}users.ttl`;
+    const postsResource = `${postsContainer}posts.ttl`;
+
+    const queryDb = drizzle(querySession, { schema: { users: usersTable, posts: postsTable } });
+
+    try {
+      await queryDb.init([usersTable, postsTable]);
+
+      const user1Iri = `${usersResource}#user-q-1`;
+      const user2Iri = `${usersResource}#user-q-2`;
+
+      await queryDb.insert(usersTable).values([
+        { id: 'user-q-1', name: 'Query Alice' },
+        { id: 'user-q-2', name: 'Query Bob' }
+      ]);
+
+      await queryDb.insert(postsTable).values([
+        { id: 'post-q-1', title: 'First', authorId: user1Iri },
+        { id: 'post-q-2', title: 'Second', authorId: user1Iri },
+        { id: 'post-q-3', title: 'Third', authorId: user2Iri }
+      ]);
+
+      const usersWithPosts = await queryDb.query.users.findMany({
+        orderBy: [{ column: usersTable.id, direction: 'asc' }],
+        with: { posts: true }
+      });
+
+      expect(usersWithPosts).toHaveLength(2);
+      const u1 = usersWithPosts.find((row) => row.id === 'user-q-1');
+      const u2 = usersWithPosts.find((row) => row.id === 'user-q-2');
+      expect(u1?.posts?.map((p: any) => p.id).sort()).toEqual(['post-q-1', 'post-q-2']);
+      expect(u2?.posts?.map((p: any) => p.id)).toEqual(['post-q-3']);
+
+      const foundByIri = await queryDb.query.users.findByIRI(user1Iri);
+      expect(foundByIri?.name).toBe('Query Alice');
+
+      const rawQuery = {
+        type: 'SELECT' as const,
+        query: `PREFIX schema: <https://schema.org/>
+SELECT ?post ?author WHERE {
+  ?post schema:author ?author.
+}`,
+        prefixes: {}
+      };
+      const rawRows = await queryDb.getDialect().getSPARQLExecutor().queryContainer(postsResource, rawQuery);
+      const authorValues = rawRows
+        .map((row: any) => row.author?.value ?? row.author)
+        .filter((value: any): value is string => typeof value === 'string');
+      expect(authorValues).toContain(user1Iri);
+      expect(authorValues).toContain(user2Iri);
+    } finally {
+      await querySession.fetch(postsResource, { method: 'DELETE' }).catch(() => undefined);
+      await querySession.fetch(usersResource, { method: 'DELETE' }).catch(() => undefined);
+      await querySession.fetch(postsContainer, { method: 'DELETE' }).catch(() => undefined);
+      await querySession.fetch(usersContainer, { method: 'DELETE' }).catch(() => undefined);
     }
   });
 
