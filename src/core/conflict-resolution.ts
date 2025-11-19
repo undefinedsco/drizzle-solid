@@ -303,13 +303,20 @@ export class ConflictResolver {
    *
    * 注意：这是简化实现，实际使用时应该用 buildThing 模式
    */
-  private setPredicateValue(thing: Thing, predicate: string, valueObj: any): Thing {
+  private setPredicateValue(thing: Thing, predicate: string, valueObj: unknown): Thing {
     // 这里返回原 thing，实际应该使用 buildThing 来修改
     // 由于 @inrupt/solid-client 的 Thing 是不可变的，
     // 真实实现需要使用 buildThing 模式
 
     if (this.config.logging) {
-      console.warn(`[ConflictResolver] setPredicateValue is a placeholder. Use buildThing in production.`);
+      console.warn(
+        `[ConflictResolver] setPredicateValue is a placeholder. Use buildThing in production.`,
+        { predicate, value: valueObj }
+      );
+    } else {
+      // 防止未使用参数的 lint 报错
+      void predicate;
+      void valueObj;
     }
 
     return thing;

@@ -253,13 +253,10 @@ export class PodAsyncSession {
   async transaction<T>(
     transaction: (tx: PodAsyncSession) => Promise<T>
   ): Promise<T> {
-    console.log('Starting transaction');
     try {
       const result = await transaction(this);
-      console.log('Transaction completed successfully');
       return result;
     } catch (error) {
-      console.error('Transaction failed:', error);
       throw error;
     }
   }

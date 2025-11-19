@@ -107,14 +107,16 @@ export class ColumnBuilder<TType extends ColumnBuilderDataType> {
       case 'boolean':
         return `"${value}"^^<http://www.w3.org/2001/XMLSchema#boolean>`;
       
-      case 'datetime':
+      case 'datetime': {
         const date = value instanceof Date ? value : new Date(value);
         return `"${date.toISOString()}"^^<http://www.w3.org/2001/XMLSchema#dateTime>`;
+      }
       
       case 'json':
-      case 'object':
+      case 'object': {
         const jsonString = JSON.stringify(value);
         return `"${jsonString.replace(/"/g, '\\"')}"^^<http://www.w3.org/2001/XMLSchema#json>`;
+      }
       
       case 'uri':
         // URI 类型直接作为 NamedNode，不需要引号
@@ -254,7 +256,7 @@ export type InferColumnType<T extends PodColumnBase> =
   T extends { dataType: 'uri' } ? string :
   unknown;
 
-type Simplify<T> = { [K in keyof T]: T[K] } & {};
+type Simplify<T> = { [K in keyof T]: T[K] };
 
 // 推断表的数据类型
 export type InferTableData<TTable extends PodTable<Record<string, PodColumnBase>>> = Simplify<{

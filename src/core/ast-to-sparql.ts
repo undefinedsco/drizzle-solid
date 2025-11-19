@@ -773,13 +773,14 @@ ${deleteBlocks.join(';\n')}`;
             value: String(Boolean(value)),
             datatype: { termType: 'NamedNode', value: 'http://www.w3.org/2001/XMLSchema#boolean' }
           };
-        case 'datetime':
+        case 'datetime': {
           const date = value instanceof Date ? value : new Date(value);
           return {
             termType: 'Literal',
             value: date.toISOString(),
             datatype: { termType: 'NamedNode', value: 'http://www.w3.org/2001/XMLSchema#dateTime' }
           };
+        }
         case 'json':
         case 'object':
           return {

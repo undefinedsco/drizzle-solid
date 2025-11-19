@@ -366,7 +366,7 @@ export class ComunicaSPARQLExecutor {
             });
           };
 
-          let response = await performPatch(headers);
+          const response = await performPatch(headers);
           
           if (response.ok) {
             results.push({ success: true, source, status: response.status });

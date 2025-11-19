@@ -2,18 +2,18 @@ import { getSolidDataset, getThing, getUrl, getStringNoLocale, saveSolidDatasetA
 import { RDF_PREDICATES } from './rdf-constants';
 
 export interface TypeIndexEntry {
-  rdfClass: string;           // RDF 类型 URI (如 http://schema.org/Person)
-  containerPath: string;      // 容器相对路径 (如 /users/)
-  forClass: string;          // 对应的本地类名 (如 'Person', 'BlogPost')
-  instanceContainer?: string; // 实例容器路径（自动从 webId 推导）
-  classRegistry?: string;    // 类注册表路径
-  table?: any;               // 可选的预定义表结构
-  visibility?: 'public' | 'private'; // TypeIndex 可见性
+  rdfClass: string;
+  containerPath: string;
+  forClass: string;
+  instanceContainer?: string;
+  classRegistry?: string;
+  table?: Record<string, unknown>;
+  visibility?: 'public' | 'private';
 }
 
 export interface DiscoveredTable {
   name: string;
-  columns: Record<string, any>;
+  columns: Record<string, unknown>;
   config: {
     containerPath: string;
     rdfClass: string;
@@ -191,7 +191,7 @@ export class TypeIndexManager {
    * @param isPublic 是否创建公开 TypeIndex，默认为 false (创建私有)
    * @deprecated 建议使用 createPrivateTypeIndex() 或 createPublicTypeIndex()
    */
-  async createTypeIndex(isPublic: boolean = false): Promise<string> {
+  async createTypeIndex(isPublic = false): Promise<string> {
     if (isPublic) {
       return this.createPublicTypeIndex();
     } else {
@@ -321,7 +321,7 @@ export class TypeIndexManager {
       }
 
       // 自动推导 instanceContainer
-      const instanceContainer = entry.instanceContainer || `${this.podUrl}${entry.containerPath}`;
+    const instanceContainer = entry.instanceContainer || `${this.podUrl}${entry.containerPath}`;
 
       // 创建类型注册条目
       const entryId = `#${entry.forClass.toLowerCase()}`;
@@ -571,7 +571,7 @@ export class TypeIndexManager {
    * @param rdfClassUri RDF 类型 URI
    * @returns 推断的字段定义
    */
-  private inferColumnsFromRdfClass(rdfClassUri: string): Record<string, any> {
+  private inferColumnsFromRdfClass(rdfClassUri: string): Record<string, unknown> {
     const baseColumns = {
       id: { type: 'int', primaryKey: true }
     };

@@ -1722,8 +1722,6 @@ export class PodDialect {
       return `"${escaped}"`;
     };
 
-    const escapeForRegex = (value: string): string => value.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
-
     const applyWhereConditions = (conditions: Record<string, unknown>) => {
       for (const [key, rawValue] of Object.entries(conditions)) {
         if (rawValue === undefined) {
