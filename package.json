@@ -19,7 +19,7 @@
   ],
   "scripts": {
     "build": "tsc && tsc -p tsconfig.esm.json",
-    "test": "vitest",
+  "test": "npm run build && vitest",
     "test:watch": "vitest --watch",
     "test:coverage": "vitest --coverage",
     "lint": "eslint src/**/*.ts",
@@ -39,7 +39,8 @@
     "demo:local": "ts-node examples/local-solid-demo.ts",
     "demo:local-simple": "node examples/simple-local-demo.js",
     "demo:local-http": "node examples/local-demo-simple.js",
-    "quality": "npm run lint && npm run test",
+  "quality": "npm run build && npm run lint && vitest",
+  "release": "npm run build && npm publish",
     "css:install": "npm install --prefix .internal/css-runtime"
   },
   "author": "Undefined Sco",
