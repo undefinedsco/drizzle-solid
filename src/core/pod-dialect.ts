@@ -1282,7 +1282,7 @@ export class PodDialect {
       return;
     }
 
-    const skipTypeIndex = !table.shouldAutoRegister?.();
+    const skipTypeIndex = !table.shouldRegisterTypeIndex?.();
 
     try {
       const descriptor = this.resolveTableResource(table);

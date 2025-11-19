@@ -109,7 +109,7 @@ const userTable = podTable('users', {
   base: 'data/users.ttl',
   // 主体类型
   rdfClass: 'https://schema.org/Person',
-  // 可选：注册 TypeIndex，默认不注册
+  // 可选：注册 TypeIndex（仅在提供 typeIndex 时才会尝试）
   typeIndex: 'private' // 'public' | 'private' | undefined
 });
 
@@ -141,6 +141,7 @@ const alice = await db.query.users.findByIRI('https://pod.example/data/users.ttl
 - `findMany/findFirst/findById/count` 与 Drizzle ORM 行为一致，复用现有 `select` 管道。
 - `with` 支持基于 `reference(target)` 的引用外键（通过 `@id` 关联），结果会嵌套数组挂在相应键上。
 - `findByIRI` 可直接接受绝对 IRI 或 fragment（无协议时按 `id` 匹配）。
+- TypeIndex 注册策略：仅当表配置了 `typeIndex: 'private' | 'public'` 时才会尝试写入 TypeIndex；未配置则跳过。
 
 ### 支持的列类型
 

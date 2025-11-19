@@ -66,8 +66,8 @@ const contacts = podTable('contacts', {
   base: 'idp:///contacts/index.ttl',
   rdfClass: FOAF.Person,
   namespace: LINQ_NAMESPACE,
-  // 可选 TypeIndex 注册，默认不注册
-  typeIndex: 'private' // 'public' | 'private' | undefined
+  // 可选 TypeIndex 注册，仅在提供 typeIndex 时尝试
+  typeIndex: 'private' // 'public' | 'private'
 });
 
 const db = drizzle(session);
@@ -81,6 +81,7 @@ await db.init([contacts]);
 如果调用 `drizzle(session, { schema })` 传入表定义，`db.query.<table>` 会提供 Drizzle 对齐的 `findMany/findFirst/findById/count`，并支持：
 - `with`: 基于 `reference(target)` 的引用，按 `@id` 关联预加载子表数据（返回嵌套数组）。
 - `findByIRI`: 直接用绝对 IRI 或 fragment 查询单行。
+- TypeIndex 注册策略：仅当表配置了 `typeIndex: 'private' | 'public'` 时才尝试写入 TypeIndex；未配置则跳过。
 
 示例：
 

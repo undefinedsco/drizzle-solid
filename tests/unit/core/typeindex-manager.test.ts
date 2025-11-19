@@ -18,13 +18,19 @@ describe('TypeIndexManager', () => {
   const originalWebId = 'https://alice.example/profile#me';
   const overrideWebId = 'https://bob.example/profile#me';
   const podUrl = 'https://alice.example/';
+  let consoleErrorSpy: ReturnType<typeof vi.spyOn>;
+  let consoleWarnSpy: ReturnType<typeof vi.spyOn>;
 
   beforeEach(() => {
     vi.clearAllMocks();
+    consoleErrorSpy = vi.spyOn(console, 'error').mockImplementation(() => {});
+    consoleWarnSpy = vi.spyOn(console, 'warn').mockImplementation(() => {});
   });
 
   afterEach(() => {
     vi.clearAllMocks();
+    consoleErrorSpy.mockRestore();
+    consoleWarnSpy.mockRestore();
   });
 
   it('restores original webId after autoDiscoverAndRegister with override', async () => {

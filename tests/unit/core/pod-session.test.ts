@@ -157,9 +157,8 @@ describe('PodAsyncSession', () => {
 
       expect(transactionFn).toHaveBeenCalledWith(session);
       expect(result).toBe('success');
-      expect(consoleSpy).toHaveBeenCalledWith('Starting transaction');
-      expect(consoleSpy).toHaveBeenCalledWith('Transaction completed successfully');
-      
+      expect(consoleSpy).not.toHaveBeenCalled();
+
       consoleSpy.mockRestore();
     });
 
@@ -172,9 +171,8 @@ describe('PodAsyncSession', () => {
       transactionFn.mockRejectedValue(error);
 
       await expect(session.transaction(transactionFn)).rejects.toThrow('Transaction failed');
-      
-      expect(consoleSpy).toHaveBeenCalledWith('Starting transaction');
-      expect(consoleErrorSpy).toHaveBeenCalledWith('Transaction failed:', error);
+      expect(consoleSpy).not.toHaveBeenCalled();
+      expect(consoleErrorSpy).not.toHaveBeenCalled();
       
       consoleSpy.mockRestore();
       consoleErrorSpy.mockRestore();

@@ -283,7 +283,6 @@ export interface PodTableOptions {
   graph?: string;
   resourceMode?: 'ldp' | 'sparql';
   sparqlEndpoint?: string;
-  autoRegister?: boolean;
 }
 
 export interface PodColumnMapping {
@@ -463,7 +462,7 @@ export class PodTable<TColumns extends Record<string, PodColumnBase> = Record<st
   private hasCustomSubjectTemplate: boolean;
   private resourceMode?: 'ldp' | 'sparql';
   private sparqlEndpoint?: string;
-  private autoRegisterEnabled: boolean;
+  private registerTypeIndexEnabled: boolean;
   public columns: TColumns;
 
   // 为了兼容 drizzle-zod，添加必要的属性
@@ -500,7 +499,8 @@ export class PodTable<TColumns extends Record<string, PodColumnBase> = Record<st
     this.hasCustomSubjectTemplate = subjectTemplateInfo.isCustom;
     this.resourceMode = options.resourceMode;
     this.sparqlEndpoint = options.sparqlEndpoint;
-    this.autoRegisterEnabled = options.autoRegister !== false;
+    // TypeIndex 注册默认取决于是否提供 typeIndex
+    this.registerTypeIndexEnabled = Boolean(options.typeIndex);
 
     this.config = {
       name,
@@ -667,8 +667,8 @@ export class PodTable<TColumns extends Record<string, PodColumnBase> = Record<st
     return this.sparqlEndpoint;
   }
 
-  shouldAutoRegister(): boolean {
-    return this.autoRegisterEnabled;
+  shouldRegisterTypeIndex(): boolean {
+    return this.registerTypeIndexEnabled;
   }
 
   async init(initializer: PodTableInitializer): Promise<void> {
