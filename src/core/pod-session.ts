@@ -1335,10 +1335,10 @@ export class SelectQueryBuilder<TTable extends PodTable<any> = PodTable<any>> {
 
 
   async selectIdsByCondition(table: PodTable, condition: QueryCondition): Promise<string[]> {
-    const builder = this.select({ id: table.getColumn('id') ?? table.columns.id })
+    const builder = this.session.select({ id: table.getColumn('id') ?? table.columns.id })
       .from(table)
       .where(condition)
-      .select({ '@id': table.columns.id });
+      .columns({ '@id': table.columns.id });
     const rows = await builder;
     return rows
       .map((row: any) => row.id || row['@id'])

@@ -279,6 +279,9 @@ export interface PodTableOptions {
   typeIndex?: 'private' | 'public';
   subjectTemplate?: string;
   graph?: string;
+  resourceMode?: 'ldp' | 'sparql';
+  sparqlEndpoint?: string;
+  autoRegister?: boolean;
 }
 
 export interface PodColumnMapping {
@@ -445,6 +448,8 @@ export class PodTable<TColumns extends Record<string, PodColumnBase> = Record<st
     typeIndex?: 'private' | 'public';
     subjectTemplate: string;
     graph?: string;
+    containerPath?: string;
+    resourcePath?: string;
   };
   public mapping: PodTableMapping;
   public relations?: Record<string, RelationDefinition>;
@@ -454,6 +459,9 @@ export class PodTable<TColumns extends Record<string, PodColumnBase> = Record<st
   private initialized = false;
   private subjectTemplate: string;
   private hasCustomSubjectTemplate: boolean;
+  private resourceMode?: 'ldp' | 'sparql';
+  private sparqlEndpoint?: string;
+  private autoRegisterEnabled: boolean;
   public columns: TColumns;
 
   // 为了兼容 drizzle-zod，添加必要的属性
@@ -488,6 +496,9 @@ export class PodTable<TColumns extends Record<string, PodColumnBase> = Record<st
     );
     this.subjectTemplate = subjectTemplateInfo.template;
     this.hasCustomSubjectTemplate = subjectTemplateInfo.isCustom;
+    this.resourceMode = options.resourceMode;
+    this.sparqlEndpoint = options.sparqlEndpoint;
+    this.autoRegisterEnabled = options.autoRegister !== false;
 
     this.config = {
       name,
@@ -644,6 +655,18 @@ export class PodTable<TColumns extends Record<string, PodColumnBase> = Record<st
 
   getResourcePath(): string {
     return this.resourcePath;
+  }
+
+  getResourceMode(): 'ldp' | 'sparql' | undefined {
+    return this.resourceMode;
+  }
+
+  getSparqlEndpoint(): string | undefined {
+    return this.sparqlEndpoint;
+  }
+
+  shouldAutoRegister(): boolean {
+    return this.autoRegisterEnabled;
   }
 
   async init(initializer: PodTableInitializer): Promise<void> {

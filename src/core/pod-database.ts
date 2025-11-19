@@ -8,7 +8,7 @@ import {
   UpdateQueryBuilder,
   DeleteQueryBuilder
 } from './pod-session';
-import { PodTable, type InferTableData } from './pod-table';
+import { PodTable, type InferTableData, PodColumnBase, type RelationDefinition } from './pod-table';
 import { QueryCondition } from './query-conditions';
 import { inArray } from './query-conditions';
 
@@ -246,9 +246,12 @@ export class PodDatabase<TSchema extends Record<string, unknown> = Record<string
         : relationDef?.table ?? tableMap.get(key);
       if (!targetTable) continue;
 
-      const referenceColumns = relationDef?.fields && relationDef.fields.length > 0
+      const candidateColumns: PodColumnBase[] = relationDef?.fields && relationDef.fields.length > 0
         ? relationDef.fields
-        : Object.values(targetTable.columns ?? {}).filter((col) =>
+        : (Object.values(targetTable.columns ?? {}) as PodColumnBase[]);
+      const referenceColumns = relationDef?.fields && relationDef.fields.length > 0
+        ? candidateColumns
+        : candidateColumns.filter((col) =>
             col?.options?.referenceTarget === parentTable.config.rdfClass
           );
       if (referenceColumns.length === 0) {

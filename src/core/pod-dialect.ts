@@ -376,14 +376,12 @@ export class PodDialect {
   }
 
   private resolveTableResource(table: PodTable): TableResourceDescriptor {
-    const mode =
-      typeof table.getResourceMode === 'function' ? table.getResourceMode() : (table.config.resourceMode ?? 'ldp');
+    const mode = table.getResourceMode?.() ?? 'ldp';
 
     if (mode === 'sparql') {
       const endpointSource =
-        (typeof table.getSparqlEndpoint === 'function' && table.getSparqlEndpoint()) ||
-        table.config.sparqlEndpoint ||
-        table.config.containerPath;
+        table.getSparqlEndpoint?.() ||
+        table.getContainerPath();
 
       if (!endpointSource) {
         throw new Error(`Table ${table.config.name} is configured for SPARQL access but no endpoint was provided`);
@@ -433,7 +431,7 @@ export class PodDialect {
       };
     }
 
-    const configuredPath = table.config.containerPath || '/data/';
+    const configuredPath = table.getContainerPath() || '/data/';
     const isAbsolute = configuredPath.startsWith('http://') || configuredPath.startsWith('https://');
     const ensureTrailingSlash = (value: string): string => (value.endsWith('/') ? value : `${value}/`);
 
@@ -725,7 +723,7 @@ export class PodDialect {
       (typeof (table as any).getResourcePath === 'function' && (table as any).getResourcePath()) ||
       (table as any).config?.resourcePath;
 
-    const configuredContainerPath = table.config.containerPath;
+    const configuredContainerPath = table.getContainerPath();
 
     if (configuredResourcePath && configuredResourcePath.trim().length > 0) {
       // 已经有 resourcePath，检查是否与 TypeIndex 冲突
@@ -824,8 +822,10 @@ export class PodDialect {
 
       switch (operation.type) {
         case 'select': {
-          if (operation.plan) {
+          if (operation.plan && this.isSelectPlan(operation.plan)) {
             sparqlQuery = this.sparqlConverter.convertSelectPlan(operation.plan);
+          } else if (operation.plan && !this.isSelectPlan(operation.plan)) {
+            throw new Error('Invalid plan supplied for select operation');
           } else if (operation.sql) {
             const ast = this.sparqlConverter.parseDrizzleAST(operation.sql, operation.table);
             sparqlQuery = this.sparqlConverter.convertSelect(ast, operation.table);
@@ -988,9 +988,9 @@ export class PodDialect {
   }
 
 
-  private buildIdInConditionFromSubjects(subjects: string[]): QueryCondition | null {
+  private buildIdInConditionFromSubjects(subjects: string[]): QueryCondition | undefined {
     if (!subjects || subjects.length === 0) {
-      return null;
+      return undefined;
     }
     return {
       type: 'binary_expr',
@@ -1011,10 +1011,24 @@ export class PodDialect {
   }
 
   private isDeletePlan(plan: PodOperation['plan']): plan is DeleteQueryPlan {
-    if (!plan || typeof (plan as DeleteQueryPlan).table === 'undefined') {
+    if (!plan) {
       return false;
     }
-    return !('rows' in (plan as Record<string, unknown>)) && !('data' in (plan as Record<string, unknown>));
+    const candidate = plan as Partial<DeleteQueryPlan<PodTable<any>>> & {
+      rows?: unknown;
+      data?: unknown;
+    };
+    if (typeof candidate.table === 'undefined') {
+      return false;
+    }
+    return typeof candidate.rows === 'undefined' && typeof candidate.data === 'undefined';
+  }
+
+  private isSelectPlan(plan: PodOperation['plan']): plan is SelectQueryPlan {
+    if (!plan) {
+      return false;
+    }
+    return typeof (plan as SelectQueryPlan).baseTable !== 'undefined';
   }
 
   private buildSubjectLookupPlan(table: PodTable, condition: QueryCondition): SelectQueryPlan {
@@ -1027,6 +1041,28 @@ export class PodDialect {
       aliasToTable: new Map([[alias, table]]),
       tableToAlias: new Map([[table, alias]])
     };
+  }
+
+  private buildSubjectUriFromFragment(fragment: string, table: PodTable): string {
+    if (!fragment) {
+      return fragment;
+    }
+    if (fragment.includes('://')) {
+      return fragment;
+    }
+    const clean = fragment.startsWith('#') ? fragment.slice(1) : fragment;
+    const baseResource =
+      table.getResourcePath?.() ||
+      table.config.base ||
+      table.getContainerPath();
+    const absoluteBase = baseResource
+      ? (this.isAbsoluteUrl(baseResource) ? baseResource : this.resolveAbsoluteUrl(baseResource))
+      : undefined;
+    if (!absoluteBase) {
+      return `#${clean}`;
+    }
+    const separator = absoluteBase.includes('#') ? '' : '#';
+    return `${absoluteBase}${separator}${clean}`;
   }
 
   private extractSubjectFromRow(row: Record<string, any>): string | null {
@@ -1066,9 +1102,9 @@ export class PodDialect {
     condition: QueryCondition | undefined,
     table: PodTable,
     resourceUrl: string
-  ): Promise<QueryCondition | null> {
+  ): Promise<QueryCondition | undefined> {
     if (!condition) {
-      return null;
+      return undefined;
     }
 
     if (this.conditionTargetsIdentifier(condition)) {
@@ -1082,9 +1118,9 @@ export class PodDialect {
     condition: QueryCondition | undefined,
     table: PodTable,
     resourceUrl: string
-  ): Promise<QueryCondition | null> {
+  ): Promise<QueryCondition | undefined> {
     if (!condition) {
-      return null;
+      return undefined;
     }
     const subjects = await this.findSubjectsForCondition(condition, table, resourceUrl);
     return this.buildIdInConditionFromSubjects(subjects);
@@ -1246,7 +1282,7 @@ export class PodDialect {
       return;
     }
 
-    const skipTypeIndex = table.config.autoRegister === false;
+    const skipTypeIndex = !table.shouldAutoRegister?.();
 
     try {
       const descriptor = this.resolveTableResource(table);
@@ -1276,7 +1312,7 @@ export class PodDialect {
     try {
       // 从 resourcePath 提取 containerPath
       const descriptor = this.resolveTableResource(table);
-      let containerPath = table.config.containerPath || '/data/';
+      let containerPath = table.getContainerPath() || '/data/';
       let instanceContainer = `${this.podUrl.replace(/\/$/, '')}${containerPath}`;
 
       if (descriptor.mode === 'ldp') {
@@ -1293,12 +1329,13 @@ export class PodDialect {
         ? table.config.rdfClass
         : (table.config.rdfClass as any).value || String(table.config.rdfClass);
 
+      const visibility: 'public' | 'private' = (table as any)._.config?.isPublic ? 'public' : 'private';
       const entry: TypeIndexEntry = {
         rdfClass,
         containerPath,
         forClass: table.config.name,
         instanceContainer,
-        isPublic: (table as any)._.config?.isPublic || false
+        visibility
       };
 
       // 检查 TypeIndex 中是否已存在，如果路径不同则更新
@@ -1321,8 +1358,8 @@ export class PodDialect {
         if (message.includes('TypeIndex not found')) {
           console.warn('[registerTable] TypeIndex missing. Attempting to create.');
           try {
-            // 根据 isPublic 创建对应的 TypeIndex
-            const typeIndexUrl = await this.typeIndexManager.createTypeIndex(entry.isPublic || false);
+            // 根据可见性创建对应的 TypeIndex
+            const typeIndexUrl = await this.typeIndexManager.createTypeIndex(visibility === 'public');
             await this.typeIndexManager.registerType(entry, typeIndexUrl);
           } catch (creationError: unknown) {
             console.warn('[registerTable] Unable to create TypeIndex. Continuing without registration.', creationError);
@@ -1574,7 +1611,7 @@ export class PodDialect {
 
   // 添加getSubjectURI辅助方法
   private getSubjectURI(table: PodTable, id: string): string {
-    return `${table.config.containerPath || '/'}#${id}`;
+    return `${table.getContainerPath() || '/'}#${id}`;
   }
 
   // 完全替换convertSelect方法
