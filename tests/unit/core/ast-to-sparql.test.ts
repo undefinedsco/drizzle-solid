@@ -1,5 +1,6 @@
 import { describe, it, expect, beforeEach } from 'vitest';
 import { ASTToSPARQLConverter } from '@src/core/ast-to-sparql';
+import { podTable, string } from '@src/core/pod-table';
 import { eq, and, inArray, isNull, regex as regexCond } from '@src/core/query-conditions';
 
 // Mock PodTable
@@ -669,6 +670,27 @@ describe('ASTToSPARQLConverter', () => {
       const condition = regexCond(mockTable.columns.name as any, '^Search.*', 'i');
       const whereClause = converter.buildWhereClauseForCondition(condition, mockTable);
       expect(whereClause).toContain('REGEX(STR(?name), "^Search.*", "i")');
+    });
+  });
+
+  describe('generateSubjectUri', () => {
+    it('should not treat column named subject as explicit resource override', () => {
+      const threadTable = podTable('threads', {
+        id: string('id').primaryKey(),
+        subject: string('subject')
+      }, {
+        base: '/drizzle-tests/threads/threads.ttl',
+        rdfClass: 'https://schema.org/Conversation',
+        namespace: { prefix: 'schema', uri: 'https://schema.org/' }
+      });
+
+      const insert = converter.convertInsert({ table: threadTable, rows: [{
+        id: 'thread-abc',
+        subject: 'Thread Subject'
+      }] }, threadTable);
+
+      expect(insert.query).toContain('#thread-abc');
+      expect(insert.query).not.toContain('<Thread Subject>');
     });
   });
 });

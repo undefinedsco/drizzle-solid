@@ -293,10 +293,10 @@ export class SelectQueryBuilder<TTable extends PodTable<any> = PodTable<any>> {
     }
   }
 
-  from(table: TTable) {
-    this.selectedTable = table;
+  from<TJoinTable extends PodTable<any>>(table: TJoinTable): SelectQueryBuilder<TJoinTable> {
+    this.selectedTable = table as unknown as TTable;
     this.primaryAlias = this.ensureAliasForTable(table);
-    return this;
+    return this as unknown as SelectQueryBuilder<TJoinTable>;
   }
 
   columns(fields: SelectFieldMap) {
@@ -1343,8 +1343,8 @@ export class SelectQueryBuilder<TTable extends PodTable<any> = PodTable<any>> {
   }
 
   // 使查询构建器可等待
-  then<TResult1 = any[], TResult2 = never>(
-    onfulfilled?: ((value: any[]) => TResult1 | PromiseLike<TResult1>) | undefined | null,
+  then<TResult1 = Awaited<ReturnType<SelectQueryBuilder<TTable>['execute']>>, TResult2 = never>(
+    onfulfilled?: ((value: Awaited<ReturnType<SelectQueryBuilder<TTable>['execute']>>) => TResult1 | PromiseLike<TResult1>) | undefined | null,
     onrejected?: ((reason: any) => TResult2 | PromiseLike<TResult2>) | undefined | null
   ): Promise<TResult1 | TResult2> {
     return this.execute().then(onfulfilled, onrejected);
@@ -1397,8 +1397,8 @@ export class InsertQueryBuilder<TTable extends PodTable<any> = PodTable<any>> {
     }
   }
 
-  then<TResult1 = any[], TResult2 = never>(
-    onfulfilled?: ((value: any[]) => TResult1 | PromiseLike<TResult1>) | undefined | null,
+  then<TResult1 = Awaited<ReturnType<InsertQueryBuilder<TTable>['execute']>>, TResult2 = never>(
+    onfulfilled?: ((value: Awaited<ReturnType<InsertQueryBuilder<TTable>['execute']>>) => TResult1 | PromiseLike<TResult1>) | undefined | null,
     onrejected?: ((reason: any) => TResult2 | PromiseLike<TResult2>) | undefined | null
   ): Promise<TResult1 | TResult2> {
     return this.execute().then(onfulfilled, onrejected);
@@ -1499,8 +1499,8 @@ export class UpdateQueryBuilder<TTable extends PodTable<any> = PodTable<any>> {
   }
 
   // 使查询构建器可等待
-  then<TResult1 = any[], TResult2 = never>(
-    onfulfilled?: ((value: any[]) => TResult1 | PromiseLike<TResult1>) | undefined | null,
+  then<TResult1 = Awaited<ReturnType<UpdateQueryBuilder<TTable>['execute']>>, TResult2 = never>(
+    onfulfilled?: ((value: Awaited<ReturnType<UpdateQueryBuilder<TTable>['execute']>>) => TResult1 | PromiseLike<TResult1>) | undefined | null,
     onrejected?: ((reason: any) => TResult2 | PromiseLike<TResult2>) | undefined | null
   ): Promise<TResult1 | TResult2> {
     return this.execute().then(onfulfilled, onrejected);
@@ -1578,8 +1578,8 @@ export class DeleteQueryBuilder<TTable extends PodTable<any> = PodTable<any>> {
   }
 
   // 使查询构建器可等待
-  then<TResult1 = any[], TResult2 = never>(
-    onfulfilled?: ((value: any[]) => TResult1 | PromiseLike<TResult1>) | undefined | null,
+  then<TResult1 = Awaited<ReturnType<DeleteQueryBuilder<TTable>['execute']>>, TResult2 = never>(
+    onfulfilled?: ((value: Awaited<ReturnType<DeleteQueryBuilder<TTable>['execute']>>) => TResult1 | PromiseLike<TResult1>) | undefined | null,
     onrejected?: ((reason: any) => TResult2 | PromiseLike<TResult2>) | undefined | null
   ): Promise<TResult1 | TResult2> {
     return this.execute().then(onfulfilled, onrejected);

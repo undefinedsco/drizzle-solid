@@ -17,8 +17,7 @@
  */
 
 import { Session } from '@inrupt/solid-client-authn-node';
-import { drizzle } from '../src/index';
-import { podTable, string, int, date } from '../src/index';
+import { drizzle, podTable, string, int, date } from 'drizzle-solid';
 
 // 尝试加载.env文件
 try {
@@ -38,7 +37,7 @@ const taskTable = podTable('tasks', {
   updatedAt: date('updatedAt').predicate('http://purl.org/dc/terms/modified')
 }, {
   rdfClass: 'http://example.org/Task',
-  containerPath: '/tasks/'
+  base: '/tasks/'
 });
 
 /**
@@ -295,7 +294,7 @@ async function main() {
     // 2. 创建数据库连接
     console.log('\n🔗 创建数据库连接');
     console.log('============================================================');
-    const db = drizzle(session);
+    const db = drizzle(session, { schema: { taskTable } });
     console.log('✅ drizzle-solid数据库连接已建立');
     console.log('⚙️  初始化 tasks 表');
     await db.init([taskTable]);

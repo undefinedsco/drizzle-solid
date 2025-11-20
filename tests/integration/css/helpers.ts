@@ -78,7 +78,7 @@ export async function resetSharedSession(): Promise<void> {
   }
 }
 
-export async function createTestSession(options?: { shared?: boolean }): Promise<Session> {
+export async function createTestSession(options?: { shared?: boolean; skipTypeIndex?: boolean }): Promise<Session> {
   const useShared = options?.shared !== false;
   if (useShared) {
     return await getSharedSession();

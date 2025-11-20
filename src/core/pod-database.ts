@@ -252,9 +252,68 @@ export class PodDatabase<TSchema extends Record<string, unknown> = Record<string
       const referenceColumns = relationDef?.fields && relationDef.fields.length > 0
         ? candidateColumns
         : candidateColumns.filter((col) =>
-            col?.options?.referenceTarget === parentTable.config.rdfClass
+            col?.options?.referenceTarget === parentTable.config.rdfClass &&
+            !col.isInverse?.()
           );
+
       if (referenceColumns.length === 0) {
+        const relationReferences: PodColumnBase[] = relationDef?.references ?? [];
+        const explicitInverse = relationReferences.filter(
+          (col): col is PodColumnBase =>
+            Boolean(
+              col &&
+              typeof col.isInverse === 'function' &&
+              col.isInverse() &&
+              col.options?.referenceTarget === targetTable.config.rdfClass
+            )
+        );
+        const parentColumns = Object.values(parentTable.columns ?? {}) as PodColumnBase[];
+        const inverseCandidates = (explicitInverse.length > 0 ? explicitInverse : parentColumns).filter(
+          (col) =>
+            typeof col.isInverse === 'function' &&
+            col.isInverse() &&
+            col.options?.referenceTarget === targetTable.config.rdfClass
+        );
+
+        if (inverseCandidates.length === 0) {
+          continue;
+        }
+
+        const inverseValuesPerRow = rows.map((row) =>
+          this.collectInverseReferenceValues(row, inverseCandidates)
+        );
+        const uniqueIris = Array.from(
+          new Set(
+            inverseValuesPerRow
+              .flat()
+              .filter((iri): iri is string => typeof iri === 'string' && iri.length > 0)
+          )
+        );
+
+        if (uniqueIris.length === 0) {
+          rows.forEach((row) => {
+            row[key] = [];
+          });
+          continue;
+        }
+
+        let childBuilder = this.session.select().from(targetTable);
+        childBuilder = childBuilder.where({ '@id': uniqueIris });
+        const childRows = await childBuilder;
+        const groupedByIri = this.groupRowsByIri(childRows);
+
+        rows.forEach((row, index) => {
+          const iris = inverseValuesPerRow[index];
+          const related: Record<string, any>[] = [];
+          iris.forEach((iri) => {
+            const matches = groupedByIri.get(iri);
+            if (matches && matches.length > 0) {
+              related.push(...matches);
+            }
+          });
+          row[key] = related;
+        });
+
         continue;
       }
       const refColumn = referenceColumns[0];
@@ -354,6 +413,47 @@ export class PodDatabase<TSchema extends Record<string, unknown> = Record<string
       return value.value;
     }
     return undefined;
+  }
+
+  private collectInverseReferenceValues(row: Record<string, any>, columns: PodColumnBase[]): string[] {
+    if (!columns.length) {
+      return [];
+    }
+    const collected: string[] = [];
+    for (const column of columns) {
+      const raw = row[column.name];
+      if (raw === undefined || raw === null) {
+        continue;
+      }
+      const appendValue = (entry: unknown) => {
+        const normalized = this.normalizeReferenceValue(entry) ?? (typeof entry === 'string' ? entry : undefined);
+        if (normalized) {
+          collected.push(normalized);
+        }
+      };
+      if (Array.isArray(raw)) {
+        raw.forEach(appendValue);
+      } else {
+        appendValue(raw);
+      }
+    }
+    return collected;
+  }
+
+  private groupRowsByIri(rows: Record<string, any>[]): Map<string, Record<string, any>[]> {
+    const grouped = new Map<string, Record<string, any>[]>();
+    for (const row of rows) {
+      const iri = this.normalizeReferenceValue(row['@id']) ??
+        this.normalizeReferenceValue(row.uri) ??
+        (typeof row['@id'] === 'string' ? row['@id'] : undefined);
+      if (!iri) {
+        continue;
+      }
+      const bucket = grouped.get(iri) ?? [];
+      bucket.push(row);
+      grouped.set(iri, bucket);
+    }
+    return grouped;
   }
 
   private extractFragment(value: string): string {

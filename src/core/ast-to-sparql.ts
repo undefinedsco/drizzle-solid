@@ -1149,9 +1149,12 @@ ${deleteBlocks.join(';\n')}`;
       return null;
     };
 
-    const directSubject = preferString(normalizedRecord.subject)
-      ?? preferString(normalizedRecord['@id'])
-      ?? preferString(normalizedRecord.uri);
+    const columns = (table as any)?.columns ?? {};
+    const hasColumn = (name: string) => Object.prototype.hasOwnProperty.call(columns, name);
+
+    const directSubject = preferString(normalizedRecord['@id'])
+      ?? (!hasColumn('subject') ? preferString(normalizedRecord.subject) : null)
+      ?? (!hasColumn('uri') ? preferString(normalizedRecord.uri) : null);
     if (directSubject) {
       return directSubject;
     }

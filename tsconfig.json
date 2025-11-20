@@ -13,6 +13,11 @@
     "skipLibCheck": true,
     "forceConsistentCasingInFileNames": true,
     "moduleResolution": "node",
+    "baseUrl": ".",
+    "paths": {
+      "drizzle-solid": ["src/index.ts"],
+      "drizzle-solid/*": ["src/*"]
+    },
     "allowSyntheticDefaultImports": true,
     "experimentalDecorators": true,
     "emitDecoratorMetadata": true,

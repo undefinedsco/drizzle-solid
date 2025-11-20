@@ -12,6 +12,8 @@
     "outDir": "./dist",
     "baseUrl": ".",
     "paths": {
+      "drizzle-solid": ["src/index.ts"],
+      "drizzle-solid/*": ["src/*"],
       "*": ["node_modules/*"]
     }
   },

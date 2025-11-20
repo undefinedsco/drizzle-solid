@@ -21,7 +21,8 @@ import {
   regex,
   count,
   avg,
-  max
+  max,
+  relations
 } from '../../../src/index';
 import type { SolidDatabase } from '../../../src/driver';
 import type { Session } from '@inrupt/solid-client-authn-node';
@@ -590,6 +591,82 @@ SELECT ?post ?author WHERE {
       await querySession.fetch(usersResource, { method: 'DELETE' }).catch(() => undefined);
       await querySession.fetch(postsContainer, { method: 'DELETE' }).catch(() => undefined);
       await querySession.fetch(usersContainer, { method: 'DELETE' }).catch(() => undefined);
+    }
+  });
+
+  test('supports db.query helpers with inverse relations', async () => {
+    const timestamp = Date.now();
+    const threadsPath = `/drizzle-tests/inverse-threads-${timestamp}/`;
+    const messagesPath = `/drizzle-tests/inverse-messages-${timestamp}/`;
+
+    const messagesTable = podTable('messages', {
+      id: string('id').primaryKey().predicate('https://schema.org/identifier'),
+      body: string('body').notNull().predicate('https://schema.org/text')
+    }, {
+      base: `${messagesPath}messages.ttl`,
+      rdfClass: 'https://schema.org/Message',
+      namespace: schemaNamespace
+    });
+
+    const threadsTable = podTable('threads', {
+      id: string('id').primaryKey().predicate('https://schema.org/identifier'),
+      subject: string('subject').predicate('https://schema.org/headline'),
+      messageRefs: uri('messageRefs')
+        .array()
+        .predicate('https://www.w3.org/ns/sioc#has_member')
+        .inverse()
+        .reference('https://schema.org/Message')
+    }, {
+      base: `${threadsPath}threads.ttl`,
+      rdfClass: 'https://schema.org/Conversation',
+      namespace: schemaNamespace
+    });
+
+    relations(threadsTable, ({ many }) => ({
+      messages: many(messagesTable)
+    }));
+
+    const inverseSession = await createTestSession({ skipTypeIndex: true });
+    const threadsContainer = await ensureContainer(inverseSession, threadsPath);
+    const messagesContainer = await ensureContainer(inverseSession, messagesPath);
+    const threadsResource = `${threadsContainer}threads.ttl`;
+    const messagesResource = `${messagesContainer}messages.ttl`;
+
+    const inverseDb = drizzle(inverseSession, { schema: { threads: threadsTable, messages: messagesTable } });
+
+    try {
+      await inverseDb.init([threadsTable, messagesTable]);
+
+      const message1Iri = `${messagesResource}#msg-${timestamp}-1`;
+      const message2Iri = `${messagesResource}#msg-${timestamp}-2`;
+
+      await inverseDb.insert(messagesTable).values([
+        { id: `msg-${timestamp}-1`, body: 'Inverse hello' },
+        { id: `msg-${timestamp}-2`, body: 'Inverse follow-up' }
+      ]);
+
+      await inverseDb.insert(threadsTable).values({
+        id: `thread-${timestamp}`,
+        subject: 'Inverse Relation Thread',
+        messageRefs: [message1Iri, message2Iri]
+      });
+
+      const threadsWithMessages = await inverseDb.query.threads.findMany({
+        with: { messages: true }
+      });
+
+      expect(threadsWithMessages).toHaveLength(1);
+      const thread = threadsWithMessages[0];
+      expect(thread?.messages?.length).toBe(2);
+      expect(thread?.messages?.map((msg: any) => msg.id).sort()).toEqual([
+        `msg-${timestamp}-1`,
+        `msg-${timestamp}-2`
+      ]);
+    } finally {
+      await inverseSession.fetch(threadsResource, { method: 'DELETE' }).catch(() => undefined);
+      await inverseSession.fetch(messagesResource, { method: 'DELETE' }).catch(() => undefined);
+      await inverseSession.fetch(threadsContainer, { method: 'DELETE' }).catch(() => undefined);
+      await inverseSession.fetch(messagesContainer, { method: 'DELETE' }).catch(() => undefined);
     }
   });
 

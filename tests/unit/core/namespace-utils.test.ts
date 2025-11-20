@@ -36,4 +36,5 @@ describe('extendNamespace', () => {
     extendNamespace(BASE_NAMESPACE, { custom: 'Custom' });
     expect(BASE_NAMESPACE).toEqual(snapshot);
   });
+
 });

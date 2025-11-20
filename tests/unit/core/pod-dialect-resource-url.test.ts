@@ -4,23 +4,49 @@ import { PodDialect } from '../../../src/core/pod-dialect';
 
 const queryContainerMock = vi.fn().mockResolvedValue([]);
 
-vi.mock('../../../src/core/typeindex-manager', () => ({
-  TypeIndexManager: vi.fn().mockImplementation(() => ({
-    getConfig: vi.fn(() => ({})),
-    updateConfig: vi.fn()
-  }))
-}));
+vi.mock('../../../src/core/typeindex-manager', () => {
+  class MockTypeIndexManager {
+    getConfig = vi.fn(() => ({}));
+    updateConfig = vi.fn();
+
+    constructor() {
+      // no-op
+    }
+  }
+
+  return { TypeIndexManager: MockTypeIndexManager };
+});
 
 vi.mock('../../../src/core/sparql-executor', () => {
-  const executorFactory = vi.fn().mockImplementation(() => ({
-    queryContainer: queryContainerMock,
-    addSource: vi.fn(),
-    removeSource: vi.fn()
-  }));
+  class MockExecutor {
+    sources: string[];
+
+    constructor(config: { sources?: string[] } = {}) {
+      this.sources = [...(config.sources || [])];
+    }
+
+    queryContainer(resourceUrl: string, sparqlQuery: any) {
+      return queryContainerMock(resourceUrl, sparqlQuery);
+    }
+
+    addSource = vi.fn((source: string) => {
+      if (!this.sources.includes(source)) {
+        this.sources.push(source);
+      }
+    });
+
+    removeSource = vi.fn((source: string) => {
+      this.sources = this.sources.filter((item) => item !== source);
+    });
+
+    executeQuery = vi.fn();
+
+    getSources = vi.fn(() => [...this.sources]);
+  }
 
   return {
-    ComunicaSPARQLExecutor: executorFactory,
-    SolidSPARQLExecutor: executorFactory
+    ComunicaSPARQLExecutor: MockExecutor,
+    SolidSPARQLExecutor: MockExecutor
   };
 });
 

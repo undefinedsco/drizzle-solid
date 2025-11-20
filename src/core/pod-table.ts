@@ -57,18 +57,26 @@ const resolveTermIri = (input: RdfTermInput): string => {
   throw new Error('Term must be a string or VocabTerm with a string value');
 };
 
-export class ColumnBuilder<TType extends ColumnBuilderDataType> {
+export class ColumnBuilder<
+  TType extends ColumnBuilderDataType,
+  TElement extends ColumnBuilderDataType | null = null,
+  TNotNull extends boolean = false,
+  THasDefault extends boolean = false
+> {
   public options: PodColumnOptions;
   private _predicateUri?: string; // 重命名单独属性
+  public readonly elementType: TElement;
 
   constructor(
     public readonly name: string,
     public readonly dataType: TType,
     options: PodColumnOptions = {},
-    predicate?: string
+    predicate?: string,
+    elementType?: TElement
   ) {
     this.options = { ...options }; // 复制options避免引用问题
     this._predicateUri = predicate;
+    this.elementType = elementType ?? null as TElement;
   }
 
   // 统一的值格式化方法 - Column 层负责类型转换
@@ -173,7 +181,7 @@ export class ColumnBuilder<TType extends ColumnBuilderDataType> {
     return rdfValue;
   }
 
-  primaryKey(): ColumnBuilder<TType> {
+  primaryKey(): ColumnBuilder<TType, TElement, true, THasDefault> {
     const predicate = this.name === 'id'
       ? '@id'
       : this.options.predicate;
@@ -186,53 +194,53 @@ export class ColumnBuilder<TType extends ColumnBuilderDataType> {
     if (predicate) {
       this._predicateUri = predicate;
     }
-    return this;
+    return this as unknown as ColumnBuilder<TType, TElement, true, THasDefault>;
   }
 
-  notNull(): ColumnBuilder<TType> {
+  notNull(): ColumnBuilder<TType, TElement, true, THasDefault> {
     this.options = { ...this.options, required: true, notNull: true };
-    return this;
+    return this as unknown as ColumnBuilder<TType, TElement, true, THasDefault>;
   }
 
-  predicate(uri: RdfTermInput): ColumnBuilder<TType> {
+  predicate(uri: RdfTermInput): ColumnBuilder<TType, TElement, TNotNull, THasDefault> {
     const resolved = resolveTermIri(uri);
     this._predicateUri = resolved;
     this.options = { ...this.options, predicate: resolved };
-    return this;
+    return this as unknown as ColumnBuilder<TType, TElement, TNotNull, THasDefault>;
   }
 
-  default(value: unknown): ColumnBuilder<TType> {
+  default(value: unknown): ColumnBuilder<TType, TElement, TNotNull, true> {
     this.options = { ...this.options, defaultValue: value };
-    return this;
+    return this as unknown as ColumnBuilder<TType, TElement, TNotNull, true>;
   }
 
-  defaultNow(): ColumnBuilder<TType> {
+  defaultNow(): ColumnBuilder<TType, TElement, TNotNull, true> {
     this.options = { ...this.options, defaultValue: () => new Date() };
-    return this;
+    return this as unknown as ColumnBuilder<TType, TElement, TNotNull, true>;
   }
 
-  inverse(value = true): ColumnBuilder<TType> {
+  inverse(value = true): ColumnBuilder<TType, TElement, TNotNull, THasDefault> {
     this.options = { ...this.options, inverse: value };
-    return this;
+    return this as unknown as ColumnBuilder<TType, TElement, TNotNull, THasDefault>;
   }
 
-  reference(rdfClassUri: string): ColumnBuilder<TType> {
+  reference(rdfClassUri: string): ColumnBuilder<TType, TElement, TNotNull, THasDefault> {
     // 验证是否是有效的 RDF Class URI
     if (!rdfClassUri.startsWith('http://') && !rdfClassUri.startsWith('https://')) {
       throw new Error(`Invalid RDF Class URI: ${rdfClassUri}. Must be a full HTTP(S) URL.`);
     }
     
     this.options = { ...this.options, referenceTarget: rdfClassUri };
-    return this;
+    return this as unknown as ColumnBuilder<TType, TElement, TNotNull, THasDefault>;
   }
 
   // Array support - similar to Drizzle ORM PostgreSQL
-  array(): ColumnBuilder<'array'> {
-    const arrayBuilder = new ColumnBuilder<'array'>(this.name, 'array', {
+  array(): ColumnBuilder<'array', TType, TNotNull, THasDefault> {
+    const arrayBuilder = new ColumnBuilder<'array', TType, TNotNull, THasDefault>(this.name, 'array', {
       ...this.options,
       baseType: this.dataType,
       isArray: true
-    }, this._predicateUri);
+    }, this._predicateUri, this.dataType);
     return arrayBuilder;
   }
 
@@ -246,31 +254,64 @@ export class ColumnBuilder<TType extends ColumnBuilderDataType> {
 // 简化的类型定义 - 移除品牌类型系统
 
 // 类型推断工具函数 - 基于 dataType 属性推断
-export type InferColumnType<T extends PodColumnBase> =
-  T extends { dataType: 'string' } ? string :
-  T extends { dataType: 'integer' } ? number :
-  T extends { dataType: 'boolean' } ? boolean :
-  T extends { dataType: 'datetime' } ? Date :
-  T extends { dataType: 'json' } ? unknown :
-  T extends { dataType: 'object' } ? Record<string, unknown> :
-  T extends { dataType: 'uri' } ? string :
+type ColumnValueType<T extends ColumnBuilderDataType> =
+  T extends 'string' ? string :
+  T extends 'integer' ? number :
+  T extends 'boolean' ? boolean :
+  T extends 'datetime' ? Date :
+  T extends 'json' ? unknown :
+  T extends 'object' ? Record<string, unknown> :
+  T extends 'uri' ? string :
+  T extends 'array' ? unknown[] :
   unknown;
 
-type Simplify<T> = { [K in keyof T]: T[K] };
+type ExtractNotNull<T extends PodColumnBase> =
+  T extends PodColumnBase<any, infer TNotNull, any, any> ? TNotNull : false;
+
+type ExtractHasDefault<T extends PodColumnBase> =
+  T extends PodColumnBase<any, any, infer THasDefault, any> ? THasDefault : false;
+
+type ColumnIsRequiredForInsert<T extends PodColumnBase> =
+  ExtractNotNull<T> extends true
+    ? ExtractHasDefault<T> extends true
+      ? false
+      : true
+    : false;
+
+type ColumnAllowsNull<T extends PodColumnBase> =
+  ExtractNotNull<T> extends true ? false : true;
+
+export type InferColumnType<T extends PodColumnBase> =
+  T extends PodArrayColumn<infer ElementType, any, any>
+    ? ColumnValueType<ElementType>[]
+    : ColumnValueType<T['dataType']>;
+
+type Simplify<T> = { [K in keyof T]: T[K] } & {};
 
 // 推断表的数据类型
 export type InferTableData<TTable extends PodTable<Record<string, PodColumnBase>>> = Simplify<{
   [K in keyof TTable['columns']]: InferColumnType<TTable['columns'][K]>
 }>;
 
-// 推断插入数据类型（简化版本，所有字段都可选）
-export type InferInsertData<TTable extends PodTable<Record<string, PodColumnBase>>> = Simplify<{
-  [K in keyof TTable['columns']]?: InferColumnType<TTable['columns'][K]>
-}>;
+type InsertRequiredColumns<TTable extends PodTable<Record<string, PodColumnBase>>> = {
+  [K in keyof TTable['columns'] as ColumnIsRequiredForInsert<TTable['columns'][K]> extends true ? K : never]:
+    InferColumnType<TTable['columns'][K]>;
+};
 
-// 推断更新数据类型（所有列都可选）
+type InsertOptionalColumns<TTable extends PodTable<Record<string, PodColumnBase>>> = {
+  [K in keyof TTable['columns'] as ColumnIsRequiredForInsert<TTable['columns'][K]> extends true ? never : K]?:
+    InferColumnType<TTable['columns'][K]>;
+};
+
+export type InferInsertData<TTable extends PodTable<Record<string, PodColumnBase>>> =
+  Simplify<InsertRequiredColumns<TTable> & InsertOptionalColumns<TTable>>;
+
+type UpdateColumnValue<T extends PodColumnBase> =
+  ColumnAllowsNull<T> extends true ? InferColumnType<T> | null : InferColumnType<T>;
+
+// 推断更新数据类型
 export type InferUpdateData<TTable extends PodTable<Record<string, PodColumnBase>>> = Simplify<{
-  [K in keyof TTable['columns']]?: InferColumnType<TTable['columns'][K]> | null
+  [K in keyof TTable['columns']]?: UpdateColumnValue<TTable['columns'][K]>
 }>;
 
 // 表配置选项
@@ -316,12 +357,17 @@ export interface RelationDefinition {
 }
 
 // 列类型基类
-export abstract class PodColumnBase {
+export abstract class PodColumnBase<
+  TType extends ColumnBuilderDataType = ColumnBuilderDataType,
+  TNotNull extends boolean = false,
+  THasDefault extends boolean = false,
+  TElement extends ColumnBuilderDataType | null = null
+> {
   static readonly [entityKind] = 'PodColumn';
   
   constructor(
     public name: string,
-    public dataType: string,
+    public readonly dataType: TType,
     public options: PodColumnOptions = {},
     public tableName?: string
   ) {}
@@ -391,48 +437,83 @@ export abstract class PodColumnBase {
   }
 }
 
-export type PodColumn = PodColumnBase;
+export type PodColumn = PodColumnBase<ColumnBuilderDataType>;
 
 // 具体的列类型
-export class PodStringColumn extends PodColumnBase {
+export class PodStringColumn<
+  TNotNull extends boolean = false,
+  THasDefault extends boolean = false
+> extends PodColumnBase<'string', TNotNull, THasDefault> {
   constructor(name: string, options: PodColumnOptions = {}) {
     super(name, 'string', options);
   }
 }
 
-export class PodIntegerColumn extends PodColumnBase {
+export class PodIntegerColumn<
+  TNotNull extends boolean = false,
+  THasDefault extends boolean = false
+> extends PodColumnBase<'integer', TNotNull, THasDefault> {
   constructor(name: string, options: PodColumnOptions = {}) {
     super(name, 'integer', options);
   }
 }
 
-export class PodBooleanColumn extends PodColumnBase {
+export class PodBooleanColumn<
+  TNotNull extends boolean = false,
+  THasDefault extends boolean = false
+> extends PodColumnBase<'boolean', TNotNull, THasDefault> {
   constructor(name: string, options: PodColumnOptions = {}) {
     super(name, 'boolean', options);
   }
 }
 
-export class PodDateTimeColumn extends PodColumnBase {
+export class PodDateTimeColumn<
+  TNotNull extends boolean = false,
+  THasDefault extends boolean = false
+> extends PodColumnBase<'datetime', TNotNull, THasDefault> {
   constructor(name: string, options: PodColumnOptions = {}) {
     super(name, 'datetime', options);
   }
 }
 
-export class PodJsonColumn extends PodColumnBase {
+export class PodJsonColumn<
+  TNotNull extends boolean = false,
+  THasDefault extends boolean = false
+> extends PodColumnBase<'json', TNotNull, THasDefault> {
   constructor(name: string, options: PodColumnOptions = {}) {
     super(name, 'json', options);
   }
 }
 
-export class PodObjectColumn extends PodColumnBase {
+export class PodObjectColumn<
+  TNotNull extends boolean = false,
+  THasDefault extends boolean = false
+> extends PodColumnBase<'object', TNotNull, THasDefault> {
   constructor(name: string, options: PodColumnOptions = {}) {
     super(name, 'object', options);
   }
 }
 
-export class PodUriColumn extends PodColumnBase {
+export class PodUriColumn<
+  TNotNull extends boolean = false,
+  THasDefault extends boolean = false
+> extends PodColumnBase<'uri', TNotNull, THasDefault> {
   constructor(name: string, options: PodColumnOptions = {}) {
     super(name, 'uri', options);
+  }
+}
+
+export class PodArrayColumn<
+  TElement extends ColumnBuilderDataType = ColumnBuilderDataType,
+  TNotNull extends boolean = false,
+  THasDefault extends boolean = false
+> extends PodColumnBase<'array', TNotNull, THasDefault, TElement> {
+  constructor(
+    name: string,
+    public readonly elementType: TElement,
+    options: PodColumnOptions = {}
+  ) {
+    super(name, 'array', options);
   }
 }
 
@@ -705,13 +786,15 @@ export class PodTable<TColumns extends Record<string, PodColumnBase> = Record<st
   }
 
   // 获取所有列
-  getColumns(): Record<string, PodColumnBase> {
+  getColumns(): TColumns {
     return this.columns;
   }
 
   // 获取指定列
+  getColumn<TKey extends keyof TColumns>(name: TKey): TColumns[TKey];
+  getColumn(name: string): PodColumnBase | undefined;
   getColumn(name: string): PodColumnBase | undefined {
-    return this.columns[name];
+    return this.columns[name as keyof TColumns];
   }
 
   // 检查列是否存在
@@ -932,14 +1015,31 @@ export function jsonb(name: string, options: PodColumnOptions = {}): ColumnBuild
 
 
 // 类型安全的podTable函数
-type ColumnInput = PodColumnBase | ColumnBuilder<ColumnBuilderDataType>;
+type ColumnInput =
+  | PodColumnBase
+  | ColumnBuilder<ColumnBuilderDataType, ColumnBuilderDataType | null, boolean, boolean>;
 
-type ResolveColumn<T> = T extends ColumnBuilder<'string'> ? PodStringColumn
-  : T extends ColumnBuilder<'integer'> ? PodIntegerColumn
-  : T extends ColumnBuilder<'boolean'> ? PodBooleanColumn
-  : T extends ColumnBuilder<'datetime'> ? PodDateTimeColumn
-  : T extends ColumnBuilder<'json'> ? PodJsonColumn
-  : T extends ColumnBuilder<'object'> ? PodObjectColumn
+type ResolveColumn<T> =
+  T extends ColumnBuilder<'string', any, infer TNotNull, infer THasDefault>
+    ? PodStringColumn<TNotNull, THasDefault>
+  : T extends ColumnBuilder<'integer', any, infer TNotNull, infer THasDefault>
+    ? PodIntegerColumn<TNotNull, THasDefault>
+  : T extends ColumnBuilder<'boolean', any, infer TNotNull, infer THasDefault>
+    ? PodBooleanColumn<TNotNull, THasDefault>
+  : T extends ColumnBuilder<'datetime', any, infer TNotNull, infer THasDefault>
+    ? PodDateTimeColumn<TNotNull, THasDefault>
+  : T extends ColumnBuilder<'json', any, infer TNotNull, infer THasDefault>
+    ? PodJsonColumn<TNotNull, THasDefault>
+  : T extends ColumnBuilder<'object', any, infer TNotNull, infer THasDefault>
+    ? PodObjectColumn<TNotNull, THasDefault>
+  : T extends ColumnBuilder<'uri', any, infer TNotNull, infer THasDefault>
+    ? PodUriColumn<TNotNull, THasDefault>
+  : T extends ColumnBuilder<'array', infer TElement, infer TNotNull, infer THasDefault>
+    ? PodArrayColumn<
+        TElement extends ColumnBuilderDataType ? TElement : ColumnBuilderDataType,
+        TNotNull,
+        THasDefault
+      >
   : T extends PodColumnBase ? T
   : PodColumnBase;
 
@@ -966,47 +1066,51 @@ export function podTable<
   columns: TColumns,
   options: PodTableOptions
 ): PodTable<ResolvedColumns<TColumns>> {
-  const processedColumns = {} as Record<string, PodColumnBase>;
+  const processedColumns: Partial<ResolvedColumns<TColumns>> = {};
 
   for (const [key, value] of Object.entries(columns)) {
-    let column: PodColumnBase;
-
     if (value instanceof PodColumnBase) {
-      column = value;
-    } else {
-      // ColumnBuilder 情况
-      switch (value.dataType) {
-        case 'integer':
-          column = new PodIntegerColumn(value.name, value.options);
-          break;
-        case 'datetime':
-          column = new PodDateTimeColumn(value.name, value.options);
-          break;
-        case 'boolean':
-          column = new PodBooleanColumn(value.name, value.options);
-          break;
-        case 'json':
-          column = new PodJsonColumn(value.name, value.options);
-          break;
-        case 'object':
-          column = new PodObjectColumn(value.name, value.options);
-          break;
-        case 'uri':
-          column = new PodUriColumn(value.name, value.options);
-          break;
-        case 'string':
-        default:
-          column = new PodStringColumn(value.name, value.options);
-          break;
-      }
-
-      const predicateUri = value.getPredicateUri();
-      if (predicateUri) {
-        column.predicate(predicateUri);
-      }
+      processedColumns[key as keyof TColumns] = value as ResolveColumn<TColumns[typeof key & keyof TColumns]>;
+      continue;
     }
 
-    processedColumns[key] = column;
+    let column: PodColumnBase;
+    switch (value.dataType) {
+      case 'integer':
+        column = new PodIntegerColumn(value.name, value.options);
+        break;
+      case 'datetime':
+        column = new PodDateTimeColumn(value.name, value.options);
+        break;
+      case 'boolean':
+        column = new PodBooleanColumn(value.name, value.options);
+        break;
+      case 'json':
+        column = new PodJsonColumn(value.name, value.options);
+        break;
+      case 'object':
+        column = new PodObjectColumn(value.name, value.options);
+        break;
+      case 'array': {
+        const elementType = (value.elementType ?? value.options.baseType ?? 'string') as ColumnBuilderDataType;
+        column = new PodArrayColumn(value.name, elementType, value.options);
+        break;
+      }
+      case 'uri':
+        column = new PodUriColumn(value.name, value.options);
+        break;
+      case 'string':
+      default:
+        column = new PodStringColumn(value.name, value.options);
+        break;
+    }
+
+    const predicateUri = value.getPredicateUri();
+    if (predicateUri) {
+      column.predicate(predicateUri);
+    }
+
+    processedColumns[key as keyof TColumns] = column as ResolveColumn<TColumns[typeof key & keyof TColumns]>;
   }
 
   return new PodTable(name, processedColumns as ResolvedColumns<TColumns>, options);

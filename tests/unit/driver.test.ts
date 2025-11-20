@@ -28,7 +28,7 @@ const mockSession = {
 
 describe('Driver Tests', () => {
   test('should create drizzle instance with session', () => {
-    const db = drizzle(mockSession);
+    const db = drizzle(mockSession, { schema: {} });
     expect(db).toBeDefined();
   });
 
@@ -43,7 +43,7 @@ describe('Driver Tests', () => {
       namespace: { prefix: 'schema', uri: 'https://schema.org/' }
     });
 
-    const db = drizzle(mockSession);
+    const db = drizzle(mockSession, { schema: { testTable } });
     expect(db).toBeDefined();
     expect(testTable).toBeDefined();
   });

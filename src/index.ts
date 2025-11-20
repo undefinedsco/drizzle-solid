@@ -51,6 +51,7 @@ export {
   // 命名空间和常量
   RDF_PREDICATES,
   RDF_CLASSES,
+  relations,
   // 类型
   type PodColumn,
   type PodTable,

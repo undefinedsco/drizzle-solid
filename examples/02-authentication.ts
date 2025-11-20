@@ -46,15 +46,15 @@ function askQuestion(question: string): Promise<string> {
 
 // 定义Profile表结构
 const profileTable = podTable('profile', {
-  id: string('id').primaryKey(),
+  id: string('id').primaryKey().predicate('http://xmlns.com/foaf/0.1/identifier'),
   name: string('name').predicate('http://xmlns.com/foaf/0.1/name'),
   email: string('email').predicate('http://xmlns.com/foaf/0.1/mbox'),
   bio: string('bio').predicate('http://purl.org/dc/terms/description'),
   location: string('location').predicate('http://www.w3.org/2006/vcard/ns#locality'),
   age: int('age').predicate('http://xmlns.com/foaf/0.1/age')
 }, {
-  rdfClass: 'http://xmlns.com/foaf/0.1/Person',
-  containerPath: '/profile/card'
+  base: '/profile/card#me',
+  rdfClass: 'http://xmlns.com/foaf/0.1/Person'
 });
 
 /**
