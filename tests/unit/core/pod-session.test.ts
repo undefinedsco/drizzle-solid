@@ -31,7 +31,7 @@ const mockTable = new PodTable('users', {
   name: new PodStringColumn('name', { required: true })
 }, {
   base: 'idp:///users/index.ttl',
-  rdfClass: 'https://schema.org/Person',
+  type: 'https://schema.org/Person',
   namespace: { prefix: 'schema', uri: 'https://schema.org/' }
 });
 
@@ -128,6 +128,43 @@ describe('PodAsyncSession', () => {
       const builder = session.insert(mockTable);
       expect(builder).toBeDefined();
       expect(builder.constructor.name).toBe('InsertQueryBuilder');
+    });
+
+    it('should apply column default values when building IR', () => {
+      const defaultFn = vi.fn(() => 'token-value');
+      const tableWithDefaults = new PodTable('tasks', {
+        id: new PodStringColumn('id', { primaryKey: true }),
+        status: new PodStringColumn('status', { defaultValue: 'pending' }),
+        token: new PodStringColumn('token', { defaultValue: defaultFn })
+      }, {
+        base: 'idp:///tasks/index.ttl',
+        type: 'https://schema.org/Task',
+        namespace: { prefix: 'schema', uri: 'https://schema.org/' }
+      });
+
+      const plan = session.insert(tableWithDefaults).values({ id: 'task-1' }).toIR();
+      expect(plan.rows[0].status).toBe('pending');
+      expect(plan.rows[0].token).toBe('token-value');
+      expect(defaultFn).toHaveBeenCalledTimes(1);
+    });
+
+    it('should include defaults in operations sent to the dialect', async () => {
+      const tableWithDefaults = new PodTable('tasks_exec', {
+        id: new PodStringColumn('id', { primaryKey: true }),
+        state: new PodStringColumn('state', { defaultValue: 'queued' })
+      }, {
+        base: 'idp:///tasks/exec.ttl',
+        type: 'https://schema.org/Task',
+        namespace: { prefix: 'schema', uri: 'https://schema.org/' }
+      });
+
+      mockDialect.query.mockResolvedValue([]);
+      await session.insert(tableWithDefaults).values({ id: 'task-2' }).execute();
+
+      expect(mockDialect.query).toHaveBeenCalledTimes(1);
+      const operation = mockDialect.query.mock.calls[0][0];
+      expect(operation.values.state).toBe('queued');
+      expect(operation.plan.rows[0].state).toBe('queued');
     });
   });
 

@@ -16,7 +16,7 @@ describe('Compile-time Types', () => {
         isActive: field('isActive', 'https://schema.org/isActive', 'boolean')
       }, {
         base: 'idp:///users/index.ttl',
-        rdfClass: 'https://schema.org/Person',
+        type: 'https://schema.org/Person',
         namespace: { prefix: 'schema', uri: 'https://schema.org/' }
       });
 
@@ -51,7 +51,7 @@ describe('Compile-time Types', () => {
     it('应该支持链式调用构建表', () => {
       const usersTable = typedTable('users', {
         base: 'idp:///users/index.ttl',
-        rdfClass: 'https://schema.org/Person',
+        type: 'https://schema.org/Person',
         namespace: { prefix: 'schema', uri: 'https://schema.org/' }
       })
         .addField(CommonFields.name())
@@ -78,7 +78,7 @@ describe('Compile-time Types', () => {
         isActive: field('isActive', 'https://schema.org/isActive', 'boolean')
       }, {
         base: 'idp:///users/index.ttl',
-        rdfClass: 'https://schema.org/Person',
+        type: 'https://schema.org/Person',
         namespace: { prefix: 'schema', uri: 'https://schema.org/' }
       });
 
@@ -94,7 +94,7 @@ describe('Compile-time Types', () => {
     it('应该支持复杂的表定义', () => {
       const postsTable = typedTable('posts', {
         base: 'idp:///posts/index.ttl',
-        rdfClass: 'https://schema.org/BlogPosting',
+        type: 'https://schema.org/BlogPosting',
         namespace: { prefix: 'schema', uri: 'https://schema.org/' }
       })
         .addField(CommonFields.name('https://schema.org/headline'))

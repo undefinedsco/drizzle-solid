@@ -10,30 +10,30 @@ Drizzle Solid is a TypeScript ORM adapter that brings Drizzle ORM's type-safe qu
 
 ### Build and Test
 ```bash
-npm run build          # Compile TypeScript to dist/
-npm run test           # Run all Jest tests
-npm run test:watch     # Run tests in watch mode
-npm run test:coverage  # Run tests with coverage report
-npm run lint           # ESLint check on src/**/*.ts
-npm run lint:fix       # Auto-fix linting issues
-npm run quality        # Run lint + test (CI pipeline)
+yarn build          # Compile TypeScript to dist/
+yarn test           # Run all tests
+yarn test:watch     # Run tests in watch mode
+yarn test:coverage  # Run tests with coverage report
+yarn lint           # ESLint check on src/**/*.ts
+yarn lint:fix       # Auto-fix linting issues
+yarn quality        # Run lint + test (CI pipeline)
 ```
 
 ### Development and Examples
 ```bash
-npm run dev                    # Run main entry point with ts-node
-npm run example:setup          # Pod setup and creation tutorial
-npm run example:auth           # Authentication and session reuse demo
-npm run example:usage          # Basic CRUD operations walkthrough
-npm run server:start           # Start local Community Solid Server
-npm run server:setup           # Create preset test accounts
+yarn dev                    # Run main entry point with ts-node
+yarn example:setup          # Pod setup and creation tutorial
+yarn example:auth           # Authentication and session reuse demo
+yarn example:usage          # Basic CRUD operations walkthrough
+yarn server:start           # Start local Community Solid Server
+yarn server:setup           # Create preset test accounts
 ```
 
 ### Testing Infrastructure
 ```bash
-npm run server:start:sandbox   # CSS server in sandboxed mode
-npm run clean:only            # Clean test data
-npm run test:sparql           # Test native SPARQL execution
+yarn server:start:sandbox   # CSS server in sandboxed mode
+yarn clean:only             # Clean test data
+yarn test:sparql            # Test native SPARQL execution
 ```
 
 ## Architecture Overview
@@ -110,10 +110,10 @@ npm run test:sparql           # Test native SPARQL execution
 
 ### Testing Requirements
 
-- Run `npm run test` before committing
-- Integration tests require Community Solid Server - use `npm run server:start` 
-- For single test files: `npm test -- --testNamePattern="your test"`
-- Coverage reports available via `npm run test:coverage`
+- Run `yarn test` before committing
+- Integration tests require Community Solid Server - use `yarn server:start` 
+- For single test files: `yarn test -- --testNamePattern=\"your test\"`
+- Coverage reports available via `yarn test:coverage`
 
 ### Code Patterns
 

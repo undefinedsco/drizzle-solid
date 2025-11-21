@@ -222,8 +222,8 @@ async function main() {
     console.log('💡 下一步：');
     console.log('   1. 确保您已保存Client ID和Client Secret');
     console.log('   2. 运行示例来测试功能:');
-    console.log('      npm run example:auth    # 身份认证测试');
-    console.log('      npm run example:usage   # 基本使用方法');
+    console.log('      yarn example:auth    # 身份认证测试');
+    console.log('      yarn example:usage   # 基本使用方法');
     console.log('');
     console.log('📝 重要提醒：');
     console.log('   • 预设账户信息：');

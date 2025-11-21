@@ -126,8 +126,8 @@ async function main() {
     log('   • 认证信息 (.env)', 'blue');
     log('');
     log('💡 接下来你可以：', 'yellow');
-    log('   • 手动启动服务器: npm run server:start', 'cyan');
-    log('   • 或运行完整设置: npm run example:setup', 'cyan');
+    log('   • 手动启动服务器: yarn server:start', 'cyan');
+    log('   • 或运行完整设置: yarn example:setup', 'cyan');
     
   } catch (error) {
     log(`\n❌ 清理失败: ${error.message}`, 'red');

@@ -31,7 +31,7 @@ async function comprehensiveCleanup() {
     }
   } catch (error) {
     console.log('   ❌ 服务器未运行或无法访问');
-    console.log('   💡 请先启动服务器: npm run solid-server');
+    console.log('   💡 请先启动服务器: yarn solid-server');
     return;
   }
   
@@ -137,7 +137,7 @@ function provideManualCleanupGuide() {
   console.log('');
   console.log('   方案 A: 重启服务器');
   console.log('   1. 停止当前 Solid Pod 服务器 (Ctrl+C)');
-  console.log('   2. 重新启动: npm run solid-server');
+  console.log('   2. 重新启动: yarn solid-server');
   console.log('   3. 重新运行测试');
   console.log('');
   console.log('   方案 B: 使用不同的测试路径');

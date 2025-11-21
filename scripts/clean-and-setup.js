@@ -243,7 +243,7 @@ SOLID_OIDC_ISSUER=http://localhost:3000
     
   } catch (error) {
     log(`❌ 生成认证信息失败: ${error.message}`, 'red');
-    log('💡 你可以稍后手动运行: npm run example:auth', 'yellow');
+    log('💡 你可以稍后手动运行: yarn example:auth', 'yellow');
   }
 }
 
@@ -309,7 +309,7 @@ async function main() {
     log('📄 认证信息已保存到 .env 文件', 'blue');
     log('');
     log('🚀 现在可以运行示例：', 'green');
-    log('   npm run example:basic', 'cyan');
+    log('   yarn example:basic', 'cyan');
     
   } catch (error) {
     log(`\n❌ 脚本执行失败: ${error.message}`, 'red');

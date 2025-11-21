@@ -19,7 +19,7 @@ export const profiles = podTable('profiles', {
 }, {
   // 资源文件：/profiles/profiles.ttl
   base: '/profiles/profiles.ttl',
-  rdfClass: 'https://schema.org/Person'
+  type: 'https://schema.org/Person'
 });
 ```
 
@@ -37,7 +37,7 @@ const profiles = podTable('profiles', {
   email: string('email').predicate('http://xmlns.com/foaf/0.1/mbox')
 }, {
   containerPath: '/profiles/',
-  rdfClass: 'http://xmlns.com/foaf/0.1/Person'
+  type: 'http://xmlns.com/foaf/0.1/Person'
 });
 ```
 
@@ -64,7 +64,7 @@ const contacts = podTable('contacts', {
 }, {
   // 目标资源（必填，可相对 Pod 基路径）
   base: 'idp:///contacts/index.ttl',
-  rdfClass: FOAF.Person,
+  type: FOAF.Person,
   namespace: LINQ_NAMESPACE,
   // 可选 TypeIndex 注册，仅在提供 typeIndex 时尝试
   typeIndex: 'private' // 'public' | 'private'

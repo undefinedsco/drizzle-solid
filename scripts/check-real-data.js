@@ -23,7 +23,7 @@ async function checkRealData() {
     console.log('💡 这解释了为什么 INSERT 看起来成功但实际上可能失败了');
     console.log('');
     console.log('🔧 解决方案:');
-    console.log('1. 运行 npm run example:setup 创建 Pod 和 Token');
+    console.log('1. 运行 yarn example:setup 创建 Pod 和 Token');
     console.log('2. 或者设置环境变量:');
     console.log('   export SOLID_CLIENT_ID="your-client-id"');
     console.log('   export SOLID_CLIENT_SECRET="your-client-secret"');

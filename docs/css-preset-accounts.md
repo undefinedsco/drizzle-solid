@@ -80,7 +80,7 @@ npx @solid/community-server --config ./config/server-config.json
 ### 基础启动
 ```bash
 # 使用预设配置启动 CSS
-npm run server:start
+yarn server:start
 ```
 
 ### 手动启动
@@ -106,7 +106,7 @@ npx @solid/community-server \
 
 2. **程序化验证**:
    ```bash
-   npm run example:auth
+   yarn example:auth
    ```
 
 ## 注意事项

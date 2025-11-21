@@ -317,9 +317,10 @@ export type InferUpdateData<TTable extends PodTable<Record<string, PodColumnBase
 // 表配置选项
 export interface PodTableOptions {
   base?: string; // 资源基础路径，支持绝对或相对
-  rdfClass: RdfTermInput;
+  type: RdfTermInput;
   namespace?: NamespaceConfig;
   typeIndex?: 'private' | 'public';
+  subClassOf?: RdfTermInput | RdfTermInput[];
   subjectTemplate?: string;
   graph?: string;
   resourceMode?: 'ldp' | 'sparql';
@@ -338,10 +339,11 @@ export interface PodColumnMapping {
 
 export interface PodTableMapping {
   name: string;
-  rdfClass: string;
+  type: string;
   subjectTemplate: string;
   graph?: string;
   namespace?: NamespaceConfig;
+  subClassOf?: string[];
   columns: Record<string, PodColumnMapping>;
   relations?: Record<string, RelationDefinition>;
 }
@@ -525,9 +527,10 @@ export class PodTable<TColumns extends Record<string, PodColumnBase> = Record<st
   public config: {
     name: string;
     base: string;
-    rdfClass: string;
+    type: string;
     namespace?: NamespaceConfig;
     typeIndex?: 'private' | 'public';
+    subClassOf?: string[];
     subjectTemplate: string;
     graph?: string;
     containerPath?: string;
@@ -544,6 +547,7 @@ export class PodTable<TColumns extends Record<string, PodColumnBase> = Record<st
   private resourceMode?: 'ldp' | 'sparql';
   private sparqlEndpoint?: string;
   private registerTypeIndexEnabled: boolean;
+  private parentClasses: string[];
   public columns: TColumns;
 
   // 为了兼容 drizzle-zod，添加必要的属性
@@ -568,6 +572,10 @@ export class PodTable<TColumns extends Record<string, PodColumnBase> = Record<st
     columns: TColumns,
     options: PodTableOptions
   ) {
+    const typeInput = options.type;
+    if (!typeInput) {
+      throw new Error('podTable requires a type (RDF class) via options.type');
+    }
     const baseConfig = this.resolveBase(options.base, name);
     this.resourcePath = baseConfig.resourcePath;
     this.containerPath = baseConfig.containerPath;
@@ -586,12 +594,16 @@ export class PodTable<TColumns extends Record<string, PodColumnBase> = Record<st
     this.config = {
       name,
       base: baseConfig.resourcePath,
-      rdfClass: resolveTermIri(options.rdfClass),
+      type: resolveTermIri(typeInput),
       namespace: options.namespace,
       typeIndex: options.typeIndex,
       subjectTemplate: this.subjectTemplate,
       graph: options.graph
     };
+    this.parentClasses = this.normalizeParents(options.subClassOf ?? []);
+    if (this.parentClasses.length > 0) {
+      this.config.subClassOf = [...this.parentClasses];
+    }
     
     this.columns = columns;
 
@@ -638,8 +650,15 @@ export class PodTable<TColumns extends Record<string, PodColumnBase> = Record<st
   }
 
   // 获取 RDF 类
+  getType(): string {
+    return this.config.type;
+  }
+
+  /**
+   * @deprecated 使用 getType()
+   */
   getRdfClass(): string {
-    return this.config.rdfClass;
+    return this.getType();
   }
 
   // 获取命名空间
@@ -649,6 +668,10 @@ export class PodTable<TColumns extends Record<string, PodColumnBase> = Record<st
 
   getSubjectTemplate(): string {
     return this.subjectTemplate;
+  }
+
+  getSubClassOf(): string[] {
+    return [...this.parentClasses];
   }
 
   getMapping(): PodTableMapping {
@@ -836,10 +859,11 @@ export class PodTable<TColumns extends Record<string, PodColumnBase> = Record<st
 
     return {
       name: this.config.name,
-      rdfClass: this.config.rdfClass,
+      type: this.config.type,
       subjectTemplate: this.subjectTemplate,
       graph: this.config.graph,
       namespace: this.config.namespace,
+      subClassOf: this.parentClasses.length > 0 ? [...this.parentClasses] : undefined,
       columns: mappedColumns,
       relations: this.relations
     };
@@ -880,6 +904,17 @@ export class PodTable<TColumns extends Record<string, PodColumnBase> = Record<st
         return undefined;
     }
   }
+
+  private normalizeParents(value?: RdfTermInput | RdfTermInput[]): string[] {
+    if (!value) {
+      return [];
+    }
+    const entries = Array.isArray(value) ? value : [value];
+    const normalized = entries
+      .map((entry) => resolveTermIri(entry))
+      .filter((entry) => entry && entry.length > 0);
+    return Array.from(new Set(normalized));
+  }
 }
 
 export interface PodTableInitializer {
@@ -904,6 +939,11 @@ export function object(name: string, options: PodColumnOptions = {}): ColumnBuil
 
 export function uri(name: string, options: PodColumnOptions = {}): ColumnBuilder<'uri'> {
   return new ColumnBuilder(name, 'uri', options);
+}
+
+// IRI 别名，方便习惯使用 IRI 术语的场景
+export function iri(name: string, options: PodColumnOptions = {}): ColumnBuilder<'uri'> {
+  return uri(name, options);
 }
 
 // Pod 专用的列定义函数（保留向后兼容）

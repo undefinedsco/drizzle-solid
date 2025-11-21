@@ -53,7 +53,7 @@ Drizzle Solid 当前通过 `SelectQueryBuilder` 暴露 Drizzle 风格的 `join` 
   - 在 `tests/integration/css` 新增 right/full join 场景，验证缺失一侧时返回 `null`。
   - 针对 fallback 分支构造特例（如 ON 包含表达式），确认仍能得到正确结果。
 - **性能验证**：
-  - 通过 `npm run dev` 检查生成的 SPARQL，并在 CSS + Comunica v2 上执行，确保无额外错误日志。
+  - 通过 `yarn dev` 检查生成的 SPARQL，并在 CSS + Comunica v2 上执行，确保无额外错误日志。
 
 #### 风险与缓解
 - **UNION 结果集放大**：限制 `fullJoin` 的原生转换仅支持等值条件，其他情况提示回退；必要时在转换器中插入 `DISTINCT`。

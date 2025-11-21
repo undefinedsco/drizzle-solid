@@ -16,7 +16,7 @@ const profileTable = podTable('profiles', {
     .predicate('https://schema.org/knows')
 }, {
   base: 'idp:///profiles.ttl',
-  rdfClass: 'https://schema.org/Person',
+  type: 'https://schema.org/Person',
   namespace: SCHEMA
 });
 
@@ -27,7 +27,7 @@ const primitiveTable = podTable('primitive', {
   extra: object('extra').default({ foo: 'bar' })
 }, {
   base: 'idp:///primitive.ttl',
-  rdfClass: 'https://schema.org/Thing',
+  type: 'https://schema.org/Thing',
   namespace: SCHEMA
 });
 
@@ -40,7 +40,7 @@ const threadTable = podTable('threads', {
     .reference('https://schema.org/Message')
 }, {
   base: 'idp:///threads.ttl',
-  rdfClass: 'https://schema.org/Conversation',
+  type: 'https://schema.org/Conversation',
   namespace: SCHEMA
 });
 

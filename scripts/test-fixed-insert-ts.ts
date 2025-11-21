@@ -54,7 +54,7 @@ async function testFixedInsert() {
       createdAt: date('createdAt').predicate('http://purl.org/dc/terms/created'),
       updatedAt: date('updatedAt').predicate('http://purl.org/dc/terms/modified')
     }, {
-      rdfClass: 'http://example.org/Task',
+      type: 'http://example.org/Task',
       containerPath: '/tasks/'  // 注意：这里有尾部斜杠，但修复后的代码会正确处理
     });
     

@@ -236,6 +236,7 @@ export class PodDatabase<TSchema extends Record<string, unknown> = Record<string
     if (!rows || rows.length === 0) {
       return rows;
     }
+    const dedupedRows = this.dedupeBySubject(rows);
 
     for (const [key, entry] of Object.entries(withOption)) {
       if (!entry) continue;
@@ -252,7 +253,7 @@ export class PodDatabase<TSchema extends Record<string, unknown> = Record<string
       const referenceColumns = relationDef?.fields && relationDef.fields.length > 0
         ? candidateColumns
         : candidateColumns.filter((col) =>
-            col?.options?.referenceTarget === parentTable.config.rdfClass &&
+            col?.options?.referenceTarget === parentTable.config.type &&
             !col.isInverse?.()
           );
 
@@ -264,7 +265,7 @@ export class PodDatabase<TSchema extends Record<string, unknown> = Record<string
               col &&
               typeof col.isInverse === 'function' &&
               col.isInverse() &&
-              col.options?.referenceTarget === targetTable.config.rdfClass
+              col.options?.referenceTarget === targetTable.config.type
             )
         );
         const parentColumns = Object.values(parentTable.columns ?? {}) as PodColumnBase[];
@@ -272,14 +273,14 @@ export class PodDatabase<TSchema extends Record<string, unknown> = Record<string
           (col) =>
             typeof col.isInverse === 'function' &&
             col.isInverse() &&
-            col.options?.referenceTarget === targetTable.config.rdfClass
+            col.options?.referenceTarget === targetTable.config.type
         );
 
         if (inverseCandidates.length === 0) {
           continue;
         }
 
-        const inverseValuesPerRow = rows.map((row) =>
+        const inverseValuesPerRow = dedupedRows.map((row) =>
           this.collectInverseReferenceValues(row, inverseCandidates)
         );
         const uniqueIris = Array.from(
@@ -302,7 +303,7 @@ export class PodDatabase<TSchema extends Record<string, unknown> = Record<string
         const childRows = await childBuilder;
         const groupedByIri = this.groupRowsByIri(childRows);
 
-        rows.forEach((row, index) => {
+        dedupedRows.forEach((row, index) => {
           const iris = inverseValuesPerRow[index];
           const related: Record<string, any>[] = [];
           iris.forEach((iri) => {
@@ -320,7 +321,7 @@ export class PodDatabase<TSchema extends Record<string, unknown> = Record<string
       const referenceColumn = relationDef?.references && relationDef.references[0];
       const useReferenceIri = refColumn.isReference();
 
-      const parentKeys = rows
+      const parentKeys = dedupedRows
         .map((row) => this.resolveParentKey(row, referenceColumn, useReferenceIri))
         .filter((value): value is string => typeof value === 'string' && value.length > 0);
       if (parentKeys.length === 0) {
@@ -347,13 +348,50 @@ export class PodDatabase<TSchema extends Record<string, unknown> = Record<string
         grouped.set(normalized, arr);
       }
 
-      rows.forEach((row) => {
+      dedupedRows.forEach((row) => {
         const parentKey = this.resolveParentKey(row, referenceColumn, useReferenceIri);
         row[key] = parentKey ? grouped.get(parentKey) ?? [] : [];
       });
     }
 
-    return rows;
+    return dedupedRows;
+  }
+
+  private dedupeBySubject(rows: Record<string, any>[]): Record<string, any>[] {
+    const merged = new Map<string, Record<string, any>>();
+    const order: string[] = [];
+    for (const row of rows) {
+      const key = this.resolveIriFromRow(row) ?? this.resolveIdFromRow(row);
+      if (!key) {
+        order.push(`__anon_${order.length}`);
+        merged.set(order[order.length - 1], { ...row });
+        continue;
+      }
+      if (!merged.has(key)) {
+        merged.set(key, { ...row });
+        order.push(key);
+        continue;
+      }
+      const target = merged.get(key)!;
+      for (const [col, value] of Object.entries(row)) {
+        if (value === undefined) continue;
+        const existing = target[col];
+        if (existing === undefined) {
+          target[col] = value;
+          continue;
+        }
+        const existingArr = Array.isArray(existing) ? existing : [existing];
+        const incomingArr = Array.isArray(value) ? value : [value];
+        const mergedArr = [...existingArr];
+        for (const incoming of incomingArr) {
+          if (!mergedArr.some((item) => item === incoming)) {
+            mergedArr.push(incoming);
+          }
+        }
+        target[col] = mergedArr.length === 1 ? mergedArr[0] : mergedArr;
+      }
+    }
+    return order.map((key) => merged.get(key)!);
   }
 
   private resolveIdFromRow(row: Record<string, any>): string | undefined {

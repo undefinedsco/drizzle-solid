@@ -29,7 +29,7 @@ const profileTable = podTable('profiles', {
   createdAt: date('createdAt').notNull().predicate('https://schema.org/dateCreated')
 }, {
   base: `${containerPath}profiles.ttl`,
-  rdfClass: 'https://schema.org/Person',
+  type: 'https://schema.org/Person',
   namespace: schemaNamespace
 });
 

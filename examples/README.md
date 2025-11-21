@@ -1,6 +1,6 @@
 # Drizzle Solid Examples
 
-This folder hosts the canonical end-to-end walkthroughs referenced in the docs. Each script assumes you have installed dependencies (`npm install`) and configured credentials via environment variables.
+This folder hosts the canonical end-to-end walkthroughs referenced in the docs. Each script assumes you have installed dependencies (`yarn install`) and configured credentials via environment variables.
 
 ## Example lineup
 - `01-server-setup.ts`: boots a local Community Solid Server instance and seeds demo accounts.
@@ -11,9 +11,9 @@ See `examples/archive/` for experimental or legacy demos that may require manual
 
 ## Running
 ```bash
-npm run example:setup      # launches CSS and seeds pods
-npm run example:auth       # runs 02-authentication.ts
-npm run example:usage      # runs 03-basic-usage.ts
+yarn example:setup      # launches CSS and seeds pods
+yarn example:auth       # runs 02-authentication.ts
+yarn example:usage      # runs 03-basic-usage.ts
 ```
 
-Make sure `npm run server:start` (Community Solid Server) is running in another terminal before invoking the authentication or usage flows.
+Make sure `yarn server:start` (Community Solid Server) is running in another terminal before invoking the authentication or usage flows.

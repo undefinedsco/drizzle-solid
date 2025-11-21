@@ -40,7 +40,7 @@ async function main() {
     title: string('title').notNull()
   }, {
     containerPath: '/todos/',
-    rdfClass: 'https://schema.org/Action'
+    type: 'https://schema.org/Action'
   });
 
   const db = drizzle(session);
@@ -65,7 +65,7 @@ main().catch((error) => {
 | 错误 | 可能原因 | 解决方案 |
 | --- | --- | --- |
 | `needs to be logged in` | `Session.login` 未被正确 await | 确保在调用 `drizzle(session)` 前检查 `session.info.isLoggedIn` |
-| 401 / 403 | 凭证过期或容器缺少权限 | 重新执行 `npm run example:setup`，或使用 `ensureContainer` 辅助创建容器 |
-| `fetch` ECONNREFUSED | CSS 未启动 | 在另一个终端运行 `npm run server:start` |
+| 401 / 403 | 凭证过期或容器缺少权限 | 重新执行 `yarn example:setup`，或使用 `ensureContainer` 辅助创建容器 |
+| `fetch` ECONNREFUSED | CSS 未启动 | 在另一个终端运行 `yarn server:start` |
 
 更多示例可参考 `examples/02-authentication.ts` 与 `tests/integration/css/helpers.ts`。

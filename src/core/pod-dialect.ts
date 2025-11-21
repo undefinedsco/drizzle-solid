@@ -714,9 +714,9 @@ export class PodDialect {
    * 如果已有 resourcePath，检查是否与 TypeIndex 冲突
    */
   private async ensureTableResourcePath(table: PodTable): Promise<void> {
-    const rdfClass = typeof table.config.rdfClass === 'string'
-      ? table.config.rdfClass
-      : (table.config.rdfClass as any).value || String(table.config.rdfClass);
+    const rdfClass = typeof table.config.type === 'string'
+      ? table.config.type
+      : (table.config.type as any).value || String(table.config.type);
 
     // 检查是否已经有 resourcePath
     const configuredResourcePath =
@@ -726,30 +726,15 @@ export class PodDialect {
     const configuredContainerPath = table.getContainerPath();
 
     if (configuredResourcePath && configuredResourcePath.trim().length > 0) {
-      // 已经有 resourcePath，检查是否与 TypeIndex 冲突
-      try {
-        const discoveredEntry = await this.typeIndexManager.discoverSpecificType(rdfClass);
+      // 已经有 resourcePath，无需 TypeIndex 检查，直接使用配置
+      return;
+    }
 
-        if (discoveredEntry) {
-          const typeIndexPath = discoveredEntry.containerPath;
-
-          // 检查冲突
-          if (configuredContainerPath && configuredContainerPath !== typeIndexPath) {
-            console.warn(
-              `[AutoDiscover] ⚠️  CONFLICT: Table ${table.config.name} has resourcePath "${configuredResourcePath}" ` +
-              `but TypeIndex points to "${typeIndexPath}". Using configured resourcePath (ignoring TypeIndex).`
-            );
-            // 优先使用用户配置的路径（写入优先）
-          } else {
-            console.log(`[AutoDiscover] Table ${table.config.name} resourcePath matches TypeIndex ✓`);
-          }
-        }
-      } catch (error) {
-        // TypeIndex 查询失败，使用配置的路径
-        console.log(`[AutoDiscover] Could not check TypeIndex for ${table.config.name}, using configured path`);
-      }
-
-      return; // 已经有路径，无需自动发现
+    // 没有 resourcePath，且未要求使用 TypeIndex，直接使用默认容器
+    if (!table.config.typeIndex) {
+      console.log(`[AutoDiscover] Table ${table.config.name} has no resourcePath, using default container path`);
+      (table as any).config.containerPath = configuredContainerPath || '/data/';
+      return;
     }
 
     // 没有 resourcePath，从 TypeIndex 自动发现
@@ -1325,9 +1310,9 @@ export class PodDialect {
         }
       }
 
-      const rdfClass = typeof table.config.rdfClass === 'string'
-        ? table.config.rdfClass
-        : (table.config.rdfClass as any).value || String(table.config.rdfClass);
+      const rdfClass = typeof table.config.type === 'string'
+        ? table.config.type
+        : (table.config.type as any).value || String(table.config.type);
 
       const visibility: 'public' | 'private' = (table as any)._.config?.isPublic ? 'public' : 'private';
       const entry: TypeIndexEntry = {
@@ -1447,8 +1432,8 @@ export class PodDialect {
   /**
    * 检查类型是否已注册
    */
-  async isTypeRegistered(rdfClass: string, typeIndexUrl?: string): Promise<boolean> {
-    return this.typeIndexManager.isTypeRegistered(rdfClass, typeIndexUrl);
+  async isTypeRegistered(type: string, typeIndexUrl?: string): Promise<boolean> {
+    return this.typeIndexManager.isTypeRegistered(type, typeIndexUrl);
   }
 
   /**
@@ -1627,7 +1612,7 @@ export class PodDialect {
       return this.sparqlConverter.convertSelect(ast, operation.table);
     }
     const table = operation.table;
-    const rdfClass = table.config.rdfClass || 'http://example.org/Entity';
+    const rdfClass = table.config.type || 'http://example.org/Entity';
     const namespace = table.config.namespace || '';
 
     const selectVars: string[] = ['?subject'];
@@ -1843,7 +1828,7 @@ export class PodDialect {
   // 同时修复convertInsert方法，确保INSERT也使用正确谓词
   private convertInsert(operation: PodOperation): SPARQLQuery {
     const table = operation.table;
-    const rdfClass = table.config.rdfClass || 'http://example.org/Entity';
+    const rdfClass = table.config.type || 'http://example.org/Entity';
     const values = operation.values as Record<string, any>;
     const namespace = table.config.namespace || '';
     

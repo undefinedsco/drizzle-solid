@@ -42,7 +42,7 @@ describe('PodTable', () => {
 
     options = {
       base: 'idp:///users/index.ttl',
-      rdfClass: 'https://schema.org/Person',
+      type: 'https://schema.org/Person',
       namespace: schemaNamespace
     };
 
@@ -58,7 +58,7 @@ describe('PodTable', () => {
 
     it('应该设置正确的配置', () => {
       expect(table.config.base).toBe('/users/index.ttl');
-      expect(table.config.rdfClass).toBe('https://schema.org/Person');
+      expect(table.config.type).toBe('https://schema.org/Person');
       expect(table.config.namespace).toEqual(schemaNamespace);
     });
   });
@@ -78,6 +78,23 @@ describe('PodTable', () => {
   describe('getNamespace', () => {
     it('应该返回命名空间配置', () => {
       expect(table.getNamespace()).toEqual(schemaNamespace);
+    });
+  });
+
+  describe('subClassOf metadata', () => {
+    it('should normalize and expose parent classes', () => {
+      const parentClass = 'https://schema.org/Contact';
+      const childTable = podTable('people', {
+        id: new PodIntegerColumn('id', { primaryKey: true })
+      }, {
+        base: '/people.ttl',
+        type: 'https://schema.org/Person',
+        namespace: schemaNamespace,
+        subClassOf: [parentClass, parentClass]
+      });
+
+      expect(childTable.getSubClassOf()).toEqual([parentClass]);
+      expect(childTable.getMapping().subClassOf).toEqual([parentClass]);
     });
   });
 
@@ -202,7 +219,7 @@ describe('PodColumn', () => {
       authorId: string('authorId').reference('https://schema.org/Person')
     }, {
       base: 'idp:///posts.ttl',
-      rdfClass: 'https://schema.org/Article',
+      type: 'https://schema.org/Article',
       namespace: schemaNamespace
     });
 
@@ -211,7 +228,7 @@ describe('PodColumn', () => {
       name: string('name')
     }, {
       base: 'idp:///users.ttl',
-      rdfClass: 'https://schema.org/Person',
+      type: 'https://schema.org/Person',
       namespace: schemaNamespace
     });
 
@@ -257,7 +274,7 @@ describe('inverse 谓词映射', () => {
         .inverse()
     }, {
       base: 'idp:///members/index.ttl',
-      rdfClass: RDF_CLASSES.SCHEMA_PERSON
+      type: RDF_CLASSES.SCHEMA_PERSON
     });
 
     expect(table.mapping.columns.org.inverse).toBe(true);
@@ -330,7 +347,7 @@ describe('类型推断', () => {
       createdAt: date('createdAt'),
     }, {
       base: 'idp:///users/index.ttl',
-      rdfClass: RDF_CLASSES.SCHEMA_PERSON,
+      type: RDF_CLASSES.SCHEMA_PERSON,
       namespace: schemaNamespace
     });
 
@@ -372,7 +389,7 @@ describe('类型推断', () => {
       createdAt: date('createdAt'),
     }, {
       base: 'idp:///posts/index.ttl',
-      rdfClass: RDF_CLASSES.SCHEMA_BLOG_POSTING,
+      type: RDF_CLASSES.SCHEMA_BLOG_POSTING,
       namespace: schemaNamespace
     });
 
@@ -434,7 +451,7 @@ describe('新的列定义函数', () => {
       preferences: object('preferences')
     }, {
       base: 'idp:///people/index.ttl',
-      rdfClass: RDF_CLASSES.SCHEMA_PERSON,
+      type: RDF_CLASSES.SCHEMA_PERSON,
       namespace: schemaNamespace
     });
 
@@ -508,7 +525,7 @@ describe('JSON 和 Object 类型推断', () => {
       createdAt: date('createdAt'),
     }, {
       base: 'idp:///users/index.ttl',
-      rdfClass: RDF_CLASSES.SCHEMA_PERSON,
+      type: RDF_CLASSES.SCHEMA_PERSON,
       namespace: schemaNamespace
     });
 

@@ -40,7 +40,7 @@ const profileTable = podTable('profiles', {
   createdAt: date('createdAt').notNull().predicate('https://schema.org/dateCreated')
 }, {
   base: `${containerPath}profiles.ttl`,
-  rdfClass: 'https://schema.org/Person',
+  type: 'https://schema.org/Person',
   namespace: schemaNamespace,
   typeIndex: undefined
 });
@@ -54,7 +54,7 @@ const membershipTable = podTable('memberships', {
     .reference('https://schema.org/Organization')
 }, {
   base: `${containerPath}memberships.ttl`,
-  rdfClass: 'https://schema.org/Person',
+  type: 'https://schema.org/Person',
   namespace: schemaNamespace
 });
 
@@ -446,7 +446,7 @@ describe('CSS integration: drizzle CRUD', () => {
       name: string('name').notNull().predicate('https://schema.org/name')
     }, {
       base: `${usersPath}users.ttl`,
-      rdfClass: 'https://schema.org/Person',
+      type: 'https://schema.org/Person',
       namespace: schemaNamespace
     });
 
@@ -456,7 +456,7 @@ describe('CSS integration: drizzle CRUD', () => {
       authorId: string('authorId').notNull().predicate('https://schema.org/author')
     }, {
       base: `${postsPath}posts.ttl`,
-      rdfClass: 'https://schema.org/CreativeWork',
+      type: 'https://schema.org/CreativeWork',
       namespace: schemaNamespace
     });
 
@@ -519,7 +519,7 @@ describe('CSS integration: drizzle CRUD', () => {
       name: string('name').notNull().predicate('https://schema.org/name')
     }, {
       base: `${usersPath}users.ttl`,
-      rdfClass: 'https://schema.org/Person',
+      type: 'https://schema.org/Person',
       namespace: schemaNamespace
     });
 
@@ -529,7 +529,7 @@ describe('CSS integration: drizzle CRUD', () => {
       authorId: string('authorId').notNull().predicate('https://schema.org/author').reference('https://schema.org/Person')
     }, {
       base: `${postsPath}posts.ttl`,
-      rdfClass: 'https://schema.org/CreativeWork',
+      type: 'https://schema.org/CreativeWork',
       namespace: schemaNamespace
     });
 
@@ -604,7 +604,7 @@ SELECT ?post ?author WHERE {
       body: string('body').notNull().predicate('https://schema.org/text')
     }, {
       base: `${messagesPath}messages.ttl`,
-      rdfClass: 'https://schema.org/Message',
+      type: 'https://schema.org/Message',
       namespace: schemaNamespace
     });
 
@@ -618,7 +618,7 @@ SELECT ?post ?author WHERE {
         .reference('https://schema.org/Message')
     }, {
       base: `${threadsPath}threads.ttl`,
-      rdfClass: 'https://schema.org/Conversation',
+      type: 'https://schema.org/Conversation',
       namespace: schemaNamespace
     });
 

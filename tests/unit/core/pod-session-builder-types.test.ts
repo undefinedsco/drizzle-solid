@@ -17,7 +17,7 @@ const mockTable = podTable('demo', {
   name: string('name').predicate('https://schema.org/name')
 }, {
   base: 'idp:///demo.ttl',
-  rdfClass: 'https://schema.org/Thing',
+  type: 'https://schema.org/Thing',
   namespace: { prefix: 'schema', uri: 'https://schema.org/' }
 });
 

@@ -49,7 +49,7 @@ echo ""
 echo "3️⃣ 重启建议..."
 echo "   如果问题仍然存在，建议重启 Solid Pod 服务器:"
 echo "   - 停止当前服务器 (Ctrl+C)"
-echo "   - 重新运行: npm run solid-server"
+echo "   - 重新运行: yarn solid-server"
 
 echo ""
 echo "✅ 清理脚本执行完成"

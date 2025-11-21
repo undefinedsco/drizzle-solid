@@ -2,22 +2,22 @@
 
 ## 环境要求
 - Node.js 18 或更高版本（建议使用长期支持版）
-- npm 8+ 或兼容的包管理器（yarn、pnpm）
+- Yarn（推荐）或其他兼容包管理器
 - TypeScript 5+（若在 TS 项目中使用）
 
 ## 安装核心依赖
 
-使用 npm：
+使用 yarn：
 
 ```bash
-npm install drizzle-solid drizzle-orm
+yarn add drizzle-solid drizzle-orm
 ```
 
 示例与测试默认依赖 Inrupt 的 Node 会话实现以及 CSS 运行时，可按需安装：
 
 ```bash
-npm install --save-dev @inrupt/solid-client-authn-node
-npm run css:install   # 首次运行或升级 CSS 依赖后执行
+yarn add -D @inrupt/solid-client-authn-node
+yarn css:install      # 首次运行或升级 CSS 依赖后执行
 ```
 
 > 浏览器项目可改用 `@inrupt/solid-client-authn-browser`，接口签名与 Node 版保持一致。
@@ -43,7 +43,7 @@ async function main() {
     name: string('name')
   }, {
     containerPath: '/profiles/',
-    rdfClass: 'https://schema.org/Person'
+    type: 'https://schema.org/Person'
   });
 
   const db = drizzle(session);
@@ -83,8 +83,8 @@ SOLID_CLIENT_ID=... SOLID_CLIENT_SECRET=... SOLID_OIDC_ISSUER=... \
 
 ## 常见问题
 
-- **模块解析错误**：确认 Node 版本 >= 18 且 `npm install` 成功执行。
-- **CSS 依赖冲突**：运行 `npm run css:install` 以安装隔离的 Comunica v2 依赖。
+- **模块解析错误**：确认 Node 版本 >= 18 且 `yarn install` 成功执行。
+- **CSS 依赖冲突**：运行 `yarn css:install` 以安装隔离的 Comunica v2 依赖。
 - **认证失败**：检查环境变量是否正确，必要时参考 `docs/guides/authentication.md`。
 
 下一步阅读：[认证与连接](./authentication.md)

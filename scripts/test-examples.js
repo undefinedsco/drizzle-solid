@@ -57,7 +57,7 @@ async function checkPrerequisites() {
   // 检查是否已构建
   if (!fs.existsSync('dist')) {
     log('📦 项目尚未构建，正在构建...', 'yellow');
-    const buildResult = execCommand('npm run build');
+    const buildResult = execCommand('yarn build');
     if (!buildResult.success) {
       log('❌ 构建失败', 'red');
       log(buildResult.error, 'red');
@@ -67,24 +67,24 @@ async function checkPrerequisites() {
   }
   
   // 检查是否已链接
-  log('🔗 检查 npm link 状态...', 'yellow');
-  const linkResult = execCommand('npm ls drizzle-solid');
+  log('🔗 检查 yarn link 状态...', 'yellow');
+  const linkResult = execCommand('yarn list --depth=0 drizzle-solid');
   if (!linkResult.success) {
-    log('🔗 正在设置 npm link...', 'yellow');
+    log('🔗 正在设置 yarn link...', 'yellow');
     
-    const linkSelfResult = execCommand('npm link');
+    const linkSelfResult = execCommand('yarn link');
     if (!linkSelfResult.success) {
-      log('❌ npm link 失败', 'red');
+      log('❌ yarn link 失败', 'red');
       return false;
     }
     
-    const linkPackageResult = execCommand('npm link drizzle-solid');
+    const linkPackageResult = execCommand('yarn link drizzle-solid');
     if (!linkPackageResult.success) {
-      log('❌ npm link drizzle-solid 失败', 'red');
+      log('❌ yarn link drizzle-solid 失败', 'red');
       return false;
     }
     
-    log('✅ npm link 设置成功', 'green');
+    log('✅ yarn link 设置成功', 'green');
   }
   
   return true;

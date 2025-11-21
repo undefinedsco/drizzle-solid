@@ -15,7 +15,7 @@ async function main() {
     name: string('name').notNull()
   }, {
     base: `${usersPath}users.ttl`,
-    rdfClass: 'https://schema.org/Person'
+    type: 'https://schema.org/Person'
   });
 
   const postsTable = podTable('posts', {
@@ -24,7 +24,7 @@ async function main() {
     authorId: string('authorId').notNull()
   }, {
     base: `${postsPath}posts.ttl`,
-    rdfClass: 'https://schema.org/CreativeWork'
+    type: 'https://schema.org/CreativeWork'
   });
 
   const usersContainer = await ensureContainer(session, usersPath);

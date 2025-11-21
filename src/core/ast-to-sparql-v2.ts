@@ -170,7 +170,7 @@ export class SparqlJSConverter {
       triples: [{
         subject: this.createVariable('subject'),
         predicate: this.createNamedNode('http://www.w3.org/1999/02/22-rdf-syntax-ns#type'),
-        object: this.createNamedNode(table.config.rdfClass)
+        object: this.createNamedNode(table.config.type)
       }]
     });
 
@@ -346,7 +346,7 @@ export class SparqlJSConverter {
       triples.push({
         subject,
         predicate: this.createNamedNode('http://www.w3.org/1999/02/22-rdf-syntax-ns#type'),
-        object: this.createNamedNode(table.config.rdfClass)
+        object: this.createNamedNode(table.config.type)
       });
 
       // 添加属性三元组
@@ -423,7 +423,7 @@ export class SparqlJSConverter {
     triples.push({
       subject,
       predicate: this.createNamedNode('http://www.w3.org/1999/02/22-rdf-syntax-ns#type'),
-      object: this.createNamedNode(table.config.rdfClass)
+      object: this.createNamedNode(table.config.type)
     });
 
     // 属性三元组

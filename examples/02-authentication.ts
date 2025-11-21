@@ -54,7 +54,7 @@ const profileTable = podTable('profile', {
   age: int('age').predicate('http://xmlns.com/foaf/0.1/age')
 }, {
   base: '/profile/card#me',
-  rdfClass: 'http://xmlns.com/foaf/0.1/Person'
+  type: 'http://xmlns.com/foaf/0.1/Person'
 });
 
 /**
@@ -254,7 +254,7 @@ async function main() {
     
     // 交互式获取认证信息
     console.log('请输入您的Solid认证信息：');
-    console.log('💡 如果您还没有创建Credential Tokens，请先运行: npm run example:setup\n');
+    console.log('💡 如果您还没有创建Credential Tokens，请先运行: yarn example:setup\n');
     
     const clientId = await askQuestion('Client ID: ');
     const clientSecret = await askQuestion('Client Secret: ');
@@ -339,7 +339,7 @@ async function main() {
     console.log('   • 如果使用本地服务器，确保已启动: npx @solid/community-server');
     console.log('   • 检查网络连接和防火墙设置');
     console.log('   • 尝试重新创建Credential Tokens');
-    console.log('   • 运行示例1确保正确设置: npm run example:setup');
+    console.log('   • 运行示例1确保正确设置: yarn example:setup');
     rl.close();
     process.exit(1);
   } finally {

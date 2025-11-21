@@ -1,6 +1,7 @@
 import { describe, it, expect, beforeEach } from 'vitest';
 import { ASTToSPARQLConverter } from '@src/core/ast-to-sparql';
 import { podTable, string } from '@src/core/pod-table';
+import { podTable, string } from '@src/core/pod-table';
 import { eq, and, inArray, isNull, regex as regexCond } from '@src/core/query-conditions';
 
 // Mock PodTable
@@ -48,7 +49,7 @@ const mockTable = {
   config: {
     name: 'users',
     base: '/users/index.ttl',
-    rdfClass: 'https://schema.org/Person',
+    type: 'https://schema.org/Person',
     namespace: { prefix: 'schema', uri: 'https://schema.org/' },
     typeIndex: 'private'
   },
@@ -241,6 +242,22 @@ describe('ASTToSPARQLConverter', () => {
       const result = converter.convertInsert(plan);
       expect(result.query).toContain('"Carol"');
       expect(result.query).toContain('"carol@example.com"');
+    });
+
+    it('should include parent rdf:type triples when table declares subClassOf', () => {
+      const parentClass = 'https://schema.org/Contact';
+      const personTable = podTable('persons', {
+        id: string('id').primaryKey().predicate('https://schema.org/identifier'),
+        name: string('name').predicate('https://schema.org/name')
+      }, {
+        base: '/persons.ttl',
+        type: 'https://schema.org/Person',
+        subClassOf: parentClass
+      });
+
+      const insert = converter.convertInsert({ table: personTable, rows: [{ id: 'p-1', name: 'Alice' }] }, personTable);
+      expect(insert.query).toContain('schema:Person');
+      expect(insert.query).toContain('schema:Contact');
     });
   });
 
@@ -680,7 +697,7 @@ describe('ASTToSPARQLConverter', () => {
         subject: string('subject')
       }, {
         base: '/drizzle-tests/threads/threads.ttl',
-        rdfClass: 'https://schema.org/Conversation',
+        type: 'https://schema.org/Conversation',
         namespace: { prefix: 'schema', uri: 'https://schema.org/' }
       });
 

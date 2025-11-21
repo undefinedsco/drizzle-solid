@@ -16,7 +16,7 @@ describe('PodTable Tests', () => {
       createdAt: date('createdAt')
     }, {
       base: 'idp:///users/index.ttl',
-      rdfClass: 'https://schema.org/Person',
+      type: 'https://schema.org/Person',
       namespace: schemaNamespace
     });
 
@@ -36,7 +36,7 @@ describe('PodTable Tests', () => {
       priority: int('priority')
     }, {
       base: 'idp:///tasks/index.ttl',
-      rdfClass: 'https://schema.org/Task',
+      type: 'https://schema.org/Task',
       namespace: schemaNamespace
     });
 

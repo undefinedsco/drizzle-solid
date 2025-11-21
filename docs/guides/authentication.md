@@ -37,7 +37,7 @@ async function createDatabase(env: Env) {
     name: string('name')
   }, {
     containerPath: '/profiles/',
-    rdfClass: 'https://schema.org/Person'
+    type: 'https://schema.org/Person'
   });
 
   const db = drizzle(session);
@@ -87,7 +87,7 @@ export async function ensureAuthenticated() {
 | 现象 | 可能原因 | 处理方式 |
 | --- | --- | --- |
 | 登录成功但查询 403 | `containerPath` 对应的 `.ttl` 不存在或 ACL 无写权限 | 调用 `ensureContainer`（见 `tests/integration/css/helpers.ts`）或手动授予权限 |
-| 登录卡死 | 未为客户端凭证启用 `tokenEndpoint` 权限，或 CSS 未启动 | 检查 `.env.local` 与 `npm run server:start` 输出 |
+| 登录卡死 | 未为客户端凭证启用 `tokenEndpoint` 权限，或 CSS 未启动 | 检查 `.env.local` 与 `yarn server:start` 输出 |
 | 在 Jest 中 fetch 失败 | 会话未登录或 `.env.local` 缺少凭证 | 断言 `session.info.isLoggedIn === true` 后再执行测试 |
 
 更多实例代码可查看 `examples/02-authentication.ts` 与 `tests/integration/css/drizzle-crud.test.ts`。

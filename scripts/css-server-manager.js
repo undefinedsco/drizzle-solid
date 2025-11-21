@@ -40,7 +40,7 @@ function resolveCssBin() {
 
   const hint = [
     'Expected isolated Community Solid Server runtime under `.internal/css-runtime`.',
-    'Install it with `npm install --prefix .internal/css-runtime` before running integration tests.'
+    'Install it with `yarn --cwd .internal/css-runtime install` before running integration tests.'
   ].join(' ');
 
   throw new Error(hint);
@@ -127,7 +127,7 @@ function ensureDirectories() {
   }
 
   if (!fs.existsSync(CSS_RUNTIME_NODE_MODULES)) {
-    throw new Error('Missing CSS runtime modules. Run `npm run css:install` to populate `.internal/css-runtime`.');
+    throw new Error('Missing CSS runtime modules. Run `yarn css:install` to populate `.internal/css-runtime`.');
   }
 
   if (!fs.existsSync(CONFIG_DIR)) {

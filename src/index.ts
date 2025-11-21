@@ -24,6 +24,7 @@ export {
   json,
   object,
   uri,
+  iri,
   // 扩展的列类型别名（兼容所有Drizzle ORM方言）
   text,
   varchar,

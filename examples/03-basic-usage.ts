@@ -36,7 +36,7 @@ const taskTable = podTable('tasks', {
   createdAt: date('createdAt').predicate('http://purl.org/dc/terms/created'),
   updatedAt: date('updatedAt').predicate('http://purl.org/dc/terms/modified')
 }, {
-  rdfClass: 'http://example.org/Task',
+  type: 'http://example.org/Task',
   base: '/tasks/'
 });
 
@@ -56,7 +56,7 @@ async function getSession(): Promise<Session> {
     console.log('❌ 未找到有效的环境变量配置');
     console.log('');
     console.log('💡 请先运行以下命令进行认证：');
-    console.log('   npm run example:auth');
+    console.log('   yarn example:auth');
     console.log('');
     console.log('或者手动设置以下环境变量：');
     console.log('- SOLID_CLIENT_ID=your-client-id');
@@ -329,8 +329,8 @@ async function main() {
     console.log('   • 检查认证信息是否正确');
     console.log('   • 确认Solid服务器是否可访问');
     console.log('   • 验证Token权限是否足够');
-    console.log('   • 运行服务器设置: npm run example:setup');
-    console.log('   • 测试认证: npm run example:auth');
+    console.log('   • 运行服务器设置: yarn example:setup');
+    console.log('   • 测试认证: yarn example:auth');
     
     process.exit(1);
   }

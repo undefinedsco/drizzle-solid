@@ -22,7 +22,7 @@ async function main() {
     name: string('name')
   }, {
     containerPath: '/profiles/',
-    rdfClass: 'https://schema.org/Person'
+    type: 'https://schema.org/Person'
   });
 
   const db = drizzle(session);
@@ -43,7 +43,7 @@ SOLID_CLIENT_ID=... SOLID_CLIENT_SECRET=... SOLID_OIDC_ISSUER=... \
   ts-node scripts/auth-example.ts
 ```
 
-> 若使用本地 CSS 预设账户，可直接执行 `npm run example:auth` 获取等效输出。
+> 若使用本地 CSS 预设账户，可直接执行 `yarn example:auth` 获取等效输出。
 
 ## 浏览器：交互式登录
 

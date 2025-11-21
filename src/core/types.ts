@@ -31,7 +31,7 @@ export interface PodDialectConfig {
 
 // 类型注册配置
 export interface TypeRegistration {
-  rdfClass: string;        // RDF 类型 URI (如 http://schema.org/Person)
+  type: string;        // RDF 类型 URI (如 http://schema.org/Person)
   containerName?: string;  // 容器名称 (如 'people', 'posts')
   forClass: string;        // 对应的本地类名 (如 'Person', 'BlogPost')
 }

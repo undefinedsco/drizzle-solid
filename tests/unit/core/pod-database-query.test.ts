@@ -8,7 +8,7 @@ const mockTable = new PodTable('users', {
   name: new PodStringColumn('name')
 }, {
   base: 'idp:///users.ttl',
-  rdfClass: 'https://schema.org/Person',
+  type: 'https://schema.org/Person',
   namespace: { prefix: SCHEMA.PREFIX, uri: SCHEMA.NAMESPACE }
 });
 

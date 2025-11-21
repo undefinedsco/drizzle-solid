@@ -21,7 +21,7 @@ describe('PodDialect resolveTableUrls source selection', () => {
       id: string('id').primaryKey().predicate('https://schema.org/identifier')
     }, {
       base: 'https://pod.example.com/data/users.ttl',
-      rdfClass: 'https://schema.org/Person',
+      type: 'https://schema.org/Person',
       namespace: { prefix: 'schema', uri: 'https://schema.org/' }
     });
 
@@ -50,7 +50,7 @@ describe('PodDialect resolveTableUrls source selection', () => {
       id: string('id').primaryKey().predicate('https://schema.org/identifier')
     }, {
       base: 'shared/posts.ttl',
-      rdfClass: 'https://schema.org/CreativeWork',
+      type: 'https://schema.org/CreativeWork',
       namespace: { prefix: 'schema', uri: 'https://schema.org/' }
     });
 
@@ -79,7 +79,7 @@ describe('PodDialect resolveTableUrls source selection', () => {
       id: string('id').primaryKey().predicate('https://schema.org/identifier')
     }, {
       base: 'logs/',
-      rdfClass: 'https://schema.org/Message',
+      type: 'https://schema.org/Message',
       namespace: { prefix: 'schema', uri: 'https://schema.org/' }
     });
 

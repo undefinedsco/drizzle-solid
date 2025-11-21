@@ -15,7 +15,7 @@
 ### 安装
 
 ```bash
-npm install drizzle-solid
+yarn add drizzle-solid
 ```
 
 ### 基本用法
@@ -57,7 +57,7 @@ await db.insert(profileTable).values({
 ### 🏗️ 示例1: 服务器设置和Pod创建
 
 ```bash
-npm run example:setup
+yarn example:setup
 ```
 
 这个示例会：
@@ -69,7 +69,7 @@ npm run example:setup
 ### 📖 示例2: 认证与 Session 复用
 
 ```bash
-npm run example:auth
+yarn example:auth
 ```
 
 这个示例展示：
@@ -80,7 +80,7 @@ npm run example:auth
 ### 🛠️ 示例3: 基础 CRUD 演练
 
 ```bash
-npm run example:usage
+yarn example:usage
 ```
 
 这个示例展示：
@@ -108,7 +108,7 @@ const userTable = podTable('users', {
   // 目标 Turtle 资源，必填，可以是相对 Pod 路径或绝对 URL
   base: 'data/users.ttl',
   // 主体类型
-  rdfClass: 'https://schema.org/Person',
+  type: 'https://schema.org/Person',
   // 可选：注册 TypeIndex（仅在提供 typeIndex 时才会尝试）
   typeIndex: 'private' // 'public' | 'private' | undefined
 });
@@ -301,7 +301,7 @@ const customTable = podTable('custom', {
   favorite: string('favorite').predicate(LINQ.favorite)
 }, {
   base: 'idp:///custom/index.ttl', // 目标资源
-  rdfClass: `${SCHEMA.NAMESPACE}CreativeWork`,
+  type: `${SCHEMA.NAMESPACE}CreativeWork`,
   namespace: LINQ
 });
 ```

@@ -1,6 +1,6 @@
 {
   "name": "drizzle-solid",
-  "version": "0.1.6",
+  "version": "0.1.7",
   "description": "Drizzle ORM adapter for Solid Pods",
   "main": "dist/index.js",
   "types": "dist/index.d.ts",
@@ -19,7 +19,7 @@
   ],
   "scripts": {
     "build": "tsc && tsc -p tsconfig.esm.json",
-    "test": "npm run build && vitest",
+    "test": "yarn build && vitest",
     "test:watch": "vitest --watch",
     "test:coverage": "vitest --coverage",
     "lint": "eslint src/**/*.ts",
@@ -39,9 +39,9 @@
     "demo:local": "ts-node examples/local-solid-demo.ts",
     "demo:local-simple": "node examples/simple-local-demo.js",
     "demo:local-http": "node examples/local-demo-simple.js",
-    "quality": "npm run build && npm run lint && vitest",
-    "release": "npm run build && npm publish",
-    "css:install": "npm install --prefix .internal/css-runtime"
+    "quality": "yarn build && yarn lint && vitest",
+    "release": "yarn build && yarn publish",
+    "css:install": "yarn --cwd .internal/css-runtime install"
   },
   "author": "Undefined Sco",
   "repository": {
@@ -84,6 +84,7 @@
     "eslint": "^8.37.0",
     "ts-node": "^10.9.0",
     "typescript": "^5.0.0",
-    "vitest": "^4.0.10"
+    "vite": "^5.4.21",
+    "vitest": "^2.1.9"
   }
 }

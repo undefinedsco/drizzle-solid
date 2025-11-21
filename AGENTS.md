@@ -26,10 +26,10 @@ Keep this managed block so 'openspec update' can refresh the instructions.
 - Authoritative docs should land in `docs/guides/` or `docs/api/`; investigative notes move to `docs/archive/` so README and `docs/quick-start-local.md` stay the single source.
 
 ## Build, Test, and Development Commands
-- `npm run dev` runs `src/index.ts` through `ts-node` for quick SPARQL inspection.
-- `npm run build`, `npm run build:browser`, and `npm run build:all` invoke the TypeScript compiler and the browser bundler (rollup scripts).
-- `npm run test` executes the full Jest suite; `npm run quality` wraps lint + tests and should pass before pushing (expect CSS to start automatically after `npm run css:install`).
-- `npm run lint`/`npm run lint:fix` enforce the shared `@typescript-eslint` ruleset; run `npm run server:setup` once per machine and `npm run server:start` in parallel terminals before any CSS-backed tests or demos.
+- `yarn dev` runs `src/index.ts` through `ts-node` for quick SPARQL inspection.
+- `yarn build` invokes the TypeScript compiler (CJS + ESM).
+- `yarn test` executes the full vitest suite; `yarn quality` wraps lint + tests and should pass before pushing (expect CSS to start automatically after `yarn css:install`).
+- `yarn lint`/`yarn lint:fix` enforce the shared `@typescript-eslint` ruleset; run `yarn server:setup` once per machine and `yarn server:start` in parallel terminals before any CSS-backed tests or demos.
 
 ## Coding Style & Naming Conventions
 - Use 2-space indentation, `strict` TypeScript, and named exports that mirror Drizzle ORM (`db.select().from(table)`).
@@ -40,10 +40,10 @@ Keep this managed block so 'openspec update' can refresh the instructions.
 - New coverage must hit real Community Solid Server flows—no network mocks for CRUD, TypeIndex, or SPARQL behaviors.
 - Place fast logic tests in `tests/unit`; write Pod-facing journeys in `tests/integration/css` and gate them with the existing CSS manager (`jest.global-setup.js`).
 - Populate `SOLID_CLIENT_ID`, `SOLID_CLIENT_SECRET`, and `SOLID_OIDC_ISSUER` in `.env.local` (never commit secrets); document extra envs in PRs.
-- Install the isolated CSS runtime with `npm run css:install` whenever dependencies change so Comunica v2 (CSS) stays separate from the library’s v4 stack.
+- Install the isolated CSS runtime with `yarn css:install` whenever dependencies change so Comunica v2 (CSS) stays separate from the library’s v4 stack.
 
 ## Commit & Pull Request Guidelines
-- Follow the sequence: implement feature → add CSS-backed integration + targeted unit tests → refresh docs/examples → verify with `npm run quality` (or capture why integration tests were skipped).
+- Follow the sequence: implement feature → add CSS-backed integration + targeted unit tests → refresh docs/examples → verify with `yarn quality` (or capture why integration tests were skipped).
 - Write Conventional Commits (`feat(core):`, `fix(utils):`, `docs(guides):`) and keep unrelated refactors out of scope.
 - PRs must include a short problem statement, test evidence (including manual CSS steps), migration notes if API changes, and reviewers for each touched area.
 

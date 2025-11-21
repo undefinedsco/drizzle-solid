@@ -69,7 +69,7 @@ describe('PodDialect resource URL normalization', () => {
 const table = new PodTable('profile', {}, {
   containerPath: '/profile/',
   base: 'idp:///profile/card',
-  rdfClass: 'http://xmlns.com/foaf/0.1/Person'
+  type: 'http://xmlns.com/foaf/0.1/Person'
   });
 
   beforeEach(() => {

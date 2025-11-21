@@ -22,7 +22,7 @@ const credentialTable = podTable('credentials', {
   updatedAt: date('updatedAt').notNull().predicate('http://purl.org/dc/terms/modified')
 }, {
   base: `${credentialsContainerPath}credentials.ttl`,
-  rdfClass: 'https://linq.ai/ns#credential'
+  type: 'https://linq.ai/ns#credential'
 });
 
 type SearchFilters = { search?: string };

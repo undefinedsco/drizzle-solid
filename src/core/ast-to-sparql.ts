@@ -206,7 +206,7 @@ ${statements.join(';\n')}`.trimEnd();
     if (!whereConditions) {
       query = `${prefixLines}
 DELETE WHERE {
-  ?subject rdf:type <${table.config.rdfClass}> .
+  ?subject rdf:type <${table.config.type}> .
   ?subject ?p ?o .
 }`;
     } else {
@@ -260,15 +260,17 @@ ${deleteBlocks.join(';\n')}`;
       return variables.concat(mapped);
     }
 
+    const skipColumns = new Set(['id', 'subject']);
+
     if (ast.columns === '*' || !ast.columns) {
       const cols = Object.keys(table.columns)
-        .filter(col => col !== 'id')
-        .map(col => ({ termType: 'Variable', value: col }));
+        .filter((col) => !skipColumns.has(col))
+        .map((col) => ({ termType: 'Variable', value: col }));
       return variables.concat(cols);
     }
 
     const cols = ast.columns
-      .filter((col: string) => col !== 'id')
+      .filter((col: string) => !skipColumns.has(col))
       .map((col: string) => ({ termType: 'Variable', value: col }));
     return variables.concat(cols);
   }
@@ -340,7 +342,7 @@ ${deleteBlocks.join(';\n')}`;
       triples: [{
         subject: { termType: 'Variable', value: 'subject' } as any,
         predicate: { termType: 'NamedNode', value: 'http://www.w3.org/1999/02/22-rdf-syntax-ns#type' } as any,
-        object: { termType: 'NamedNode', value: table.config.rdfClass } as any
+        object: { termType: 'NamedNode', value: table.config.type } as any
       }]
     });
 
@@ -846,7 +848,7 @@ ${deleteBlocks.join(';\n')}`;
     triples.push({
       subject,
       predicate: { termType: 'NamedNode', value: 'http://www.w3.org/1999/02/22-rdf-syntax-ns#type' },
-      object: { termType: 'NamedNode', value: table.config.rdfClass }
+      object: { termType: 'NamedNode', value: table.config.type }
     });
 
     // 属性三元组
@@ -873,7 +875,7 @@ ${deleteBlocks.join(';\n')}`;
     const subject = '?subject';
     
     // RDF 类型约束
-    triples.push(`${subject} rdf:type <${table.config.rdfClass}> .`);
+    triples.push(`${subject} rdf:type <${table.config.type}> .`);
     
     // 为每个列添加可选的三元组（除了id字段）
     for (const [columnName, column] of Object.entries(table.columns)) {
@@ -948,8 +950,16 @@ ${deleteBlocks.join(';\n')}`;
       triples.push({
         subject,
         predicate: { termType: 'NamedNode', value: 'http://www.w3.org/1999/02/22-rdf-syntax-ns#type' },
-        object: { termType: 'NamedNode', value: table.config.rdfClass }
+        object: { termType: 'NamedNode', value: table.config.type }
       });
+      const parents = typeof table.getSubClassOf === 'function' ? table.getSubClassOf() : [];
+      for (const parentClass of parents) {
+        triples.push({
+          subject,
+          predicate: { termType: 'NamedNode', value: 'http://www.w3.org/1999/02/22-rdf-syntax-ns#type' },
+          object: { termType: 'NamedNode', value: parentClass }
+        });
+      }
 
       // 添加属性三元组
       Object.entries(record).forEach(([columnName, value]) => {
