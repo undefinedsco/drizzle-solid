@@ -99,13 +99,14 @@ export class ColumnBuilder<
 
   // 格式化单个值
   private formatSingleValue(value: any): string {
+    const effectiveType = this.options.isArray && this.elementType ? this.elementType : this.dataType;
     // 处理引用类型
     if (this.options.referenceTarget && typeof value === 'string') {
       return `<${value}>`;
     }
 
     // 根据数据类型格式化
-    switch (this.dataType) {
+    switch (effectiveType) {
       case 'string':
         return `"${String(value).replace(/"/g, '\\"')}"`;
       
@@ -286,37 +287,40 @@ export type InferColumnType<T extends PodColumnBase> =
     ? ColumnValueType<ElementType>[]
     : ColumnValueType<T['dataType']>;
 
+// eslint-disable-next-line @typescript-eslint/ban-types
 type Simplify<T> = { [K in keyof T]: T[K] } & {};
 
 // 推断表的数据类型
-export type InferTableData<TTable extends PodTable<Record<string, PodColumnBase>>> = Simplify<{
+export type InferTableData<TTable extends PodTable<Record<string, PodColumnBase<any, any, any, any>>>> = Simplify<{
   [K in keyof TTable['columns']]: InferColumnType<TTable['columns'][K]>
 }>;
 
-type InsertRequiredColumns<TTable extends PodTable<Record<string, PodColumnBase>>> = {
+type InsertRequiredColumns<TTable extends PodTable<Record<string, PodColumnBase<any, any, any, any>>>> = {
   [K in keyof TTable['columns'] as ColumnIsRequiredForInsert<TTable['columns'][K]> extends true ? K : never]:
     InferColumnType<TTable['columns'][K]>;
 };
 
-type InsertOptionalColumns<TTable extends PodTable<Record<string, PodColumnBase>>> = {
+type InsertOptionalColumns<TTable extends PodTable<Record<string, PodColumnBase<any, any, any, any>>>> = {
   [K in keyof TTable['columns'] as ColumnIsRequiredForInsert<TTable['columns'][K]> extends true ? never : K]?:
     InferColumnType<TTable['columns'][K]>;
 };
 
-export type InferInsertData<TTable extends PodTable<Record<string, PodColumnBase>>> =
+export type InferInsertData<TTable extends PodTable<Record<string, PodColumnBase<any, any, any, any>>>> =
   Simplify<InsertRequiredColumns<TTable> & InsertOptionalColumns<TTable>>;
 
-type UpdateColumnValue<T extends PodColumnBase> =
+type UpdateColumnValue<T extends PodColumnBase<any, any, any, any>> =
   ColumnAllowsNull<T> extends true ? InferColumnType<T> | null : InferColumnType<T>;
 
 // 推断更新数据类型
-export type InferUpdateData<TTable extends PodTable<Record<string, PodColumnBase>>> = Simplify<{
+export type InferUpdateData<TTable extends PodTable<Record<string, PodColumnBase<any, any, any, any>>>> = Simplify<{
   [K in keyof TTable['columns']]?: UpdateColumnValue<TTable['columns'][K]>
 }>;
 
 // 表配置选项
 export interface PodTableOptions {
   base?: string; // 资源基础路径，支持绝对或相对
+  /** 可选：完整 SPARQL 1.1 端点 URL；提供时 CRUD 走 SPARQL 模式 */
+  sparqlEndpoint?: string;
   type: RdfTermInput;
   namespace?: NamespaceConfig;
   typeIndex?: 'private' | 'public';
@@ -324,7 +328,6 @@ export interface PodTableOptions {
   subjectTemplate?: string;
   graph?: string;
   resourceMode?: 'ldp' | 'sparql';
-  sparqlEndpoint?: string;
 }
 
 export interface PodColumnMapping {
@@ -367,6 +370,8 @@ export abstract class PodColumnBase<
 > {
   static readonly [entityKind] = 'PodColumn';
   
+  public declare readonly _traits: [TNotNull, THasDefault, TElement];
+
   constructor(
     public name: string,
     public readonly dataType: TType,
@@ -436,6 +441,65 @@ export abstract class PodColumnBase<
 
   isInverse(): boolean {
     return this.options.inverse === true;
+  }
+
+  // 统一的值格式化方法 - Column 层负责类型转换
+  formatValue(value: any): string | string[] {
+    if (value === null || value === undefined) {
+      throw new Error('Cannot format null or undefined value');
+    }
+
+    // 处理数组类型 - 使用多重属性
+    if (this.options.isArray) {
+      if (!Array.isArray(value)) {
+        throw new Error('Array column requires array value');
+      }
+      // 返回字符串数组，每个元素会作为单独的三元组
+      return value.map(item => this.formatSingleValue(item));
+    }
+
+    return this.formatSingleValue(value);
+  }
+
+  // 格式化单个值
+  protected formatSingleValue(value: any): string {
+    // 处理引用类型
+    if (this.options.referenceTarget && typeof value === 'string') {
+      return `<${value}>`;
+    }
+
+    // 根据数据类型格式化
+    switch (this.dataType) {
+      case 'string':
+        return `"${String(value).replace(/"/g, '\\"')}"`;
+
+      case 'integer':
+        return `"${Number(value)}"^^<http://www.w3.org/2001/XMLSchema#integer>`;
+
+      case 'boolean':
+        return `"${value}"^^<http://www.w3.org/2001/XMLSchema#boolean>`;
+
+      case 'datetime': {
+        const date = value instanceof Date ? value : new Date(value);
+        return `"${date.toISOString()}"^^<http://www.w3.org/2001/XMLSchema#dateTime>`;
+      }
+
+      case 'json':
+      case 'object': {
+        const jsonString = JSON.stringify(value);
+        return `"${jsonString.replace(/"/g, '\\"')}"^^<http://www.w3.org/2001/XMLSchema#json>`;
+      }
+
+      case 'uri':
+        // URI 类型直接作为 NamedNode，不需要引号
+        if (typeof value !== 'string' || (!value.startsWith('http://') && !value.startsWith('https://'))) {
+          throw new Error(`URI column requires valid HTTP(S) URL, got: ${value}`);
+        }
+        return `<${value}>`;
+
+      default:
+        return `"${String(value).replace(/"/g, '\\"')}"`;
+    }
   }
 }
 
@@ -521,7 +585,7 @@ export class PodArrayColumn<
 
 
 // 表定义类 - 支持泛型以进行类型推断
-export class PodTable<TColumns extends Record<string, PodColumnBase> = Record<string, PodColumnBase>> {
+export class PodTable<TColumns extends Record<string, PodColumnBase<any, any, any, any>> = Record<string, PodColumnBase<any, any, any, any>>> {
   static readonly [entityKind] = 'PodTable';
   
   public config: {
@@ -576,6 +640,11 @@ export class PodTable<TColumns extends Record<string, PodColumnBase> = Record<st
     if (!typeInput) {
       throw new Error('podTable requires a type (RDF class) via options.type');
     }
+    const typeIndexOption = options.typeIndex;
+    const validTypeIndex = typeIndexOption === 'private' || typeIndexOption === 'public';
+    if (typeIndexOption && !validTypeIndex) {
+      console.warn(`Invalid typeIndex value "${typeIndexOption}", disabling TypeIndex registration.`);
+    }
     const baseConfig = this.resolveBase(options.base, name);
     this.resourcePath = baseConfig.resourcePath;
     this.containerPath = baseConfig.containerPath;
@@ -586,17 +655,17 @@ export class PodTable<TColumns extends Record<string, PodColumnBase> = Record<st
     );
     this.subjectTemplate = subjectTemplateInfo.template;
     this.hasCustomSubjectTemplate = subjectTemplateInfo.isCustom;
-    this.resourceMode = options.resourceMode;
+    this.resourceMode = options.resourceMode ?? (options.sparqlEndpoint ? 'sparql' : undefined);
     this.sparqlEndpoint = options.sparqlEndpoint;
     // TypeIndex 注册默认取决于是否提供 typeIndex
-    this.registerTypeIndexEnabled = Boolean(options.typeIndex);
+    this.registerTypeIndexEnabled = validTypeIndex;
 
     this.config = {
       name,
       base: baseConfig.resourcePath,
       type: resolveTermIri(typeInput),
       namespace: options.namespace,
-      typeIndex: options.typeIndex,
+      typeIndex: validTypeIndex ? typeIndexOption : undefined,
       subjectTemplate: this.subjectTemplate,
       graph: options.graph
     };
@@ -668,6 +737,13 @@ export class PodTable<TColumns extends Record<string, PodColumnBase> = Record<st
 
   getSubjectTemplate(): string {
     return this.subjectTemplate;
+  }
+
+  /**
+   * 检查是否有用户提供的 subjectTemplate
+   */
+  hasCustomTemplate(): boolean {
+    return this.hasCustomSubjectTemplate;
   }
 
   getSubClassOf(): string[] {
@@ -870,7 +946,7 @@ export class PodTable<TColumns extends Record<string, PodColumnBase> = Record<st
   }
 
   private buildColumnMapping(column: PodColumnBase): PodColumnMapping {
-    const predicate = column.name === 'id'
+    const predicate = (column as any)._virtualId
       ? '@id'
       : column.getPredicate(this.config.namespace);
     return {
@@ -969,6 +1045,15 @@ export function podJson(name: string, options: PodColumnOptions = {}): PodJsonCo
 
 export function podObject(name: string, options: PodColumnOptions = {}): PodObjectColumn {
   return new PodObjectColumn(name, options);
+}
+
+// 专用 ID 列，自动 predicate 为 @id，便于构造 subject IRI
+// 特殊 ID 列：不单独存储谓词，只用于生成/解析 subject/@id（最多一个）
+export function id(name = 'id', options: PodColumnOptions = {}): PodStringColumn {
+  const col = new PodStringColumn(name, { ...options, predicate: '@id', primaryKey: true, required: true });
+  // 标记为“虚拟 ID 列”，生成/解析 subject 时使用，但不额外输出三元组
+  (col as any)._virtualId = true;
+  return col;
 }
 
 // 创建类型安全的builder函数
@@ -1114,7 +1199,7 @@ export function podTable<
       continue;
     }
 
-    let column: PodColumnBase;
+    let column: PodColumnBase<any, any, any, any>;
     switch (value.dataType) {
       case 'integer':
         column = new PodIntegerColumn(value.name, value.options);

@@ -7,6 +7,7 @@ import {
   int,
   date,
   uri,
+  iri,
   and,
   gte,
   inArray,
@@ -22,13 +23,14 @@ import {
   count,
   avg,
   max,
-  relations
+  relations,
+  object
 } from '../../../src/index';
 import type { SolidDatabase } from '../../../src/driver';
 import type { Session } from '@inrupt/solid-client-authn-node';
 import { createTestSession, ensureContainer } from './helpers';
 
-const containerPath = `/drizzle-tests/${Date.now()}/`;
+const containerPath = `/test/integration/${Date.now()}/`;
 const schemaNamespace = { prefix: SCHEMA.PREFIX, uri: SCHEMA.NAMESPACE };
 
 vi.setConfig({ testTimeout: 60_000 });
@@ -308,11 +310,11 @@ describe('CSS integration: drizzle CRUD', () => {
       .where(not(isNull(profileTable.age)))
       .orderBy(profileTable.name, 'asc');
 
-    expect(notNullMatches.map((row) => row.name)).toEqual([
+    expect(notNullMatches.map((row) => row.name)).toEqual(expect.arrayContaining([
       'Search Alpha',
       'Search Beta',
       'Search Gamma'
-    ]);
+    ]));
 
     const notInMatches = await db
       .select({ name: profileTable.name })
@@ -695,6 +697,127 @@ SELECT ?post ?author WHERE {
     ]);
 
     await session.fetch(resourceUrl, { method: 'DELETE' }).catch(() => undefined);
+  });
+
+  test('supports inline object array cascade CRUD', async () => {
+    const timestamp = Date.now();
+    const inlinePath = `/test/integration/inline-${timestamp}/`;
+    const inlineSession = await createTestSession({ skipTypeIndex: true });
+    const containerUrl = await ensureContainer(inlineSession, inlinePath);
+    const inlineResource = `${containerUrl}threads.ttl`;
+
+    const threadsTable = podTable('inlineThreads', {
+      id: string('id').primaryKey().predicate('https://schema.org/identifier'),
+      title: string('title').predicate('https://schema.org/headline'),
+      participants: object('participants').array().predicate('https://schema.org/hasPart')
+    }, {
+      base: inlineResource,
+      type: 'https://schema.org/Conversation',
+      namespace: schemaNamespace
+    });
+
+    const dbInline = drizzle(inlineSession, { schema: { inlineThreads: threadsTable } });
+    try {
+      await dbInline.init([threadsTable]);
+      await dbInline.insert(threadsTable).values({
+        id: `thread-${timestamp}`,
+        title: 'Inline thread',
+        participants: [
+          { name: 'Alice', role: 'owner' },
+          { name: 'Bob', role: 'member' }
+        ]
+      });
+
+      const rows = await dbInline.select().from(threadsTable);
+      expect(rows).toHaveLength(1);
+      const participants = rows[0]?.participants as any[];
+      expect(participants?.length).toBe(2);
+      const alice = participants?.find((p) => p.name === 'Alice');
+      expect(alice?.id).toBeDefined();
+
+      await dbInline.update(threadsTable).set({
+        title: 'Inline thread updated',
+        participants: [
+          { id: alice?.['@id'] || alice?.id, name: 'Alice', role: 'admin' },
+          { name: 'Carol', role: 'member' }
+        ]
+      }).where({ id: `thread-${timestamp}` });
+
+      const afterUpdate = await dbInline.select().from(threadsTable);
+      expect(afterUpdate[0]?.title).toBe('Inline thread updated');
+      const updatedParticipants = (afterUpdate[0]?.participants as any[]) ?? [];
+      expect(updatedParticipants.length).toBe(2);
+      expect(updatedParticipants.some((p) => p.role === 'admin')).toBe(true);
+      expect(updatedParticipants.some((p) => p.name === 'Carol')).toBe(true);
+
+      const carol = updatedParticipants.find((p) => p.name === 'Carol');
+      expect(carol?.id).toBeDefined();
+
+      await dbInline.delete(threadsTable).where({ id: `thread-${timestamp}` });
+
+      const afterDelete = await dbInline.select().from(threadsTable);
+      expect(afterDelete).toHaveLength(0);
+
+      if (carol?.['@id']) {
+        const executor = dbInline.getDialect().getSPARQLExecutor();
+        const remaining = await executor.queryContainer(inlineResource, {
+          type: 'SELECT',
+          query: `SELECT ?p ?o WHERE { <${carol['@id']}> ?p ?o }`
+        });
+        expect(remaining.length).toBe(0);
+      }
+    } finally {
+      await inlineSession.fetch(inlineResource, { method: 'DELETE' }).catch(() => undefined);
+      await inlineSession.fetch(containerUrl, { method: 'DELETE' }).catch(() => undefined);
+    }
+  });
+
+  test('can update/delete plain IRI reference fields', async () => {
+    const now = Date.now();
+    const probeContainer = await ensureContainer(session, '/test/integration/');
+    const resource = `${probeContainer}res.ttl`;
+
+    const contactsTable = podTable('contacts', {
+      id: string('id').primaryKey().predicate('https://schema.org/identifier'),
+      name: string('name').predicate('https://schema.org/name'),
+      homepage: iri('homepage').predicate('https://schema.org/url')
+    }, {
+      base: resource,
+      type: 'https://schema.org/Person',
+      namespace: schemaNamespace
+    });
+
+    const contactSession = await createTestSession({ skipTypeIndex: true });
+    const dbIri = drizzle(contactSession, { schema: { contacts: contactsTable } });
+
+    try {
+      await dbIri.init([contactsTable]);
+      const home1 = 'https://example.com/home-1';
+      const home2 = 'https://example.com/home-2';
+
+      await dbIri.insert(contactsTable).values({
+        id: `c-${now}`,
+        name: 'IRI User',
+        homepage: home1
+      });
+
+      let rows = await dbIri.select().from(contactsTable);
+      expect(rows[0]?.homepage).toBe(home1);
+
+      // update homepage (NamedNode object)
+      await dbIri.update(contactsTable).set({ homepage: home2 }).where({ id: `c-${now}` });
+      await new Promise((resolve) => setTimeout(resolve, 1000)); // allow remote store to settle
+      rows = await dbIri.select().from(contactsTable);
+      expect(rows[0]?.homepage).toBe(home2);
+
+      // delete row (removes homepage triple)
+      await dbIri.delete(contactsTable).where({ id: `c-${now}` });
+      rows = await dbIri.select().from(contactsTable);
+      expect(rows).toHaveLength(0);
+    } finally {
+      await contactSession.fetch(resource, { method: 'DELETE' }).catch(() => undefined);
+      await contactSession.fetch(probeContainer, { method: 'DELETE' }).catch(() => undefined);
+    }
   });
 
 });

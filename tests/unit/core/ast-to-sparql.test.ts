@@ -3,6 +3,7 @@ import { ASTToSPARQLConverter } from '@src/core/ast-to-sparql';
 import { podTable, string } from '@src/core/pod-table';
 import { podTable, string } from '@src/core/pod-table';
 import { eq, and, inArray, isNull, regex as regexCond } from '@src/core/query-conditions';
+import { subjectResolver } from '@src/core/subject';
 
 // Mock PodTable
 const mockTable = {
@@ -53,7 +54,7 @@ const mockTable = {
     namespace: { prefix: 'schema', uri: 'https://schema.org/' },
     typeIndex: 'private'
   },
-  getContainerPath: () => '/users/',
+  getContainerPath: () => '/data/',
   getRdfClass: () => 'https://schema.org/Person',
   getNamespace: () => ({ prefix: 'schema', uri: 'https://schema.org/' }),
   getColumns: () => ({
@@ -62,14 +63,16 @@ const mockTable = {
     email: { name: 'email', dataType: 'string' },
     organization: { name: 'organization', dataType: 'string' }
   })
-} as any; // Mock object for testing, intentionally using any for simplicity
+} as any; 
 
 describe('ASTToSPARQLConverter', () => {
   let converter: ASTToSPARQLConverter;
-  const podUrl = 'https://example.com/pod/';
+  const podUrl = 'https://example.com';
 
   beforeEach(() => {
     converter = new ASTToSPARQLConverter(podUrl);
+    // Ensure subjectResolver uses the same podUrl
+    subjectResolver.setPodUrl(podUrl);
   });
 
   describe('convertSelectPlan', () => {
@@ -277,7 +280,8 @@ describe('ASTToSPARQLConverter', () => {
       const data = { organization: 'https://org.example/new' };
       const where = { id: 2 };
       const result = converter.convertUpdate(data, where, mockTable);
-      expect(result.query).toContain('?value0 <https://schema.org/member> <https://example.com/users/index.ttl#');
+      // Inverse columns should swap subject/object: ?var <pred> <subject> instead of <subject> <pred> ?var
+      expect(result.query).toContain('?old_organization_0 <https://schema.org/member> <https://example.com/users/index.ttl#');
       expect(result.query).toContain('<https://org.example/new> <https://schema.org/member> <https://example.com/users/index.ttl#');
     });
   });
@@ -696,7 +700,7 @@ describe('ASTToSPARQLConverter', () => {
         id: string('id').primaryKey(),
         subject: string('subject')
       }, {
-        base: '/drizzle-tests/threads/threads.ttl',
+        base: '/drizzle-tests/data/threads.ttl',
         type: 'https://schema.org/Conversation',
         namespace: { prefix: 'schema', uri: 'https://schema.org/' }
       });

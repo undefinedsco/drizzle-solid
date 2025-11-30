@@ -5,6 +5,9 @@ import { QueryCondition } from './query-conditions';
 import { ASTToSPARQLConverter, type SPARQLQuery } from './ast-to-sparql';
 import { ComunicaSPARQLExecutor, SolidSPARQLExecutor } from './sparql-executor';
 import { TypeIndexManager, TypeIndexEntry, TypeIndexConfig, DiscoveredTable } from './typeindex-manager';
+import { DataDiscovery, TypeIndexDiscovery } from './discovery';
+import { LdpExecutor } from './execution/ldp-executor';
+import { subjectResolver } from './subject/resolver';
 import type { SelectQueryPlan } from './select-plan';
 import type { InsertQueryPlan, UpdateQueryPlan, DeleteQueryPlan } from './pod-session';
 
@@ -69,37 +72,13 @@ export class PodDialect {
   private connected = false;
   private sparqlConverter: ASTToSPARQLConverter;
   private sparqlExecutor: ComunicaSPARQLExecutor;
+  private ldpExecutor: LdpExecutor;
   private typeIndexManager: TypeIndexManager;
+  private discovery: DataDiscovery;
   public config: PodDialectConfig;
   private registeredTables: Set<string> = new Set();
   private preparedContainers: Set<string> = new Set();
   private preparedResources: Set<string> = new Set();
-
-  // 在PodDialect类中添加默认谓词映射（在constructor或类属性中）
-  private defaultPredicates: Record<string, string> = {
-    // 基础标识符
-    'id': 'http://www.w3.org/1999/02/22-rdf-syntax-ns#about',
-    
-    // 通用名称和描述
-    'name': 'http://xmlns.com/foaf/0.1/name',
-    'title': 'http://purl.org/dc/terms/title',
-    'description': 'http://purl.org/dc/terms/description',
-    'content': 'http://purl.org/dc/terms/description',  // 通用内容字段
-    
-    // 时间戳
-    'createdAt': 'https://schema.org/dateCreated',
-    'updatedAt': 'https://schema.org/dateModified',
-    'created_at': 'https://schema.org/dateCreated',  // 兼容下划线命名
-    'updated_at': 'https://schema.org/dateModified', // 兼容下划线命名
-    
-    // 联系信息
-    'email': 'http://xmlns.com/foaf/0.1/mbox',
-    'url': 'http://xmlns.com/foaf/0.1/homepage',
-    'homepage': 'http://xmlns.com/foaf/0.1/homepage', // 别名
-    
-    // 通用fallback
-    default: 'http://example.org/property/'
-  };
 
   constructor(config: PodDialectConfig) {
     this.config = config;
@@ -115,6 +94,9 @@ export class PodDialect {
     // 从webId推导podUrl
     this.podUrl = this.derivePodUrlFromWebId(this.webId);
     
+    // 设置 subjectResolver 的 Pod URL
+    subjectResolver.setPodUrl(this.podUrl);
+    
     // 初始化 SPARQL 转换器和轻量级执行器
     this.sparqlConverter = new ASTToSPARQLConverter(this.podUrl, this.webId);
     this.sparqlExecutor = new SolidSPARQLExecutor({
@@ -123,112 +105,14 @@ export class PodDialect {
       logging: false
     });
     
+    // 初始化 LDP Executor
+    this.ldpExecutor = new LdpExecutor(this.sparqlExecutor, this.session.fetch);
+    
     // 初始化 TypeIndex 管理器
     this.typeIndexManager = new TypeIndexManager(this.webId, this.podUrl, this.session.fetch);
+    this.discovery = new TypeIndexDiscovery(this.typeIndexManager, this.podUrl);
   }
 
-  /**
-   * @deprecated 此方法已废弃，不再使用
-   *
-   * 旧实现问题：
-   * - 先 SELECT 找到所有匹配的 subjects
-   * - 然后对每个 subject 执行 UPDATE
-   * - 性能问题：1 + N 次网络请求
-   *
-   * 新实现（直接使用 convertUpdate）：
-   * - 直接生成 SPARQL UPDATE with WHERE 子句
-   * - 一次 PATCH 请求完成
-   * - 性能提升：100 倍+
-   *
-   * 保留此方法仅用于参考和回退（如果需要）
-   */
-  async executeComplexUpdate(
-    operation: PodOperation,
-    condition: QueryCondition
-  ): Promise<any[]> {
-    console.warn('[DEPRECATED] executeComplexUpdate is deprecated and should not be used');
-    console.log('[PodDialect] Complex update triggered with condition:', JSON.stringify(condition, null, 2));
-    const table = operation.table;
-    const data = operation.data as Record<string, any>;
-    const columnsToUpdate = Object.keys(data).filter((key) => key in table.columns);
-
-    if (columnsToUpdate.length === 0) {
-      console.warn('[UPDATE] No valid columns provided for complex update');
-      return [];
-    }
-
-    const { containerUrl, resourceUrl } = this.resolveTableUrls(table);
-    const normalizedResourceUrl = this.normalizeResourceUrl(resourceUrl);
-
-    await this.ensureContainerExists(containerUrl);
-    await this.ensureResourceExists(normalizedResourceUrl, { createIfMissing: false });
-
-    const subjects = await this.findSubjectsForCondition(condition, table, normalizedResourceUrl);
-    if (subjects.length === 0) {
-      console.log('[UPDATE] Complex update matched no subjects');
-      return [];
-    }
-
-    const results: Array<{ success: boolean; source: string; subject: string }> = [];
-
-    for (const subject of subjects) {
-      const updateQuery = this.buildUpdateQueryForSubject(subject, data, table, columnsToUpdate);
-      if (!updateQuery) {
-        continue;
-      }
-
-      console.log('[UPDATE] Complex update query for subject:', subject); 
-      console.log(updateQuery);
-      await this.executeOnResource(normalizedResourceUrl, {
-        type: 'UPDATE',
-        query: updateQuery,
-        prefixes: this.sparqlConverter.getPrefixes()
-      });
-
-      results.push({ success: true, source: normalizedResourceUrl, subject });
-    }
-
-    return results;
-  }
-
-  async executeComplexDelete(
-    operation: PodOperation,
-    condition: QueryCondition
-  ): Promise<any[]> {
-    console.log('[PodDialect] Complex delete triggered with condition:', JSON.stringify(condition, null, 2));
-    const table = operation.table;
-    const { containerUrl, resourceUrl } = this.resolveTableUrls(table);
-    const normalizedResourceUrl = this.normalizeResourceUrl(resourceUrl);
-
-    await this.ensureContainerExists(containerUrl);
-    await this.ensureResourceExists(normalizedResourceUrl, { createIfMissing: false });
-
-    const subjects = await this.findSubjectsForCondition(condition, table, normalizedResourceUrl);
-    if (subjects.length === 0) {
-      console.log('[DELETE] Complex delete matched no subjects');
-      return [];
-    }
-
-    const results: Array<{ success: boolean; source: string; subject: string }> = [];
-
-    for (const subject of subjects) {
-      const deleteQuery = `${this.buildPrefixLines()}\nDELETE WHERE {\n  <${subject}> ?p ?o .\n}`;
-      await this.executeOnResource(normalizedResourceUrl, {
-        type: 'DELETE',
-        query: deleteQuery,
-        prefixes: this.sparqlConverter.getPrefixes()
-      });
-
-      results.push({ success: true, source: normalizedResourceUrl, subject });
-    }
-
-    return results;
-  }
-
-  /**
-   * @deprecated 此方法仅被废弃的 executeComplexUpdate 使用
-   * 保留仅用于参考
-   */
   private async findSubjectsForCondition(
     condition: QueryCondition,
     table: PodTable,
@@ -302,10 +186,6 @@ export class PodDialect {
       .join('\n');
   }
 
-  private isQueryCondition(value: any): value is QueryCondition {
-    return value && typeof value === 'object' && 'type' in value && 'operator' in value;
-  }
-
   private isSubjectResolutionError(error: unknown): boolean {
     if (!(error instanceof Error)) {
       return false;
@@ -329,14 +209,20 @@ export class PodDialect {
       console.log(`Connecting to Solid Pod: ${this.podUrl}`);
       console.log(`Using WebID: ${this.webId}`);
       
-      // 验证 Pod 连接
+      // 验证 Pod 连接；某些 Pod 根可能返回 401/403 但子路径可访问
       const response = await this.session.fetch(this.podUrl);
       if (!response.ok) {
-        throw new Error(`Failed to connect to Pod: ${response.status} ${response.statusText}`);
+        const status = response.status;
+        if (status === 401 || status === 403) {
+          console.warn(`Pod root returned ${status}, continuing (child resources may still be writable)`);
+        } else {
+          throw new Error(`Failed to connect to Pod: ${response.status} ${response.statusText}`);
+        }
+      } else {
+        console.log('Successfully connected to Solid Pod');
       }
       
       this.connected = true;
-      console.log('Successfully connected to Solid Pod');
     } catch (error) {
       console.error('Failed to connect to Pod:', error);
       throw error;
@@ -376,21 +262,11 @@ export class PodDialect {
   }
 
   private resolveTableResource(table: PodTable): TableResourceDescriptor {
-    const mode = table.getResourceMode?.() ?? 'ldp';
-
-    if (mode === 'sparql') {
-      const endpointSource =
-        table.getSparqlEndpoint?.() ||
-        table.getContainerPath();
-
-      if (!endpointSource) {
-        throw new Error(`Table ${table.config.name} is configured for SPARQL access but no endpoint was provided`);
-      }
-
+    const endpointSource = table.getSparqlEndpoint?.();
+    if (endpointSource) {
       const endpoint = this.isAbsoluteUrl(endpointSource)
         ? endpointSource
         : this.resolveAbsoluteUrl(endpointSource);
-
       return { mode: 'sparql', endpoint };
     }
 
@@ -400,15 +276,17 @@ export class PodDialect {
 
   private resolveTableUrls(table: PodTable): { containerUrl: string; resourceUrl: string } {
     const descriptor = this.resolveTableResource(table);
-    if (descriptor.mode !== 'ldp') {
-      throw new Error(
-        `Table ${table.config.name} is configured for SPARQL endpoint access; LDP resource URLs are not available.`
-      );
+    if (descriptor.mode === 'ldp') {
+      return {
+        containerUrl: descriptor.containerUrl,
+        resourceUrl: descriptor.resourceUrl
+      };
     }
 
+    // SPARQL mode: use endpoint as both container/resource placeholder
     return {
-      containerUrl: descriptor.containerUrl,
-      resourceUrl: descriptor.resourceUrl
+      containerUrl: descriptor.endpoint,
+      resourceUrl: descriptor.endpoint
     };
   }
 
@@ -460,9 +338,10 @@ export class PodDialect {
     const trimmedPath = configuredPath.replace(/^\/+/, '');
     const baseUrl = this.podUrl.endsWith('/') ? this.podUrl : `${this.podUrl}/`;
     const userPrefix = userPath.replace(/^\/+/, '');
+    const trimHasUserPrefix = userPrefix && trimmedPath.startsWith(userPrefix);
 
     if (configuredPath.endsWith('/')) {
-      const relativeContainer = `${userPrefix}${trimmedPath}`;
+      const relativeContainer = trimHasUserPrefix ? trimmedPath : `${userPrefix}${trimmedPath}`;
       const containerUrl = ensureTrailingSlash(`${baseUrl}${relativeContainer.replace(/^\/+/, '')}`);
       return {
         containerUrl,
@@ -470,7 +349,7 @@ export class PodDialect {
       };
     }
 
-    const resourceRelative = `${userPrefix}${trimmedPath}`;
+    const resourceRelative = trimHasUserPrefix ? trimmedPath : `${userPrefix}${trimmedPath}`;
     const lastSlash = resourceRelative.lastIndexOf('/');
     const containerRelative = lastSlash >= 0 ? resourceRelative.slice(0, lastSlash + 1) : userPrefix;
 
@@ -684,6 +563,7 @@ export class PodDialect {
       throw new Error(`Resource not found: ${normalizedUrl}`);
     }
 
+    for (let i = 0; i < 3; i++) {
     try {
       const response = await this.session.fetch(normalizedUrl, {
         method: 'PUT',
@@ -693,20 +573,64 @@ export class PodDialect {
         body: ''
       });
 
-      if (!response.ok && ![201, 202, 204, 409].includes(response.status)) {
-        throw new Error(`Failed to create resource: ${response.status} ${response.statusText}`);
-      }
+        if (response.ok || [201, 202, 204, 409].includes(response.status)) {
+          // Invalidate cache for the new resource
+          await this.sparqlExecutor.invalidateHttpCache(normalizedUrl);
+          this.markResourcePrepared(normalizedUrl);
+          return;
+        }
+        
+        if (response.status >= 500) {
+           console.warn(`[PodDialect] ensureResourceExists attempt ${i + 1}/3 failed with ${response.status}, retrying...`);
+           await new Promise(r => setTimeout(r, 1000));
+           continue;
+        }
 
-      this.markResourcePrepared(normalizedUrl);
+        throw new Error(`Failed to create resource: ${response.status} ${response.statusText}`);
     } catch (error) {
-      console.error('[PodDialect] ensureResourceExists failed:', error);
+        if (i === 2) {
+          console.error('[PodDialect] ensureResourceExists failed after 3 attempts:', error);
       throw error;
+        }
+        console.warn(`[PodDialect] ensureResourceExists attempt ${i + 1}/3 failed with error:`, error);
+        await new Promise(r => setTimeout(r, 1000));
+      }
     }
   }
 
-  private async executeOnResource(resourceUrl: string, sparqlQuery: SPARQLQuery): Promise<any[]> {
+  private async executeOnResource(
+    resourceUrl: string,
+    sparqlQuery: SPARQLQuery,
+    descriptor?: TableResourceDescriptor
+  ): Promise<any[]> {
     const normalizedUrl = this.normalizeResourceUrl(resourceUrl);
-    return await this.sparqlExecutor.queryContainer(normalizedUrl, sparqlQuery);
+    if (descriptor?.mode === 'sparql') {
+      return await this.executeOnSparqlEndpoint(descriptor.endpoint, sparqlQuery);
+    }
+    // LDP 模式：仅允许 SELECT/ASK 通过 Comunica；UPDATE 走 N3 Patch
+    if (sparqlQuery.type === 'SELECT' || sparqlQuery.type === 'ASK') {
+      return await this.sparqlExecutor.queryContainer(normalizedUrl, sparqlQuery);
+    }
+    throw new Error('LDP mode does not support SPARQL UPDATE; use N3 patch helpers instead.');
+  }
+
+  private async executeOnSparqlEndpoint(endpoint: string, sparqlQuery: SPARQLQuery): Promise<any[]> {
+    if (sparqlQuery.type === 'SELECT' || sparqlQuery.type === 'ASK') {
+      return await this.sparqlExecutor.executeQueryWithSource(sparqlQuery, endpoint);
+    }
+
+    const response = await this.session.fetch(endpoint, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/sparql-update' },
+      body: sparqlQuery.query
+    });
+
+    if (!response.ok) {
+      const text = await response.text().catch(() => '');
+      throw new Error(`SPARQL endpoint update failed: ${response.status} ${response.statusText}${text ? ` - ${text}` : ''}`);
+    }
+
+    return [{ success: true, source: endpoint, status: response.status, via: 'sparql-endpoint' }];
   }
 
   /**
@@ -741,14 +665,32 @@ export class PodDialect {
     console.log(`[AutoDiscover] Table ${table.config.name} has no resourcePath, discovering from TypeIndex...`);
 
     try {
-      const discoveredEntry = await this.typeIndexManager.discoverSpecificType(rdfClass);
+      const locations = await this.discovery.discover(rdfClass);
+      const location = locations[0]; // 使用第一个发现的位置
 
-      if (discoveredEntry) {
+      if (location) {
         // 动态设置 containerPath 和 resourcePath
-        const containerPath = discoveredEntry.containerPath;
-        const resourcePath = discoveredEntry.instanceContainer
-          ? `${discoveredEntry.instanceContainer}${table.config.name}.ttl`
-          : `${containerPath}${table.config.name}.ttl`;
+        // 假设 location.container 是 containerPath 或 URL
+        let containerPath = location.container;
+        
+        // 如果返回的是绝对 URL，尝试转为相对路径（可选，但保持一致性较好）
+        // 这里暂时直接使用
+        if (!containerPath.endsWith('/')) {
+           containerPath += '/';
+        }
+
+        // 推断 resourcePath
+        // 如果是 Document 模式，resourcePath = container + name.ttl
+        // 如果是 Fragment 模式，resourcePath = container (即文件本身)
+        // DataLocation 语义上 container 指的是"包含数据的容器"，
+        // 对于 Fragment 模式，它可能指向 .ttl 文件本身吗？
+        // 回看 TypeIndexDiscovery.discover，它返回的是 instanceContainer ?? containerPath
+        // TypeIndexEntry 中 instanceContainer 通常指目录。
+        // 如果是 instance (单文件模式)，我们目前 TypeIndexDiscovery 还没完美处理 instance 字段
+        // 但根据 TypeIndexDiscovery.ts 实现:
+        // locations.push({ container: entry.instanceContainer ?? entry.containerPath ... })
+        
+        const resourcePath = `${containerPath}${table.config.name}.ttl`;
 
         console.log(`[AutoDiscover] ✓ Found resource path from TypeIndex: ${resourcePath}`);
 
@@ -777,36 +719,25 @@ export class PodDialect {
       await this.connect();
     }
 
+    const descriptor = this.resolveTableResource(operation.table);
+    const mode = descriptor.mode;
+
     // 如果表没有指定 resourcePath，尝试从 TypeIndex 自动发现
     await this.ensureTableResourcePath(operation.table);
 
-    const { containerUrl, resourceUrl } = this.resolveTableUrls(operation.table);
+    const { containerUrl, resourceUrl } = mode === 'sparql'
+      ? { containerUrl: descriptor.endpoint, resourceUrl: descriptor.endpoint }
+      : this.resolveTableUrls(operation.table);
     const normalizedResourceUrl = this.normalizeResourceUrl(resourceUrl);
 
     try {
       let sparqlQuery: SPARQLQuery;
 
-      console.log('[PodDialect] Operation type:', operation.type);
-      const safeOperationLog = {
-        type: operation.type,
-        table: operation.table?.config?.name,
-        where: operation.where,
-        limit: operation.limit,
-        offset: operation.offset,
-        orderBy: operation.orderBy,
-        distinct: operation.distinct,
-        select: operation.select ? Object.keys(operation.select) : undefined,
-        joins: Array.isArray(operation.joins)
-          ? operation.joins.map((join) => ({
-              type: join.type,
-              alias: (join as any).alias ?? join.table?.config?.name
-            }))
-          : undefined
-      };
-      console.log('[PodDialect] Full operation:', JSON.stringify(safeOperationLog, null, 2));
+      // ... (omitted logging)
 
       switch (operation.type) {
         case 'select': {
+          // ... (select logic unchanged)
           if (operation.plan && this.isSelectPlan(operation.plan)) {
             sparqlQuery = this.sparqlConverter.convertSelectPlan(operation.plan);
           } else if (operation.plan && !this.isSelectPlan(operation.plan)) {
@@ -815,14 +746,14 @@ export class PodDialect {
             const ast = this.sparqlConverter.parseDrizzleAST(operation.sql, operation.table);
             sparqlQuery = this.sparqlConverter.convertSelect(ast, operation.table);
           } else {
-            sparqlQuery = this.sparqlConverter.convertSelect({
-              select: operation.select,
-              where: operation.where,
+            sparqlQuery = this.sparqlConverter.convertSimpleSelect({
+              table: operation.table,
+              where: operation.where as Record<string, unknown>,
               limit: operation.limit,
               offset: operation.offset,
               orderBy: operation.orderBy,
               distinct: operation.distinct
-            }, operation.table);
+            });
           }
           break;
         }
@@ -833,20 +764,40 @@ export class PodDialect {
             throw new Error('INSERT operation requires at least one value');
           }
 
-          // 优化：只在第一次操作时检查容器和资源存在性
-          // TypeIndex 注册时已经创建好了容器和资源
-          if (!this.preparedContainers.has(this.normalizeContainerKey(containerUrl))) {
-            await this.ensureContainerExists(containerUrl);
+          if (mode === 'ldp') {
+            if (!this.preparedContainers.has(this.normalizeContainerKey(containerUrl))) {
+              await this.ensureContainerExists(containerUrl);
+            }
+            if (!this.preparedResources.has(this.normalizeResourceKey(resourceUrl))) {
+              // 只有在 document 模式下，且文件不存在时才需要 createIfMissing
+              // 但这里我们无法轻易区分是否是 fragment mode。
+              // LdpExecutor.executeInsert 会处理具体的三元组，但它假定资源可写。
+              // 为了简单起见，这里总是确保资源存在。
+              // 实际上，如果使用 subjectResolver，它会决定写入哪个文件。
+              // 如果 subjectResolver 决定写入不同的文件，那么这里的 normalizedResourceUrl 可能不准确。
+              // 但目前的架构是 PodTable 绑定到一个 resourceUrl (或 containerUrl)。
+              
+              // 修正：如果 LdpExecutor 使用 SubjectResolver，它可能会根据记录生成不同的 URI。
+              // 如果是 document mode，每个记录可能有自己的文件。
+              // LdpExecutor.executeInsert 可能会发现需要写入不同的文件。
+              // 但目前 LdpExecutor.executeInsert 接受一个 resourceUrl 参数，这意味着它是批量写入同一个文件。
+              // 如果是 Document Mode，我们应该在 LdpExecutor 内部处理多文件写入，或者在此处拆分。
+              // 为了保持兼容性，目前假设所有插入都针对同一个资源（Fragment Mode）或者主资源（Document Mode 的容器）。
+              
+              // 实际上，如果是 Document Mode，resourceUrl 可能是 containerUrl + 'new-id.ttl'。
+              // 但如果是批量插入，会有多个 IDs。
+              
+              // 我们应该让 LdpExecutor 处理资源创建，或者在此处更智能地处理。
+              // 暂时保持原样，确保主资源存在。
+              await this.ensureResourceExists(normalizedResourceUrl, { createIfMissing: true });
+            }
+            const insertPlan = this.isInsertPlan(operation.plan)
+              ? operation.plan
+              : { table: operation.table, rows: values };
+            
+            // Delegate to LdpExecutor
+            return await this.ldpExecutor.executeInsert(insertPlan.rows, insertPlan.table, normalizedResourceUrl);
           }
-          if (!this.preparedResources.has(this.normalizeResourceKey(resourceUrl))) {
-            await this.ensureResourceExists(normalizedResourceUrl, { createIfMissing: true });
-          }
-
-          // 移除了 checkResourceExistence 调用
-          // 理由：
-          // 1. 每次 GET 整个容器内容效率低下
-          // 2. SPARQL INSERT 本身不会覆盖已存在的三元组
-          // 3. 如果需要防止重复，应该由业务层处理（通过 WHERE NOT EXISTS 或先 SELECT）
 
           const insertPlan = this.isInsertPlan(operation.plan)
             ? operation.plan
@@ -854,6 +805,9 @@ export class PodDialect {
           sparqlQuery = this.sparqlConverter.convertInsert(insertPlan, insertPlan.table);
           break;
         }
+        
+        // ... (update/delete)
+
 
         case 'update': {
           if (!operation.data) {
@@ -863,21 +817,23 @@ export class PodDialect {
             throw new Error('UPDATE operation requires where conditions to locate target resources');
           }
 
-          if (!this.preparedContainers.has(this.normalizeContainerKey(containerUrl))) {
-            try {
-              await this.ensureContainerExists(containerUrl);
-            } catch (error) {
-              const message = error instanceof Error ? error.message : String(error);
-              if (message.includes('Failed to check container: 401') || message.includes('Failed to check container: 403')) {
-                console.warn(`[UPDATE] Skipping container existence check for ${containerUrl}: ${message}`);
-              } else {
-                throw error;
+          if (mode === 'ldp') {
+            if (!this.preparedContainers.has(this.normalizeContainerKey(containerUrl))) {
+              try {
+                await this.ensureContainerExists(containerUrl);
+              } catch (error) {
+                const message = error instanceof Error ? error.message : String(error);
+                if (message.includes('Failed to check container: 401') || message.includes('Failed to check container: 403')) {
+                  console.warn(`[UPDATE] Skipping container existence check for ${containerUrl}: ${message}`);
+                } else {
+                  throw error;
+                }
               }
             }
-          }
 
-          if (!this.preparedResources.has(this.normalizeResourceKey(resourceUrl))) {
-            await this.ensureResourceExists(normalizedResourceUrl, { createIfMissing: false });
+            if (!this.preparedResources.has(this.normalizeResourceKey(resourceUrl))) {
+              await this.ensureResourceExists(normalizedResourceUrl, { createIfMissing: false });
+            }
           }
 
           const updatePlan = this.isUpdatePlan(operation.plan)
@@ -899,6 +855,20 @@ export class PodDialect {
             return [];
           }
 
+          const resourceMode = updatePlan.table.getResourceMode?.() ?? 'ldp';
+
+          if (resourceMode !== 'sparql') {
+            // Find subjects using Comunica (READ)
+            const subjects = await this.findSubjectsForCondition(updatePlan.where, updatePlan.table, resourceUrl);
+            
+            if (subjects.length === 0) {
+      return [];
+    }
+            
+            // Delegate execution to LdpExecutor (WRITE)
+            return await this.ldpExecutor.executeUpdate(updatePlan.table, updatePlan.data, subjects, normalizedResourceUrl);
+          }
+
           try {
             sparqlQuery = this.sparqlConverter.convertUpdate(updatePlan.data, ensuredCondition, updatePlan.table);
           } catch (error) {
@@ -912,20 +882,22 @@ export class PodDialect {
         }
 
         case 'delete': {
-          if (!this.preparedContainers.has(this.normalizeContainerKey(containerUrl))) {
-            await this.ensureContainerExists(containerUrl);
-          }
+          if (mode === 'ldp') {
+            if (!this.preparedContainers.has(this.normalizeContainerKey(containerUrl))) {
+              await this.ensureContainerExists(containerUrl);
+            }
 
-          const hasResource = this.preparedResources.has(this.normalizeResourceKey(resourceUrl))
-            ? true
-            : await this.resourceExists(normalizedResourceUrl);
-          if (!hasResource) {
-            console.log('[DELETE] Target resource does not exist, skipping SPARQL execution');
-            return [{
-              success: true,
-              source: normalizedResourceUrl,
-              status: 404
-            }];
+            const hasResource = this.preparedResources.has(this.normalizeResourceKey(resourceUrl))
+              ? true
+              : await this.resourceExists(normalizedResourceUrl);
+            if (!hasResource) {
+              console.log('[DELETE] Target resource does not exist, skipping SPARQL execution');
+              return [{
+                success: true,
+                source: normalizedResourceUrl,
+                status: 404
+              }];
+            }
           }
 
           const deletePlan = this.isDeletePlan(operation.plan)
@@ -942,6 +914,23 @@ export class PodDialect {
               console.warn('[DELETE] No matching subjects found for provided condition, skipping delete.');
               return [];
             }
+          }
+
+          if (mode === 'ldp') {
+            if (!deleteCondition) {
+               // Cannot delete without condition in LDP mode (safety)
+               return [];
+            }
+            // Find subjects using Comunica (READ)
+            const subjects = await this.findSubjectsForCondition(deleteCondition, deletePlan.table, normalizedResourceUrl);
+            if (subjects.length === 0) {
+              return [];
+            }
+
+            // Delegate execution to LdpExecutor (WRITE)
+            const results = await this.ldpExecutor.executeDelete(subjects, deletePlan.table, normalizedResourceUrl);
+            console.log(`[DELETE] LDP mode: Deleted ${results.length} subjects via N3 Patch`);
+            return results;
           }
 
           try {
@@ -962,7 +951,7 @@ export class PodDialect {
 
       console.log('Generated SPARQL:', sparqlQuery.query);
 
-      const results = await this.executeOnResource(normalizedResourceUrl, sparqlQuery);
+      const results = await this.executeOnResource(normalizedResourceUrl, sparqlQuery, descriptor);
       console.log(`${operation.type.toUpperCase()} operation completed, ${results.length} records affected`);
       return results;
 
@@ -1028,40 +1017,23 @@ export class PodDialect {
     };
   }
 
-  private buildSubjectUriFromFragment(fragment: string, table: PodTable): string {
-    if (!fragment) {
-      return fragment;
-    }
-    if (fragment.includes('://')) {
-      return fragment;
-    }
-    const clean = fragment.startsWith('#') ? fragment.slice(1) : fragment;
-    const baseResource =
-      table.getResourcePath?.() ||
-      table.config.base ||
-      table.getContainerPath();
-    const absoluteBase = baseResource
-      ? (this.isAbsoluteUrl(baseResource) ? baseResource : this.resolveAbsoluteUrl(baseResource))
-      : undefined;
-    if (!absoluteBase) {
-      return `#${clean}`;
-    }
-    const separator = absoluteBase.includes('#') ? '' : '#';
-    return `${absoluteBase}${separator}${clean}`;
+  private operationHasInlineObjects(table: PodTable, data: Record<string, any>): boolean {
+    return Object.entries(data).some(([key, value]) => {
+      if (value === undefined) return false;
+      const col = (table as any).columns?.[key] as any;
+      if (!col) return false;
+      return this.isInlineObjectColumn(col);
+    });
   }
 
-  private extractSubjectFromRow(row: Record<string, any>): string | null {
-    const subject = (row as any).subject ?? (row as any)['?subject'];
-    if (!subject) {
-      return null;
+  private isInlineObjectColumn(column: any): boolean {
+    if (!column) return false;
+    if (column.dataType === 'object') return true;
+    if (column.dataType === 'array') {
+      const elem = (column as any).elementType ?? column.options?.baseType;
+      return elem === 'object';
     }
-    if (typeof subject === 'string') {
-      return subject;
-    }
-    if (typeof subject.value === 'string') {
-      return subject.value;
-    }
-    return null;
+    return false;
   }
 
   private conditionTargetsIdentifier(condition?: QueryCondition): boolean {
@@ -1161,6 +1133,10 @@ export class PodDialect {
   // 获取 SPARQL 执行器（用于调试）
   getSPARQLExecutor(): ComunicaSPARQLExecutor {
     return this.sparqlExecutor;
+  }
+
+  getPodUrl(): string {
+    return this.podUrl;
   }
 
   // 添加数据源进行联邦查询（高级用法）
@@ -1267,11 +1243,14 @@ export class PodDialect {
       return;
     }
 
-    const skipTypeIndex = !table.shouldRegisterTypeIndex?.();
-
     try {
       const descriptor = this.resolveTableResource(table);
-      if (descriptor.mode === 'ldp') {
+
+      if (descriptor.mode === 'sparql') {
+        // Probe endpoint with a lightweight ASK
+        const ask = 'ASK WHERE { ?s ?p ?o } LIMIT 1';
+        await this.sparqlExecutor.executeQueryWithSource({ type: 'ASK', query: ask, prefixes: {} }, descriptor.endpoint);
+      } else {
         await this.ensureContainerExists(descriptor.containerUrl);
 
         try {
@@ -1282,6 +1261,12 @@ export class PodDialect {
 
         this.markContainerPrepared(descriptor.containerUrl);
         this.markResourcePrepared(descriptor.resourceUrl);
+        // 将表的 base 固定为已解析的绝对资源路径，避免后续重复 TypeIndex 解析
+        try {
+          table.setBase?.(descriptor.resourceUrl);
+        } catch (error) {
+          console.warn(`[registerTable] setBase failed for ${table.config.name}:`, error);
+        }
       }
     } catch (error: unknown) {
       console.warn(`[registerTable] Resource preparation failed for ${table.config.name}:`, error);
@@ -1289,75 +1274,8 @@ export class PodDialect {
 
     this.registeredTables.add(tableKey);
 
-    if (skipTypeIndex) {
-      console.log(`Table ${table.config.name} has autoRegister disabled, skipping TypeIndex registration`);
-      return;
-    }
-
-    try {
-      // 从 resourcePath 提取 containerPath
-      const descriptor = this.resolveTableResource(table);
-      let containerPath = table.getContainerPath() || '/data/';
-      let instanceContainer = `${this.podUrl.replace(/\/$/, '')}${containerPath}`;
-
-      if (descriptor.mode === 'ldp') {
-        // 从实际的 containerUrl 提取路径
-        const containerUrl = descriptor.containerUrl;
-        const podUrlBase = this.podUrl.replace(/\/$/, '');
-        if (containerUrl.startsWith(podUrlBase)) {
-          containerPath = containerUrl.substring(podUrlBase.length);
-          instanceContainer = containerUrl.replace(/\/$/, '') + '/';
-        }
-      }
-
-      const rdfClass = typeof table.config.type === 'string'
-        ? table.config.type
-        : (table.config.type as any).value || String(table.config.type);
-
-      const visibility: 'public' | 'private' = (table as any)._.config?.isPublic ? 'public' : 'private';
-      const entry: TypeIndexEntry = {
-        rdfClass,
-        containerPath,
-        forClass: table.config.name,
-        instanceContainer,
-        visibility
-      };
-
-      // 检查 TypeIndex 中是否已存在，如果路径不同则更新
-      try {
-        const existingEntry = await this.typeIndexManager.discoverSpecificType(rdfClass);
-
-        if (existingEntry && existingEntry.instanceContainer !== instanceContainer) {
-          console.warn(
-            `[registerTable] ⚠️  TypeIndex has different path for ${table.config.name}:\n` +
-            `  - TypeIndex: ${existingEntry.instanceContainer}\n` +
-            `  - Configured: ${instanceContainer}\n` +
-            `  Updating TypeIndex to use configured path...`
-          );
-        }
-
-        // 总是注册/更新到 TypeIndex（这会覆盖旧的注册）
-        await this.typeIndexManager.registerType(entry);
-      } catch (error: unknown) {
-        const message = error instanceof Error ? error.message : String(error);
-        if (message.includes('TypeIndex not found')) {
-          console.warn('[registerTable] TypeIndex missing. Attempting to create.');
-          try {
-            // 根据可见性创建对应的 TypeIndex
-            const typeIndexUrl = await this.typeIndexManager.createTypeIndex(visibility === 'public');
-            await this.typeIndexManager.registerType(entry, typeIndexUrl);
-          } catch (creationError: unknown) {
-            console.warn('[registerTable] Unable to create TypeIndex. Continuing without registration.', creationError);
-          }
-        } else {
-          console.warn('[registerTable] TypeIndex registration failed. Continuing without registration.', error);
-        }
-      }
-      console.log(`Table ${table.config.name} registered to TypeIndex with path: ${instanceContainer}`);
-    } catch (error) {
-      console.error(`Failed to register table ${table.config.name}:`, error);
-      throw error;
-    }
+    // 委托给 DataDiscovery 进行注册
+    await this.discovery.register(table);
   }
 
   /**
@@ -1546,6 +1464,7 @@ export class PodDialect {
 
         if (createResponse.ok) {
           console.log(`[Container] 容器创建成功: ${createResponse.status}`);
+          await this.sparqlExecutor.invalidateHttpCache(targetContainer);
           this.markContainerPrepared(targetContainer);
         } else if (createResponse.status === 409) {
           console.log(`[Container] 容器已存在（409冲突）: ${targetContainer}`);
@@ -1597,232 +1516,6 @@ export class PodDialect {
   // 添加getSubjectURI辅助方法
   private getSubjectURI(table: PodTable, id: string): string {
     return `${table.getContainerPath() || '/'}#${id}`;
-  }
-
-  // 完全替换convertSelect方法
-  private convertSelect(operation: PodOperation): SPARQLQuery {
-    if (operation.where && this.isQueryCondition(operation.where)) {
-      const ast = {
-        where: operation.where,
-        limit: operation.limit,
-        offset: operation.offset,
-        orderBy: operation.orderBy,
-        distinct: operation.distinct
-      };
-      return this.sparqlConverter.convertSelect(ast, operation.table);
-    }
-    const table = operation.table;
-    const rdfClass = table.config.type || 'http://example.org/Entity';
-    const namespace = table.config.namespace || '';
-
-    const selectVars: string[] = ['?subject'];
-    const wherePatterns: string[] = [`?subject a <${rdfClass}> .`];
-    const prefixes = [
-      'PREFIX rdf: <http://www.w3.org/1999/02/22-rdf-syntax-ns#>',
-      'PREFIX foaf: <http://xmlns.com/foaf/0.1/>',
-      'PREFIX schema: <https://schema.org/>',
-      'PREFIX dc: <http://purl.org/dc/terms/>',
-      'PREFIX xsd: <http://www.w3.org/2001/XMLSchema#>'
-    ];
-
-    const columnPredicates = new Map<string, string>();
-    let filteredByIdentifier = false;
-
-    // 为每个列生成变量和模式
-    Object.keys(table.columns).forEach(columnName => {
-      const column = table.columns[columnName];
-      let predicate;
-
-      // 尝试从ColumnBuilder获取
-      if (typeof (column as any).getPredicateUri === 'function') {
-        predicate = (column as any).getPredicateUri();
-      } else {
-        predicate = (column as any).predicate;
-      }
-
-      // 从options中获取predicate
-      if (!predicate) {
-        predicate = (column as any).options?.predicate;
-      }
-
-      // 如果设置了namespace，优先用namespace + columnName
-      if (!predicate && namespace) {
-        predicate = `${namespace}${columnName}`;
-      }
-
-      // 如果没有namespace，用默认标准映射
-      if (!predicate) {
-        predicate = this.defaultPredicates[columnName as keyof typeof this.defaultPredicates];
-      }
-
-      // 最后的fallback
-      if (!predicate) {
-        predicate = `http://example.org/${columnName}`;
-      }
-
-      // 确保predicate是完整URI
-      if (predicate && !predicate.startsWith('http')) {
-        predicate = `http://example.org/${predicate}`;
-      }
-
-      if (predicate) {
-        columnPredicates.set(columnName, predicate);
-      }
-
-      if (predicate) {
-        const varName = `?${columnName}`;
-        selectVars.push(varName);
-
-        // 检查是否必需
-        const isRequired = (column as any).options?.required || false;
-        if (isRequired) {
-          wherePatterns.push(`?subject <${predicate}> ${varName} .`);
-        } else {
-          wherePatterns.push(`OPTIONAL { ?subject <${predicate}> ${varName} . }`);
-        }
-      }
-    });
-
-    const isUriString = (value: string): boolean => value.startsWith('http://') || value.startsWith('https://');
-
-    const formatLiteral = (value: unknown): string | null => {
-      if (value === null || value === undefined) {
-        return null;
-      }
-      if (typeof value === 'string') {
-        const escaped = value.replace(/\\/g, '\\\\').replace(/"/g, '\\"');
-        return `"${escaped}"`;
-      }
-      if (typeof value === 'number' && Number.isFinite(value)) {
-        return value.toString();
-      }
-      if (typeof value === 'boolean') {
-        return value ? 'true' : 'false';
-      }
-      if (value instanceof Date) {
-        return `"${value.toISOString()}"^^xsd:dateTime`;
-      }
-      const asString = String(value);
-      const escaped = asString.replace(/\\/g, '\\\\').replace(/"/g, '\\"');
-      return `"${escaped}"`;
-    };
-
-    const applyWhereConditions = (conditions: Record<string, unknown>) => {
-      for (const [key, rawValue] of Object.entries(conditions)) {
-        if (rawValue === undefined) {
-          continue;
-        }
-
-        const values = Array.isArray(rawValue) ? rawValue : [rawValue];
-
-        if (key === 'subject' || key === '@id') {
-          filteredByIdentifier = true;
-          const formatted = values
-            .map((value) => {
-              if (typeof value !== 'string') {
-                return null;
-              }
-              const trimmed = value.trim();
-              if (!trimmed) {
-                return null;
-              }
-              if (isUriString(trimmed)) {
-                return `<${trimmed}>`;
-              }
-              const derived = this.buildSubjectUriFromFragment(trimmed, table);
-              return derived ? `<${derived}>` : null;
-            })
-            .filter((value): value is string => Boolean(value));
-
-          if (formatted.length === 1) {
-            wherePatterns.push(`FILTER(?subject = ${formatted[0]})`);
-          } else if (formatted.length > 1) {
-            const valuesClause = formatted.join(' ');
-            wherePatterns.push(`VALUES ?subject { ${valuesClause} }`);
-          }
-          continue;
-        }
-
-        if (key === 'id') {
-          filteredByIdentifier = true;
-          const subjects = values
-            .map((value) => {
-              if (typeof value !== 'string') {
-                return null;
-              }
-              const derived = this.buildSubjectUriFromFragment(value, table);
-              return derived ? `<${derived}>` : null;
-            })
-            .filter((subject): subject is string => Boolean(subject));
-
-          if (subjects.length === 0) {
-            continue;
-          }
-
-          if (subjects.length === 1) {
-            wherePatterns.push(`FILTER(?subject = ${subjects[0]})`);
-          } else {
-            const valuesClause = subjects.join(' ');
-            wherePatterns.push(`VALUES ?subject { ${valuesClause} }`);
-          }
-          continue;
-        }
-
-        const predicate = columnPredicates.get(key);
-        if (!predicate) {
-          continue;
-        }
-
-        const formattedValues = values
-          .map((value) => formatLiteral(value))
-          .filter((value): value is string => Boolean(value));
-
-        if (formattedValues.length === 0) {
-          continue;
-        }
-
-        if (formattedValues.length === 1) {
-          wherePatterns.push(`?subject <${predicate}> ${formattedValues[0]} .`);
-        } else {
-          const tempVar = `?${key}_filter`;
-          wherePatterns.push(`?subject <${predicate}> ${tempVar} .`);
-          const filterValues = formattedValues.join(', ');
-          wherePatterns.push(`FILTER(${tempVar} IN (${filterValues}))`);
-        }
-      }
-    };
-
-    const isPlainObject = (value: unknown): value is Record<string, unknown> => {
-      return Boolean(value) && Object.getPrototypeOf(value) === Object.prototype;
-    };
-
-    if (operation.where && isPlainObject(operation.where)) {
-      applyWhereConditions(operation.where);
-    }
-
-    let query = `${prefixes.join('\n')}\nSELECT ${selectVars.join(' ')} WHERE {\n  ${wherePatterns.join('\n  ')}\n}`;
-
-    // 添加LIMIT/OFFSET
-    if (operation.limit) {
-      query += `\nLIMIT ${operation.limit}`;
-    }
-    else if (filteredByIdentifier) {
-      query += '\nLIMIT 1';
-    }
-    if (operation.offset) {
-      query += `\nOFFSET ${operation.offset}`;
-    }
-    
-    return {
-      type: 'SELECT',
-      query: query.trim(),
-      prefixes: {
-        'rdf': 'http://www.w3.org/1999/02/22-rdf-syntax-ns#',
-        'schema': 'https://schema.org/',
-        'foaf': 'http://xmlns.com/foaf/0.1/',
-        'dc': 'http://purl.org/dc/terms/'
-      }
-    };
   }
 
   // 同时修复convertInsert方法，确保INSERT也使用正确谓词

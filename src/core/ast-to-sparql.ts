@@ -3,12 +3,13 @@ import { SQL } from 'drizzle-orm';
 import { PodTable, PodColumnBase, type PodTableMapping } from './pod-table';
 import type { QueryCondition } from './query-conditions';
 import { AggregateExpression, isAggregateExpression } from './aggregates';
+import { subjectResolver } from './subject';
 import * as sparqljs from 'sparqljs';
 import type { SelectQueryPlan } from './select-plan';
 
 // SPARQL 查询类型
 export interface SPARQLQuery {
-  type: 'SELECT' | 'INSERT' | 'DELETE' | 'UPDATE';
+  type: 'SELECT' | 'INSERT' | 'DELETE' | 'UPDATE' | 'ASK';
   query: string;
   prefixes: Record<string, string>;
 }
@@ -33,6 +34,25 @@ export class ASTToSPARQLConverter {
     'dc': 'http://purl.org/dc/terms/',
     'solid': 'http://www.w3.org/ns/solid/terms#',
     'ldp': 'http://www.w3.org/ns/ldp#'
+  };
+
+  /**
+   * @deprecated Hardcoded default predicates are an anti-pattern and will be removed in future versions.
+   * Please explicitly define predicates in your PodTable definitions or use standard vocabularies.
+   */
+  private defaultPredicates: Record<string, string> = {
+    'id': 'http://www.w3.org/1999/02/22-rdf-syntax-ns#about',
+    'name': 'http://xmlns.com/foaf/0.1/name',
+    'title': 'http://purl.org/dc/terms/title',
+    'description': 'http://purl.org/dc/terms/description',
+    'content': 'http://purl.org/dc/terms/description',
+    'createdAt': 'https://schema.org/dateCreated',
+    'updatedAt': 'https://schema.org/dateModified',
+    'created_at': 'https://schema.org/dateCreated',
+    'updated_at': 'https://schema.org/dateModified',
+    'email': 'http://xmlns.com/foaf/0.1/mbox',
+    'url': 'http://xmlns.com/foaf/0.1/homepage',
+    'homepage': 'http://xmlns.com/foaf/0.1/homepage'
   };
 
   constructor(podUrl: string, webId?: string) {
@@ -103,6 +123,204 @@ export class ASTToSPARQLConverter {
     };
 
     return this.convertSelect(ast, plan.baseTable);
+  }
+
+  // Migrated from PodDialect to handle simple object queries
+  convertSimpleSelect(operation: {
+    table: PodTable;
+    where?: Record<string, unknown>;
+    limit?: number;
+    offset?: number;
+    orderBy?: Array<{ column: string; direction: 'asc' | 'desc' }>;
+    distinct?: boolean;
+  }): SPARQLQuery {
+    const table = operation.table;
+    const rdfClass = table.config.type || 'http://example.org/Entity';
+    const namespace = table.config.namespace || '';
+
+    const selectVars: string[] = ['?subject'];
+    const wherePatterns: string[] = [`?subject a <${rdfClass}> .`];
+    
+    // Use existing prefixes logic if possible, but for now replicate PodDialect manual build for safety
+    const prefixes = [
+      'PREFIX rdf: <http://www.w3.org/1999/02/22-rdf-syntax-ns#>',
+      'PREFIX foaf: <http://xmlns.com/foaf/0.1/>',
+      'PREFIX schema: <https://schema.org/>',
+      'PREFIX dc: <http://purl.org/dc/terms/>',
+      'PREFIX xsd: <http://www.w3.org/2001/XMLSchema#'
+    ];
+
+    const columnPredicates = new Map<string, string>();
+    let filteredByIdentifier = false;
+
+    // 为每个列生成变量和模式
+    Object.keys(table.columns).forEach(columnName => {
+      const column = table.columns[columnName];
+      let predicate;
+
+      if (typeof (column as any).getPredicateUri === 'function') {
+        predicate = (column as any).getPredicateUri();
+      } else {
+        predicate = (column as any).predicate;
+      }
+
+      if (!predicate) {
+        predicate = (column as any).options?.predicate;
+      }
+
+      if (!predicate && namespace) {
+        const nsUri = typeof namespace === 'string' ? namespace : namespace.uri;
+        predicate = `${nsUri}${columnName}`;
+      }
+
+      if (!predicate) {
+        predicate = this.defaultPredicates[columnName as keyof typeof this.defaultPredicates];
+      }
+
+      if (!predicate) {
+        predicate = `http://example.org/${columnName}`;
+      }
+
+      if (predicate && !predicate.startsWith('http')) {
+        predicate = `http://example.org/${predicate}`;
+      }
+
+      if (predicate) {
+        columnPredicates.set(columnName, predicate);
+      }
+
+      if (predicate) {
+        const varName = `?${columnName}`;
+        selectVars.push(varName);
+
+        const isRequired = (column as any).options?.required || false;
+        if (isRequired) {
+          wherePatterns.push(`?subject <${predicate}> ${varName} .`);
+        } else {
+          wherePatterns.push(`OPTIONAL { ?subject <${predicate}> ${varName} . }`);
+        }
+      }
+    });
+
+    const isUriString = (value: string): boolean => value.startsWith('http://') || value.startsWith('https://');
+
+    const formatLiteral = (value: unknown): string | null => {
+      if (value === null || value === undefined) {
+        return null;
+      }
+      if (typeof value === 'string') {
+        const escaped = value.replace(/\\/g, '\\\\').replace(/"/g, '\"');
+        return `"${escaped}"`;
+      }
+      if (typeof value === 'number' && Number.isFinite(value)) {
+        return value.toString();
+      }
+      if (typeof value === 'boolean') {
+        return value ? 'true' : 'false';
+      }
+      if (value instanceof Date) {
+        return `"${value.toISOString()}"^^xsd:dateTime`;
+      }
+      const asString = String(value);
+      const escaped = asString.replace(/\\/g, '\\\\').replace(/"/g, '\"');
+      return `"${escaped}"`;
+    };
+
+    if (operation.where) {
+      for (const [key, rawValue] of Object.entries(operation.where)) {
+        if (rawValue === undefined) continue;
+
+        const values = Array.isArray(rawValue) ? rawValue : [rawValue];
+
+        if (key === 'subject' || key === '@id') {
+          filteredByIdentifier = true;
+          const formatted = values
+            .map((value) => {
+              if (typeof value !== 'string') return null;
+              const trimmed = value.trim();
+              if (!trimmed) return null;
+              if (isUriString(trimmed)) return `<${trimmed}>`;
+              // Use SubjectResolver for fragment handling logic if needed, 
+              // or simple fragment assumption if table context implies it.
+              // For now, assume subjectResolver is available or copy logic.
+              // Copy logic for safety:
+              const clean = trimmed.startsWith('#') ? trimmed.slice(1) : trimmed;
+              // We need base... 
+              const baseResource = (table as any).getResourcePath?.() || table.config.base || table.getContainerPath();
+              // We don't have resolveAbsoluteUrl here easily without podUrl context?
+              // But we have this.podUrl.
+              // Let's assume baseResource is absolute or relative to podUrl.
+              // Minimal implementation:
+              return `<${trimmed}>`; // Fallback if we can't resolve fragment easily without SubjectResolver instance logic
+            })
+            .filter((value): value is string => Boolean(value));
+
+          if (formatted.length === 1) {
+            wherePatterns.push(`FILTER(?subject = ${formatted[0]})`);
+          } else if (formatted.length > 1) {
+            const valuesClause = formatted.join(' ');
+            wherePatterns.push(`VALUES ?subject { ${valuesClause} }`);
+          }
+          continue;
+        }
+
+        if (key === 'id') {
+          filteredByIdentifier = true;
+          // Handling 'id' where clause requires resolving to Subject URI usually.
+          // We will use subjectResolver if available.
+          const subjects = values.map(val => {
+             return subjectResolver.resolve(table, { id: val });
+          }).map(uri => `<${uri}>`);
+          
+          if (subjects.length === 1) {
+            wherePatterns.push(`FILTER(?subject = ${subjects[0]})`);
+          } else if (subjects.length > 0) {
+             wherePatterns.push(`VALUES ?subject { ${subjects.join(' ')} }`);
+          }
+          continue;
+        }
+
+        const predicate = columnPredicates.get(key);
+        if (!predicate) continue;
+
+        const formattedValues = values
+          .map((value) => formatLiteral(value))
+          .filter((value): value is string => Boolean(value));
+
+        if (formattedValues.length === 0) continue;
+
+        if (formattedValues.length === 1) {
+          wherePatterns.push(`?subject <${predicate}> ${formattedValues[0]} .`);
+        } else {
+          const tempVar = `?${key}_filter`;
+          wherePatterns.push(`?subject <${predicate}> ${tempVar} .`);
+          const filterValues = formattedValues.join(', ');
+          wherePatterns.push(`FILTER(${tempVar} IN (${filterValues}))`);
+        }
+      }
+    }
+
+    let query = `${prefixes.join('\n')}\nSELECT ${selectVars.join(' ')} WHERE {\n  ${wherePatterns.join('\n  ')}\n}`;
+
+    if (operation.limit) {
+      query += `\nLIMIT ${operation.limit}`;
+    } else if (filteredByIdentifier) {
+      query += '\nLIMIT 1';
+    }
+    if (operation.offset) {
+      query += `\nOFFSET ${operation.offset}`;
+    }
+    
+    return {
+      type: 'SELECT',
+      query: query.trim(),
+      prefixes: {
+        'rdf': 'http://www.w3.org/1999/02/22-rdf-syntax-ns#',
+        'schema': 'https://schema.org/',
+        'foaf': 'http://xmlns.com/foaf/0.1/',
+        'dc': 'http://purl.org/dc/terms/'
+      }
+    };
   }
 
   // 转换 INSERT 查询 - 使用 sparqljs
@@ -217,7 +435,8 @@ DELETE WHERE {
 
       const deleteBlocks = targetRecords.map((record) => {
         const resourceUri = this.generateSubjectUri(record, table);
-        return `DELETE WHERE {\n  <${resourceUri}> ?p ?o .\n}`;
+        const inlineDeletes = this.buildInlineCascadeDeleteBlocks(resourceUri, table);
+        return [`DELETE WHERE {\n  <${resourceUri}> ?p ?o .\n}`, ...inlineDeletes].join(';\n');
       });
 
       query = `${prefixLines}
@@ -760,8 +979,7 @@ ${deleteBlocks.join(';\n')}`;
         case 'string':
           return {
             termType: 'Literal',
-            value: String(value),
-            datatype: { termType: 'NamedNode', value: 'http://www.w3.org/2001/XMLSchema#string' }
+            value: String(value)
           };
         case 'integer':
           return {
@@ -968,6 +1186,22 @@ ${deleteBlocks.join(';\n')}`;
         const column = table.columns[columnName];
         if (!column) return;
 
+        if (this.isInlineObjectColumn(column)) {
+          const inlineValues = Array.isArray(value) ? value : [value];
+          inlineValues.forEach((inlineValue, index) => {
+            if (!inlineValue) return;
+            const childIri = subjectResolver.resolveInlineChild(subjectUri, column.name, inlineValue, index);
+            triples.push({
+              subject,
+              predicate: { termType: 'NamedNode', value: this.getPredicateForColumn(column, table) },
+              object: { termType: 'NamedNode', value: childIri }
+            });
+            const childTriples = this.buildInlineChildTriples(childIri, inlineValue, table);
+            triples.push(...childTriples);
+          });
+          return;
+        }
+
         const predicate = this.getPredicateForColumn(column, table);
 
         // 处理数组类型 - 多重属性
@@ -1042,6 +1276,7 @@ ${deleteBlocks.join(';\n')}`;
     Object.keys(setData).forEach(columnName => {
       const column = table.columns[columnName];
       if (!column) return;
+      if (this.isInlineObjectColumn(column)) return;
       
       const predicate = this.getPredicateForColumn(column, table);
       const valueVar = { termType: 'Variable', value: `old_${columnName}` } as any;
@@ -1069,6 +1304,7 @@ ${deleteBlocks.join(';\n')}`;
     Object.entries(setData).forEach(([columnName, value]) => {
       const column = table.columns[columnName];
       if (!column) return;
+      if (this.isInlineObjectColumn(column)) return;
       
       const predicate = this.getPredicateForColumn(column, table);
       const literalTerm = this.buildLiteralTerm(value, column);
@@ -1152,160 +1388,7 @@ ${deleteBlocks.join(';\n')}`;
   // 生成主体 URI
   generateSubjectUri(record: any, table: PodTable): string {
     const normalizedRecord = this.normalizeSubjectInput(record);
-    const preferString = (value: unknown): string | null => {
-      if (typeof value === 'string' && value.length > 0) {
-        return value;
-      }
-      return null;
-    };
-
-    const columns = (table as any)?.columns ?? {};
-    const hasColumn = (name: string) => Object.prototype.hasOwnProperty.call(columns, name);
-
-    const directSubject = preferString(normalizedRecord['@id'])
-      ?? (!hasColumn('subject') ? preferString(normalizedRecord.subject) : null)
-      ?? (!hasColumn('uri') ? preferString(normalizedRecord.uri) : null);
-    if (directSubject) {
-      return directSubject;
-    }
-
-    const templatedSubject = this.generateSubjectFromTemplate(record, table);
-    if (templatedSubject) {
-      return templatedSubject;
-    }
-
-    const resolveBase = (): string => {
-      const configuredResource =
-        (typeof (table as any).getResourcePath === 'function' && (table as any).getResourcePath()) ||
-        (table as any).config?.base;
-
-      const fromResource = this.toAbsolutePath(configuredResource);
-      if (fromResource) {
-        return fromResource;
-      }
-
-      const configuredContainer =
-        (typeof (table as any).getContainerPath === 'function' && (table as any).getContainerPath()) ||
-        undefined;
-      const fromContainer = this.toAbsolutePath(configuredContainer);
-      if (fromContainer) {
-        return fromContainer;
-      }
-      const userPath = this.extractUserPathFromWebId();
-      if (userPath) {
-        return new URL(userPath, this.podUrl).toString().replace(/\/$/, '');
-      }
-      return this.podUrl.replace(/\/$/, '');
-    };
-
-    const idValue = preferString(normalizedRecord.id);
-    if (idValue) {
-      if (idValue.includes('://')) {
-        return idValue;
-      }
-
-      const base = resolveBase();
-      if (idValue.startsWith('#')) {
-        return `${base}${idValue}`;
-      }
-      return `${base}#${idValue}`;
-    }
-
-    const base = resolveBase();
-    if (base.includes('#')) {
-      return base;
-    }
-
-    return `${base}#me`;
-  }
-
-  // 从 webId 中提取用户路径
-  private extractUserPathFromWebId(): string {
-    if (!this.webId) {
-      return '';
-    }
-
-    try {
-      const url = new URL(this.webId);
-      const pathParts = url.pathname.split('/');
-      if (pathParts.length >= 2) {
-        const username = pathParts[1];
-        return `/${username}/`;
-      }
-    } catch (error) {
-      console.warn('Failed to parse webId:', this.webId, error);
-    }
-
-    return '';
-  }
-
-  private generateSubjectFromTemplate(record: any, table: PodTable): string | null {
-    const template =
-      typeof (table as any).getSubjectTemplate === 'function'
-        ? (table as any).getSubjectTemplate()
-        : table.config.subjectTemplate;
-    if (!template) {
-      return null;
-    }
-    const applied = this.applySubjectTemplate(template, record);
-    if (!applied) {
-      return null;
-    }
-    const absolute = this.toAbsolutePath(applied);
-    return absolute ?? null;
-  }
-
-  private applySubjectTemplate(template: string, record: any): string | null {
-    if (!template.includes('{')) {
-      return template;
-    }
-
-    let missingReplacement = false;
-    const replaced = template.replace(/\{([^}]+)\}/g, (match, key, offset) => {
-      const rawValue = record?.[key];
-      if (rawValue === undefined || rawValue === null) {
-        missingReplacement = true;
-        return '';
-      }
-      let value = String(rawValue);
-      const previousChar = offset > 0 ? template[offset - 1] : '';
-      if (previousChar === '#' && value.startsWith('#')) {
-        value = value.slice(1);
-      }
-      return value;
-    });
-
-    return missingReplacement ? null : replaced;
-  }
-
-  private toAbsolutePath(path: string | null | undefined): string | null {
-    if (!path || path.length === 0) {
-      return null;
-    }
-    if (/^[a-zA-Z][\w+.-]*:\/\//.test(path)) {
-      return path.replace(/\/$/, '');
-    }
-    const sanitized = path.replace(/^(\.\/)+/, '');
-    const trimmed = sanitized.replace(/^\/+/, '');
-    const userPath = this.extractUserPathFromWebId().replace(/^\/+|\/+$/g, '');
-    const needsPrefix =
-      userPath.length > 0 &&
-      trimmed.length > 0 &&
-      trimmed !== userPath &&
-      !trimmed.startsWith(`${userPath}/`);
-
-    const relative = trimmed.length === 0
-      ? userPath
-      : needsPrefix ? `${userPath}/${trimmed}` : trimmed;
-
-    const base = this.podUrl.endsWith('/') ? this.podUrl : `${this.podUrl}/`;
-    const normalized = relative && !relative.startsWith('/') ? `/${relative}` : `/${relative ?? ''}`;
-    try {
-      const url = new URL(normalized, base).toString();
-      return url.replace(/\/$/, '');
-    } catch {
-      return null;
-    }
+    return subjectResolver.resolve(table, normalizedRecord);
   }
 
   private normalizeSubjectInput(record: any): Record<string, any> {
@@ -1366,8 +1449,9 @@ ${deleteBlocks.join(';\n')}`;
   }
 
   private buildUpdateStatementsForRecord(resourceUri: string, setData: Record<string, any>, table: PodTable): string | null {
-    const deleteStatements: string[] = [];
+    const deleteTriples: string[] = [];
     const insertTriples: string[] = [];
+    const wherePatterns: string[] = [];
 
     Object.entries(setData).forEach(([columnName, originalValue], index) => {
       const column = table.columns[columnName];
@@ -1381,38 +1465,52 @@ ${deleteBlocks.join(';\n')}`;
         value = trimmed.length > 0 ? trimmed : null;
       }
 
-      const predicate = this.getPredicateForColumn(column, table);
-      const variableName = `?value${index}`;
+      if (this.isInlineObjectColumn(column)) {
+        const predicate = this.getPredicateForColumn(column, table);
+        const inlineValues = Array.isArray(value) ? value : value === null ? [] : [value];
+        inlineValues.forEach((inlineValue, childIndex) => {
+          if (!inlineValue) return;
+          const childIri = subjectResolver.resolveInlineChild(resourceUri, column.name, inlineValue, childIndex);
+          insertTriples.push(`<${resourceUri}> <${predicate}> <${childIri}> .`);
+          insertTriples.push(...this.buildInlineChildTripleStrings(childIri, inlineValue, table));
+        });
+        deleteTriples.push(`<${resourceUri}> <${predicate}> ?old_${column.name} .`);
+        deleteTriples.push(`?old_${column.name} ?p_${column.name} ?o_${column.name} .`);
+        wherePatterns.push(`OPTIONAL { <${resourceUri}> <${predicate}> ?old_${column.name} . ?old_${column.name} ?p_${column.name} ?o_${column.name} . }`);
+        return;
+      }
 
-      const deletePattern = this.buildTripleStringPattern(
-        `<${resourceUri}>`,
-        variableName,
-        predicate,
-        column,
-        table
-      );
-      deleteStatements.push(`DELETE WHERE {\n  ${deletePattern} .\n}`);
-      if (value !== null && value !== undefined) {
-        const formattedValue = this.formatColumnValue(value, column);
-        const insertPattern = this.buildTripleStringPattern(
-          `<${resourceUri}>`,
-          formattedValue,
-          predicate,
-          column,
-          table
-        );
-        insertTriples.push(`  ${insertPattern} .`);
+      const predicate = this.getPredicateForColumn(column, table);
+      const variableName = `old_${columnName}_${index}`;
+      const isInverse = this.isInverseColumn(column, table);
+
+      if (isInverse) {
+        // For inverse columns, swap subject and object
+        deleteTriples.push(`?${variableName} <${predicate}> <${resourceUri}> .`);
+        wherePatterns.push(`OPTIONAL { ?${variableName} <${predicate}> <${resourceUri}> . }`);
+        if (value !== null && value !== undefined) {
+          const formattedValue = this.formatColumnValue(value, column);
+          insertTriples.push(`${formattedValue} <${predicate}> <${resourceUri}> .`);
+        }
+      } else {
+        deleteTriples.push(`<${resourceUri}> <${predicate}> ?${variableName} .`);
+        wherePatterns.push(`OPTIONAL { <${resourceUri}> <${predicate}> ?${variableName} . }`);
+        if (value !== null && value !== undefined) {
+          const formattedValue = this.formatColumnValue(value, column);
+          insertTriples.push(`<${resourceUri}> <${predicate}> ${formattedValue} .`);
+        }
       }
     });
 
-    if (deleteStatements.length === 0 && insertTriples.length === 0) {
+    if (deleteTriples.length === 0 && insertTriples.length === 0) {
       return null;
     }
 
-    const deleteBlock = deleteStatements.length > 0 ? deleteStatements.join(';\n') : '';
-    const insertBlock = insertTriples.length > 0 ? `INSERT DATA {\n${insertTriples.join('\n')}\n}` : '';
+    const deleteBlock = deleteTriples.length > 0 ? `DELETE {\n  ${deleteTriples.join('\n  ')}\n}` : '';
+    const insertBlock = insertTriples.length > 0 ? `INSERT {\n  ${insertTriples.join('\n  ')}\n}` : 'INSERT { }';
+    const whereBlock = wherePatterns.length > 0 ? `WHERE {\n  ${wherePatterns.join('\n  ')}\n}` : 'WHERE { }';
 
-    return [deleteBlock, insertBlock].filter(Boolean).join(';\n');
+    return [deleteBlock, insertBlock, whereBlock].filter(Boolean).join('\n');
   }
 
   private isQueryCondition(value: any): value is QueryCondition {
@@ -1510,6 +1608,10 @@ ${deleteBlocks.join(';\n')}`;
     this.prefixes[prefix] = uri;
   }
 
+  getRdfTypePredicate(): string {
+    return 'http://www.w3.org/1999/02/22-rdf-syntax-ns#type';
+  }
+
   // 主要的转换方法 - 从 SQL 对象转换为 SPARQL
   convert(sql: SQL): SPARQLQuery {
     const sqlString = sql.queryChunks.join('');
@@ -1573,6 +1675,75 @@ ${deleteBlocks.join(';\n')}`;
     }
   }
 
+  private isInlineObjectColumn(column: any): boolean {
+    if (!column) return false;
+    if (column.dataType === 'object') return true;
+    if (column.dataType === 'array') {
+      const elem = (column as any).elementType ?? column.options?.baseType;
+      return elem === 'object';
+    }
+    return false;
+  }
+
+  private buildInlineChildTriples(childIri: string, inlineValue: Record<string, any>, table: PodTable): any[] {
+    const triples: any[] = [];
+    const subject: any = { termType: 'NamedNode', value: childIri };
+    const namespaceUri = table.config.namespace?.uri ?? table.config.namespace;
+
+    Object.entries(inlineValue || {}).forEach(([key, raw]) => {
+      if (key === 'id' || key === '@id') return;
+      if (raw === undefined || raw === null) return;
+      const predicate = key.startsWith('http://') || key.startsWith('https://')
+        ? key
+        : namespaceUri
+          ? `${namespaceUri}${key}`
+          : `http://example.org/${key}`;
+
+      const values = Array.isArray(raw) ? raw : [raw];
+      values.forEach((entry) => {
+        const term = this.buildLiteralTerm(entry);
+        triples.push({
+          subject,
+          predicate: { termType: 'NamedNode', value: predicate },
+          object: term
+        });
+      });
+    });
+
+    return triples;
+  }
+
+  private buildInlineChildTripleStrings(childIri: string, inlineValue: Record<string, any>, table: PodTable): string[] {
+    const namespaceUri = table.config.namespace?.uri ?? table.config.namespace;
+    const lines: string[] = [];
+
+    Object.entries(inlineValue || {}).forEach(([key, raw]) => {
+      if (key === 'id' || key === '@id') return;
+      if (raw === undefined || raw === null) return;
+      const predicate = key.startsWith('http://') || key.startsWith('https://')
+        ? key
+        : namespaceUri
+          ? `${namespaceUri}${key}`
+          : `http://example.org/${key}`;
+      const values = Array.isArray(raw) ? raw : [raw];
+      values.forEach((entry) => {
+        const formattedValue = this.formatColumnValue(entry, undefined);
+        lines.push(`  <${childIri}> <${predicate}> ${formattedValue} .`);
+      });
+    });
+
+    return lines;
+  }
+
+  private buildInlineCascadeDeleteBlocks(resourceUri: string, table: PodTable): string[] {
+    const blocks: string[] = [];
+    Object.values(table.columns).forEach((column) => {
+      if (!this.isInlineObjectColumn(column)) return;
+      const predicate = this.getPredicateForColumn(column, table);
+      blocks.push(`DELETE WHERE {\n  <${resourceUri}> <${predicate}> ?inline_obj_${column.name} .\n  ?inline_obj_${column.name} ?p_${column.name} ?o_${column.name} .\n}`);
+    });
+    return blocks;
+  }
   // 解析 Drizzle SQL AST（这是关键部分）
   parseDrizzleAST(sql: SQL, table: PodTable): any {
     // 这里需要解析 Drizzle 的 SQL AST

@@ -39,7 +39,7 @@ async function createSessionInstance(): Promise<Session> {
   return session;
 }
 
-async function createSessionInstanceWithRetry(attempts = 3, delayMs = 2000): Promise<Session> {
+async function createSessionInstanceWithRetry(attempts = 5, delayMs = 2000): Promise<Session> {
   let lastError: unknown;
   for (let i = 0; i < attempts; i++) {
     try {
@@ -97,15 +97,21 @@ if (process.env.SOLID_ENABLE_REAL_TESTS !== 'false') {
 function derivePodBaseFromWebId(webId: string): string {
   const url = new URL(webId);
   url.hash = '';
+  const origin = `${url.protocol}//${url.host}`;
   const segments = url.pathname.split('/').filter(Boolean);
-  const podSegment = segments[0] ? `${segments[0]}/` : '';
-  url.pathname = `/${podSegment}`;
-  return url.toString();
+  if (segments.length > 0 && segments[0] !== 'profile') {
+    return `${origin}/${segments[0]}/`;
+  }
+  return `${origin}/`;
 }
 
 function normalizeContainerUrl(baseUrl: string, containerPath: string): string {
   const normalizedBase = baseUrl.endsWith('/') ? baseUrl : `${baseUrl}/`;
-  const normalizedPath = containerPath.replace(/^\/+/, '');
+  const podId = normalizedBase.split('/').filter(Boolean).pop() ?? '';
+  let normalizedPath = containerPath.replace(/^\/+/, '');
+  if (podId && normalizedPath.startsWith(`${podId}/`)) {
+    normalizedPath = normalizedPath.slice(podId.length + 1);
+  }
   const url = new URL(normalizedPath, normalizedBase);
   if (!url.pathname.endsWith('/')) {
     url.pathname = `${url.pathname}/`;
@@ -129,21 +135,80 @@ export async function ensureContainer(session: Session, containerPath: string): 
 
   const headResponse = await headResource(fetchFn, containerUrl);
 
-  if (headResponse.status === 404) {
-    const createResponse = await fetchFn(containerUrl, {
-      method: 'PUT',
-      headers: {
-        'Content-Type': 'text/turtle',
-        'Link': '<http://www.w3.org/ns/ldp#BasicContainer>; rel="type"'
+  if (headResponse.status === 404 || headResponse.status >= 500) {
+    let createResponse: Response | null = null;
+    let lastError: unknown;
+    
+    // Retry loop for creation - increased retries for stability
+    const maxRetries = 5;
+    for (let i = 0; i < maxRetries; i++) {
+      try {
+        const response = await fetchFn(containerUrl, {
+          method: 'PUT',
+          headers: {
+            'Content-Type': 'text/turtle',
+            'Link': '<http://www.w3.org/ns/ldp#BasicContainer>; rel="type"'
+          }
+        });
+        
+        if (response.ok || response.status === 409 || response.status === 201 || response.status === 200) {
+          createResponse = response;
+          break;
+        }
+        
+        if (response.status >= 500) {
+           console.warn(`[ensureContainer] Attempt ${i + 1}/${maxRetries} failed with ${response.status}, retrying...`);
+           await new Promise(r => setTimeout(r, 2000));
+           createResponse = response; // Keep last response
+           continue;
+        }
+        
+        createResponse = response;
+        throw new Error(`Failed to create container ${containerUrl}: ${response.status} ${response.statusText}`);
+      } catch (e) {
+        lastError = e;
+        console.warn(`[ensureContainer] Attempt ${i + 1}/${maxRetries} failed with error:`, e);
+        if (i < maxRetries - 1) await new Promise(r => setTimeout(r, 2000));
       }
-    });
-
-    if (!createResponse.ok && createResponse.status !== 409) {
-      throw new Error(`Failed to create container ${containerUrl}: ${createResponse.status} ${createResponse.statusText}`);
     }
+
+    if (!createResponse && lastError) {
+        // Re-throw last error if we failed all retries and didn't get a response object to check
+        throw lastError;
+    }
+    
+    if (createResponse && !createResponse.ok && createResponse.status !== 409 && createResponse.status !== 201 && createResponse.status !== 200) {
+        // Double check if it exists now despite error
+        try {
+           const check = await headResource(fetchFn, containerUrl);
+           if (check.ok || check.status === 409) {
+             console.log(`[ensureContainer] Container ${containerUrl} exists after failed creation attempt.`);
+           } else {
+             throw new Error(`Failed to create container ${containerUrl}: ${createResponse.status} ${createResponse.statusText}`);
+           }
+        } catch (e) {
+           throw new Error(`Failed to create container ${containerUrl}: ${createResponse.status} ${createResponse.statusText}`);
+        }
+    }
+
   } else if (!headResponse.ok && headResponse.status !== 409) {
     throw new Error(`Failed to access container ${containerUrl}: ${headResponse.status} ${headResponse.statusText}`);
   }
+
+  // Always ensure ACL grants current webId control
+  const aclUrl = `${containerUrl}.acl`;
+  const aclBody = `<#owner>
+    a <http://www.w3.org/ns/auth/acl#Authorization>;
+    <http://www.w3.org/ns/auth/acl#agent> <${webId}>;
+    <http://www.w3.org/ns/auth/acl#accessTo> <${containerUrl}>;
+    <http://www.w3.org/ns/auth/acl#default> <${containerUrl}>;
+    <http://www.w3.org/ns/auth/acl#mode> <http://www.w3.org/ns/auth/acl#Read>, <http://www.w3.org/ns/auth/acl#Write>, <http://www.w3.org/ns/auth/acl#Control>, <http://www.w3.org/ns/auth/acl#Append>.`;
+
+  await fetchFn(aclUrl, {
+    method: 'PUT',
+    headers: { 'Content-Type': 'text/turtle' },
+    body: aclBody
+  });
 
   return containerUrl;
 }

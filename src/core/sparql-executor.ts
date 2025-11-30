@@ -172,14 +172,14 @@ export class ComunicaSPARQLExecutor {
     }
   }
 
-  // Execute SELECT query directly - 简化版本，直接读取资源
+  // Execute SELECT query directly - 简化版本，使用完整的 SPARQL 查询处理
   async executeSelect(query: string): Promise<any[]> {
     try {
       if (this.logging) {
         console.log('[SPARQL] Executing SELECT query with full processing');
       }
       
-      // 使用完整的 SPARQL 查询处理而不是简化版本
+      // 使用完整的 SPARQL 查询处理
       const sparqlQuery: SPARQLQuery = {
         type: 'SELECT',
         query: query.trim()
@@ -197,44 +197,22 @@ export class ComunicaSPARQLExecutor {
       }
 
       return await this.executeQueryWithSource(sparqlQuery, sourceUrl);
-      
-      const results: any[] = [];
-      
-      for (const source of this.sources) {
-        try {
-          const response = await this.fetchFn(source, {
-            method: 'GET',
-            headers: {
-              'Accept': 'text/turtle, application/n-triples, application/rdf+xml'
-            }
-          });
-          
-          if (response.ok) {
-            const data = await response.text();
-            if (this.logging) {
-              console.log(`[Simple] Raw data from ${source}:`, data.substring(0, 200) + '...');
-            }
-            
-            // 简单解析，返回原始数据
-            results.push({ source, data, success: true });
-          } else {
-            console.warn(`GET failed for ${source}: ${response.status} ${response.statusText}`);
-            results.push({ source, error: `${response.status} ${response.statusText}`, success: false });
-          }
-        } catch (error: unknown) {
-          const errorMessage = this.formatError(error);
-          console.warn(`Error reading ${source}:`, errorMessage);
-          results.push({ source, error: errorMessage, success: false });
-        }
-      }
-      
-      return results;
     } catch (error: unknown) {
       if (this.logging) {
         console.error('[Simple] SELECT query execution failed:', this.formatError(error));
       }
       throw error;
     }
+  }
+
+  // Execute raw bindings query
+  async queryBindings(query: string, sourceUrl: string): Promise<any[]> {
+    const engine = await this.initEngine();
+    const bindingsStream = await engine.queryBindings(query, {
+      sources: [sourceUrl] as [string, ...string[]],
+      fetch: this.fetchFn
+    });
+    return await bindingsStream.toArray();
   }
 
   // Execute SELECT query
@@ -490,6 +468,12 @@ export class ComunicaSPARQLExecutor {
     } catch (error: unknown) {
       console.error('UPDATE query failed:', this.formatError(error));
       throw error;
+    }
+  }
+
+  public async invalidateHttpCache(url: string): Promise<void> {
+    if (this.engine) {
+      await this.invalidateCache(this.engine, url);
     }
   }
 

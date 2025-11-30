@@ -408,14 +408,27 @@ export class TypeIndexManager {
   private getUserBaseUrl(): string {
     const normalize = (base: string): string => (base.endsWith('/') ? base : `${base}/`);
 
-    if (this.podUrl && this.podUrl.trim().length > 0) {
+    const derive = (raw?: string): string | null => {
+      if (!raw || raw.trim().length === 0) return null;
       try {
-        const pod = new URL(this.podUrl);
-        return normalize(`${pod.origin}${pod.pathname.replace(/\/+$/, '')}`);
+        const url = new URL(raw);
+        const segments = url.pathname.split('/').filter(Boolean);
+        const first = segments[0];
+        const path =
+          first && first !== 'profile'
+            ? `/${first}/`
+            : '/';
+        return normalize(`${url.origin}${path}`);
       } catch {
-        return normalize(this.podUrl);
+        return null;
       }
-    }
+    };
+
+    const fromPod = derive(this.podUrl);
+    if (fromPod) return fromPod;
+
+    const fromWebId = derive(this.webId);
+    if (fromWebId) return fromWebId;
 
     try {
       const url = new URL(this.webId);
@@ -441,6 +454,7 @@ export class TypeIndexManager {
 
       // 查找所有类型注册条目
       const things = getThingAll(dataset);
+      console.log(`[TypeIndex] Discovery on ${targetTypeIndexUrl} found ${things.length} things.`);
       
       for (const thing of things) {
         const type = getUrl(thing, RDF_PREDICATES.RDF_TYPE);
@@ -448,8 +462,9 @@ export class TypeIndexManager {
           const forClass = getUrl(thing, 'http://www.w3.org/ns/solid/terms#forClass');
           const instanceContainer = getUrl(thing, 'http://www.w3.org/ns/solid/terms#instanceContainer');
           const name = getStringNoLocale(thing, RDF_PREDICATES.FOAF_NAME);
-
-          if (forClass && instanceContainer && name) {
+          
+          // Relaxed check: allow missing name if forClass is present (common issue with different vocabularies)
+          if (forClass && instanceContainer) {
             // 将绝对 URL 转换为相对路径，确保以斜杠结尾
             let containerPath = instanceContainer.replace(this.podUrl, '');
             if (!containerPath.endsWith('/')) {
@@ -459,7 +474,7 @@ export class TypeIndexManager {
             entries.push({
               rdfClass: forClass,
               containerPath: containerPath,
-              forClass: name,
+              forClass: name || this.deriveNameFromRdfClass(forClass), // Fallback name
               instanceContainer: instanceContainer
             });
           }
@@ -470,6 +485,15 @@ export class TypeIndexManager {
     } catch (error) {
       console.error('Error discovering types:', error);
       return [];
+    }
+  }
+
+  private deriveNameFromRdfClass(rdfClass: string): string {
+    try {
+      const url = new URL(rdfClass);
+      return url.hash ? url.hash.slice(1) : url.pathname.split('/').pop() || 'Unknown';
+    } catch {
+      return 'Unknown';
     }
   }
 

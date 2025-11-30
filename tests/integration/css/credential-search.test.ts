@@ -74,7 +74,21 @@ describe('CSS integration: credential repository search filters', () => {
   };
 
   const resetResource = async () => {
-    await session.fetch(resourceUrl, { method: 'DELETE' }).catch(() => undefined);
+    // Try to delete resource
+    for (let i = 0; i < 3; i++) {
+      try {
+        const response = await session.fetch(resourceUrl, { method: 'DELETE' });
+        if (response.status === 404 || response.ok) {
+          // Verify it's gone
+          const check = await session.fetch(resourceUrl, { method: 'HEAD' });
+          if (check.status === 404) return;
+        }
+      } catch (e) {
+        console.warn(`[resetResource] Error deleting resource:`, e);
+      }
+      await new Promise(resolve => setTimeout(resolve, 500));
+    }
+    console.warn(`[resetResource] Failed to ensure resource deletion: ${resourceUrl}`);
   };
 
   test('applies search filter across configured searchable fields', async () => {

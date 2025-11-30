@@ -195,39 +195,9 @@ export class PodAsyncSession {
     return await this.dialect.executeSql(sql, table);
   }
 
-  async executeComplexUpdate(
-    table: PodTable,
-    data: Record<string, any>,
-    condition: QueryCondition
-  ): Promise<any[]> {
-    console.log('[PodAsyncSession] Executing complex update for table:', table.config.name);
-    await this.ensureInitialized(table);
-    return await this.dialect.executeComplexUpdate(
-      {
-        type: 'update',
-        table,
-        data,
-        where: condition
-      } as PodOperation,
-      condition
-    );
-  }
 
-  async executeComplexDelete(
-    table: PodTable,
-    condition: QueryCondition
-  ): Promise<any[]> {
-    console.log('[PodAsyncSession] Executing complex delete for table:', table.config.name);
-    await this.ensureInitialized(table);
-    return await this.dialect.executeComplexDelete(
-      {
-        type: 'delete',
-        table,
-        where: condition
-      } as PodOperation,
-      condition
-    );
-  }
+
+
 
   // SELECT 查询构建器
   select<TTable extends PodTable<any>>(fields?: SelectFieldMap): SelectQueryBuilder<TTable> {
@@ -253,12 +223,8 @@ export class PodAsyncSession {
   async transaction<T>(
     transaction: (tx: PodAsyncSession) => Promise<T>
   ): Promise<T> {
-    try {
-      const result = await transaction(this);
-      return result;
-    } catch (error) {
-      throw error;
-    }
+    const result = await transaction(this);
+    return result;
   }
 }
 
@@ -615,7 +581,7 @@ export class SelectQueryBuilder<TTable extends PodTable<any> = PodTable<any>> {
         orderBy: this.orderByClauses.length > 0 ? this.orderByClauses : undefined,
         distinct: this.isDistinct || undefined
       };
-      const hasJoins = this.joins.length > 0;
+    const hasJoins = this.joins.length > 0;
       const useAggregateFallback = this.shouldUseAggregateFallback();
 
       if (hasJoins || useAggregateFallback) {
@@ -628,46 +594,55 @@ export class SelectQueryBuilder<TTable extends PodTable<any> = PodTable<any>> {
         throw new Error('Mixed aggregate and non-aggregate selections require groupBy columns');
       }
 
+      let intermediateRows: Record<string, any>[];
       if (!hasJoins && !useAggregateFallback) {
         if (this.selectedFields) {
           operation.select = this.selectedFields;
         }
-        let directResults = await this.session.execute(operation) as Record<string, any>[];
-        directResults = this.applySubjectMetadata(directResults);
-        if (this.selectedFields) {
-          return directResults.map((row) => this.projectSelectedRow(row)) as InferTableData<TTable>[];
-        }
-        return directResults as InferTableData<TTable>[];
-      }
-
-      if (hasJoins) {
-        operation.select = undefined;
-      } else if (!useAggregateFallback) {
-        operation.select = this.selectedFields;
-      } else {
-        operation.select = undefined;
-      }
-
-      let intermediateRows = await this.session.execute(operation) as Record<string, any>[];
-      if (!hasJoins) {
+        intermediateRows = await this.session.execute(operation) as Record<string, any>[];
         intermediateRows = this.applySubjectMetadata(intermediateRows);
-      }
+      } else {
+        if (hasJoins) {
+          operation.select = undefined;
+        } else if (!useAggregateFallback) {
+          operation.select = this.selectedFields;
+        } else {
+          operation.select = undefined;
+        }
 
-      if (hasJoins) {
-        intermediateRows = this.normalizeBaseRows(intermediateRows);
-        intermediateRows = await this.applyJoinFallback(intermediateRows);
-        intermediateRows = this.applyJoinFilters(intermediateRows);
+        intermediateRows = await this.session.execute(operation) as Record<string, any>[];
+        if (!hasJoins) {
+          intermediateRows = this.applySubjectMetadata(intermediateRows);
+        }
+
+        if (hasJoins) {
+          intermediateRows = this.normalizeBaseRows(intermediateRows);
+          intermediateRows = await this.applyJoinFallback(intermediateRows);
+          intermediateRows = this.applyJoinFilters(intermediateRows);
+        }
       }
 
       if (useAggregateFallback) {
         return this.handleAggregateFallback(intermediateRows) as InferTableData<TTable>[];
       }
 
-      if (this.selectedFields) {
-        return intermediateRows.map((row) => this.projectSelectedRow(row)) as InferTableData<TTable>[];
+      let finalRows = intermediateRows;
+
+      if (!hasJoins) {
+        finalRows = this.mergeRowsBySubject(finalRows);
       }
 
-      return intermediateRows as InferTableData<TTable>[];
+      if (this.selectedTable) {
+        finalRows = await this.hydrateInlineColumns(finalRows, this.selectedTable);
+      }
+
+      if (this.selectedFields) {
+        finalRows = finalRows.map((row) => this.projectSelectedRow(row));
+      }
+
+      finalRows = this.mergeRowsBySubject(finalRows);
+
+      return finalRows as InferTableData<TTable>[];
     }
   }
 
@@ -987,7 +962,10 @@ export class SelectQueryBuilder<TTable extends PodTable<any> = PodTable<any>> {
   }
 
   private attachSubjectMetadata(row: Record<string, any>): Record<string, any> {
-    const subjectValue = row.subject;
+    const subjectValue =
+      typeof row.subject === 'object' && row.subject && 'value' in row.subject
+        ? (row.subject as any).value
+        : row.subject;
     if (typeof subjectValue === 'string' && subjectValue.length > 0) {
       if (row['@id'] === undefined) {
         row['@id'] = subjectValue;
@@ -1040,6 +1018,217 @@ export class SelectQueryBuilder<TTable extends PodTable<any> = PodTable<any>> {
 
       return result;
     });
+  }
+
+  private async hydrateInlineColumns(
+    rows: Record<string, any>[],
+    table: PodTable<any>
+  ): Promise<Record<string, any>[]> {
+    if (!rows.length) {
+      return rows;
+    }
+    rows = this.mergeRowsBySubject(rows);
+    const inlineColumns = (Object.values(table.columns ?? {}) as PodColumnBase[]).filter((col) =>
+      this.isInlineObjectColumn(col)
+    );
+    if (inlineColumns.length === 0) {
+      return rows;
+    }
+
+    const predicateToColumn = new Map<string, PodColumnBase>();
+    inlineColumns.forEach((col) => {
+      const predicate = col.getPredicate(table.config.namespace as any);
+      predicateToColumn.set(predicate, col);
+    });
+
+    const parentIris = Array.from(
+      new Set(
+        rows
+          .map((row) =>
+            this.normalizeInlineIri(row['@id'] ?? row.subject ?? row.uri ?? row.id)
+          )
+          .filter((v): v is string => !!v)
+      )
+    );
+
+    if (parentIris.length === 0 || predicateToColumn.size === 0) {
+      return rows;
+    }
+
+    const parentClause = parentIris.map((iri) => `<${iri}>`).join(' ');
+    const predicateClause = Array.from(predicateToColumn.keys())
+      .map((p) => `<${p}>`)
+      .join(' ');
+    const sourceUrl = this.inferSourceFromChild(parentIris[0], table);
+    const sparql = {
+      type: 'SELECT' as const,
+      query: `SELECT ?parent ?linkPred ?child ?pred ?obj WHERE {
+  VALUES ?parent { ${parentClause} }
+  VALUES ?linkPred { ${predicateClause} }
+  ?parent ?linkPred ?child .
+  OPTIONAL { ?child ?pred ?obj . }
+}`,
+      prefixes: {}
+    };
+
+    const executor = this.session.getDialect().getSPARQLExecutor();
+    const resultBindings = await executor.executeQueryWithSource(sparql, sourceUrl);
+
+    const inlineNamespace = table.config.namespace?.uri ?? (table.config.namespace as any);
+    const parentMap = new Map<string, Map<string, string[]>>();
+    const childMap = new Map<string, Record<string, any>>();
+    resultBindings.forEach((binding: any) => {
+      const parentIri = this.normalizeInlineIri(binding.parent);
+      const linkPred = this.normalizeInlineIri(binding.linkPred);
+      const childIri = this.normalizeInlineIri(binding.child);
+      const pred = this.normalizeInlineIri(binding.pred);
+      const obj = this.normalizeInlineObjectValue(binding.obj);
+      if (!parentIri || !linkPred) return;
+      const column = predicateToColumn.get(linkPred);
+      if (column) {
+        const perParent = parentMap.get(parentIri) ?? new Map<string, string[]>();
+        const list = perParent.get(column.name) ?? [];
+        if (childIri && !list.includes(childIri)) {
+          list.push(childIri);
+        }
+        perParent.set(column.name, list);
+        parentMap.set(parentIri, perParent);
+      }
+      if (!childIri || !pred) return;
+      const child = childMap.get(childIri) ?? { '@id': childIri, id: this.extractIdFromSubject(childIri) };
+      const key = inlineNamespace && pred.startsWith(inlineNamespace) ? pred.slice(inlineNamespace.length) : pred;
+      if (obj === undefined) {
+        childMap.set(childIri, child);
+        return;
+      }
+      const existing = child[key];
+      if (existing === undefined) {
+        child[key] = obj;
+      } else if (Array.isArray(existing)) {
+        child[key] = [...existing, obj];
+      } else {
+        child[key] = [existing, obj];
+      }
+      childMap.set(childIri, child);
+    });
+
+    const fallbackNormalize = (value: any): string[] => {
+      if (Array.isArray(value)) {
+        return value.map((entry) => this.normalizeInlineIri(entry)).filter((v): v is string => !!v);
+      }
+      const single = this.normalizeInlineIri(value);
+      return single ? [single] : [];
+    };
+
+    const hydrateValue = (parentKey: string | undefined, raw: any, column: any): any => {
+      const irisFromParent = parentKey ? parentMap.get(parentKey)?.get(column.name) ?? [] : [];
+      const iris = irisFromParent.length > 0 ? irisFromParent : fallbackNormalize(raw);
+      const objects = iris.map((iri) => childMap.get(iri) ?? { '@id': iri, id: this.extractIdFromSubject(iri) });
+      if (column.dataType === 'array') {
+        return objects;
+      }
+      return objects[0] ?? null;
+    };
+
+    rows.forEach((row) => {
+      const parentKey = this.normalizeInlineIri(row['@id'] ?? row.subject ?? row.uri ?? row.id);
+      inlineColumns.forEach((col) => {
+        (row as any)[col.name] = hydrateValue(parentKey, (row as any)[col.name], col);
+      });
+    });
+
+    return rows;
+  }
+
+  private normalizeInlineObjectValue(value: any): any {
+    if (value === null || value === undefined) return undefined;
+    if (typeof value === 'object' && 'value' in value) {
+      const term: any = value;
+      return term.value ?? undefined;
+    }
+    return value;
+  }
+
+  private normalizeInlineIri(value: any): string | undefined {
+    if (!value) return undefined;
+    if (typeof value === 'string') return value;
+    if (typeof value === 'object' && typeof value['@id'] === 'string') return value['@id'];
+    if (typeof value === 'object' && typeof value.id === 'string' && value.id.includes('http')) return value.id;
+    if (typeof value === 'object' && typeof value.value === 'string') return value.value;
+    return undefined;
+  }
+
+  private mergeRowsBySubject(rows: Record<string, any>[]): Record<string, any>[] {
+    const merged = new Map<string, Record<string, any>>();
+    const order: string[] = [];
+    rows.forEach((row) => {
+      const key =
+        this.normalizeInlineIri(row['@id']) ??
+        this.normalizeInlineIri(row.subject) ??
+        this.normalizeInlineIri(row.uri) ??
+        (typeof row.id === 'string' ? row.id : undefined);
+      if (process.env.DEBUG_INLINE_MERGE === '1') {
+        console.log('mergeRowsBySubject key', key);
+      }
+      if (!key) {
+        order.push(`__anon_${order.length}`);
+        merged.set(order[order.length - 1], { ...row });
+        return;
+      }
+      if (!merged.has(key)) {
+        merged.set(key, { ...row });
+        order.push(key);
+        return;
+      }
+      const target = merged.get(key)!;
+      Object.entries(row).forEach(([col, value]) => {
+        if (value === undefined) return;
+        const existing = target[col];
+        if (existing === undefined) {
+          target[col] = value;
+          return;
+        }
+        const existingArr = Array.isArray(existing) ? existing : [existing];
+        const incomingArr = Array.isArray(value) ? value : [value];
+        const combined = [...existingArr];
+        incomingArr.forEach((entry) => {
+          if (!combined.some((item) => item === entry)) {
+            combined.push(entry);
+          }
+        });
+        target[col] = combined.length === 1 ? combined[0] : combined;
+      });
+    });
+    const result = order.map((key) => merged.get(key)!);
+    return result;
+  }
+
+  private inferSourceFromChild(childIri: string, table: PodTable<any>): string {
+    if (!childIri) {
+      return this.session.getDialect().getPodUrl();
+    }
+    const hashIndex = childIri.indexOf('#');
+    if (hashIndex > 0) {
+      return childIri.slice(0, hashIndex);
+    }
+    const resourcePath = table.getResourcePath?.() || table.config.base || table.getContainerPath?.();
+    if (resourcePath) {
+      const absolute = resourcePath.startsWith('http')
+        ? resourcePath
+        : `${this.session.getDialect().getPodUrl()}${resourcePath.replace(/^\//, '')}`;
+      return absolute;
+    }
+    return this.session.getDialect().getPodUrl();
+  }
+
+  private isInlineObjectColumn(column: PodColumnBase): boolean {
+    if (!column) return false;
+    if (column.dataType === 'object') return true;
+    if (column.dataType === 'array') {
+      const elementType = (column as any).elementType ?? column.options?.baseType;
+      return elementType === 'object';
+    }
+    return false;
   }
 
   private async applyJoinFallback(rows: Record<string, any>[]): Promise<Record<string, any>[]> {

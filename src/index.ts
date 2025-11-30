@@ -49,6 +49,7 @@ export {
   podDateTime,
   podJson,
   podObject,
+  id,
   // 命名空间和常量
   RDF_PREDICATES,
   RDF_CLASSES,
@@ -80,6 +81,34 @@ export {
   type TypeIndexEntry,
   type TypeIndexConfig
 } from './core/typeindex-manager';
+
+// DataDiscovery 数据发现
+export {
+  TypeIndexDiscovery,
+  type DataDiscovery,
+  type DataLocation,
+  type DiscoverOptions,
+} from './core/discovery';
+
+// SubjectResolver 主体 URI 解析
+export {
+  SubjectResolverImpl,
+  subjectResolver,
+  type SubjectResolver,
+  type ResourceMode,
+  type ParsedSubject,
+  type TimeContext
+} from './core/subject';
+
+// TripleBuilder 三元组构建
+export {
+  TripleBuilderImpl,
+  tripleBuilder,
+  type TripleBuilder,
+  type Triple,
+  type BuildResult,
+  type ColumnHandler
+} from './core/triple';
 
 // 工具函数
 export {

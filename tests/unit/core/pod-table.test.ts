@@ -19,6 +19,7 @@ import {
   object,
   uri,
   text,
+  id,
   RDF_CLASSES,
   RDF_PREDICATES,
   type PodTableOptions
@@ -126,8 +127,8 @@ describe('PodTable', () => {
   });
 });
 
-describe('PodColumn', () => {
-  describe('PodStringColumn', () => {
+  describe('PodColumn', () => {
+    describe('PodStringColumn', () => {
     let column: PodStringColumn;
 
     beforeEach(() => {
@@ -463,7 +464,7 @@ describe('新的列定义函数', () => {
   });
 });
 
-describe('新的列类型', () => {
+  describe('新的列类型', () => {
   describe('PodJsonColumn', () => {
     let column: PodJsonColumn;
 
@@ -511,6 +512,30 @@ describe('新的列类型', () => {
       const chainedColumn = column.notNull().default({ age: 0 });
       expect(chainedColumn.options.required).toBe(true);
       expect(chainedColumn.options.defaultValue).toEqual({ age: 0 });
+    });
+  });
+
+  describe('id helper', () => {
+    it('should set predicate to @id and be primary key', () => {
+      const column = id('identifier');
+      expect(column.options.predicate).toBe('@id');
+      expect(column.options.primaryKey).toBe(true);
+      expect(column.options.required).toBe(true);
+    });
+  });
+
+  describe('typeIndex option validation', () => {
+    it('should disable TypeIndex when an invalid value is provided', () => {
+      const tableWithInvalidTypeIndex = podTable('badTypeIndex', {
+        id: id()
+      }, {
+        base: '/bad.ttl',
+        type: 'https://schema.org/Thing',
+        typeIndex: 'none' as any
+      });
+
+      expect(tableWithInvalidTypeIndex.shouldRegisterTypeIndex()).toBe(false);
+      expect((tableWithInvalidTypeIndex as any).config.typeIndex).toBeUndefined();
     });
   });
 });
