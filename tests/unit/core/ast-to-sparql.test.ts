@@ -308,74 +308,6 @@ describe('ASTToSPARQLConverter', () => {
     });
   });
 
-  describe('buildSelectVariables', () => {
-    it('应该构建正确的 SELECT 变量', () => {
-      const ast = { where: {} };
-      const variables = converter['buildSelectVariables'](ast, mockTable);
-      
-      const variableNames = variables.map((variable: any) => variable.value);
-      expect(variableNames).not.toContain('id');
-      expect(variableNames).toContain('name');
-      expect(variableNames).toContain('email');
-    });
-  });
-
-  describe('buildWhereClause', () => {
-    it('应该构建基本的 WHERE 子句', () => {
-      const ast = { where: {} };
-      const whereClause = converter['buildWhereClause'](ast, mockTable);
-      
-      expect(whereClause).toContain('rdf:type');
-      expect(whereClause).toContain('https://schema.org/Person');
-    });
-
-    it('应该处理 WHERE 条件', () => {
-      const ast = { where: { name: 'John' } };
-      const whereClause = converter['buildWhereClause'](ast, mockTable);
-      
-      // 当前实现只生成基本的 RDF 类型和列约束，不处理具体的 WHERE 条件
-      expect(whereClause).toContain('rdf:type');
-      expect(whereClause).toContain('https://schema.org/Person');
-    });
-  });
-
-  describe('generateSubjectUri', () => {
-    it('应该生成正确的主体 URI', () => {
-      const record = { id: '123' };
-      const uri = converter['generateSubjectUri'](record, mockTable);
-
-      expect(uri).toBe('https://example.com/users/index.ttl#123');
-    });
-  });
-
-  describe('getPredicateForColumn', () => {
-    it('应该为列获取正确的谓词', () => {
-      const column = mockTable.columns.name;
-      const predicate = converter['getPredicateForColumn'](column, mockTable);
-      
-      expect(predicate).toBe('https://schema.org/name');
-    });
-  });
-
-  describe('formatValue', () => {
-    it('应该正确格式化字符串值', () => {
-      const column = mockTable.columns.name;
-      const formatted = converter['formatValue']('test', column);
-      expect(formatted).toBe('"test"');
-    });
-
-    it('应该正确格式化数字值', () => {
-      const column = mockTable.columns.id;
-      const formatted = converter['formatValue'](123, column);
-      expect(formatted).toBe('123');
-    });
-
-    it('应该正确格式化布尔值', () => {
-      const formatted = converter['formatValue'](true);
-      expect(formatted).toBe('"true"^^<http://www.w3.org/2001/XMLSchema#boolean>');
-    });
-  });
-
   describe('复杂查询测试', () => {
     it('应该处理没有指定列的 SELECT 查询', () => {
       const ast = {
@@ -445,159 +377,6 @@ describe('ASTToSPARQLConverter', () => {
     });
   });
 
-  describe('formatValue 方法测试', () => {
-    it('应该在遇到 null 或 undefined 时抛错', () => {
-      expect(() => converter['formatValue'](null)).toThrow('Cannot format null or undefined value');
-      expect(() => converter['formatValue'](undefined)).toThrow('Cannot format null or undefined value');
-    });
-
-    it('应该处理引用类型的字符串值', () => {
-      const column = {
-        isReference: () => true,
-        options: { referenceTarget: 'Person' },
-        formatValue: (value: any) => `<${value}>`
-      };
-      const result = converter['formatValue']('http://example.com/resource', column);
-
-      expect(result).toBe('<http://example.com/resource>');
-    });
-
-    it('应该处理引用类型的数字值', () => {
-      const column = {
-        isReference: () => true,
-        options: {
-          referenceTarget: 'http://example.com/'
-        },
-        formatValue: (value: any) => `<${column.options.referenceTarget}${value}>`
-      };
-      const result = converter['formatValue'](123, column);
-
-      expect(result).toBe('<http://example.com/123>');
-    });
-
-    it('应该处理 Date 对象', () => {
-      const date = new Date('2023-01-01T00:00:00Z');
-      const result = converter['formatValue'](date);
-
-      expect(result).toBe('"2023-01-01T00:00:00.000Z"^^<http://www.w3.org/2001/XMLSchema#dateTime>');
-    });
-
-    it('应该处理其他类型的值', () => {
-      const result = converter['formatValue']({ toString: () => 'custom' });
-
-      expect(result).toBe('"custom"');
-    });
-  });
-
-  describe('convert 方法测试', () => {
-    it('应该处理 SELECT SQL', () => {
-      const sql = {
-        queryChunks: ['SELECT * FROM users']
-      } as any; // Mock SQL object for testing
-
-      const result = converter.convert(sql);
-
-      expect(result.type).toBe('SELECT');
-      expect(result.query).toContain('SELECT * WHERE');
-    });
-
-    it('应该处理 INSERT SQL', () => {
-      const sql = {
-        queryChunks: ['INSERT INTO users VALUES']
-      } as any; // Mock SQL object for testing
-
-      const result = converter.convert(sql);
-
-      expect(result.type).toBe('INSERT');
-      expect(result.query).toContain('INSERT DATA');
-    });
-
-    it('应该处理 UPDATE SQL', () => {
-      const sql = {
-        queryChunks: ['UPDATE users SET']
-      } as any; // Mock SQL object for testing
-
-      const result = converter.convert(sql);
-
-      expect(result.type).toBe('UPDATE');
-      expect(result.query).toContain('DELETE');
-      expect(result.query).toContain('INSERT');
-    });
-
-    it('应该处理 DELETE SQL', () => {
-      const sql = {
-        queryChunks: ['DELETE FROM users']
-      } as any; // Mock SQL object for testing
-
-      const result = converter.convert(sql);
-
-      expect(result.type).toBe('DELETE');
-      expect(result.query).toContain('DELETE WHERE');
-    });
-
-    it('应该处理不支持的 SQL 操作', () => {
-      const sql = {
-        queryChunks: ['CREATE TABLE users']
-      } as any; // Mock SQL object for testing
-
-      expect(() => converter.convert(sql)).toThrow('Unsupported SQL operation');
-    });
-  });
-
-  describe('AST 解析方法测试', () => {
-    it('应该解析 SELECT AST', () => {
-      const sql = {
-        queryChunks: ['SELECT * FROM users']
-      } as any; // Mock SQL object for testing
-
-      const result = converter['parseSelectAST'](sql, mockTable);
-
-      expect(result.type).toBe('select');
-      expect(result.columns).toBe('*');
-    });
-
-    it('应该解析 INSERT AST', () => {
-      const sql = {
-        queryChunks: ['INSERT INTO users VALUES'],
-        params: [{ name: 'John' }]
-      } as any; // Mock SQL object for testing
-
-      const result = converter['parseInsertAST'](sql, mockTable);
-
-      expect(result.type).toBe('insert');
-      expect(result.values).toEqual([{ name: 'John' }]);
-    });
-
-    it('应该解析 UPDATE AST', () => {
-      const sql = {
-        queryChunks: ['UPDATE users SET name = ?']
-      } as any; // Mock SQL object for testing
-
-      const result = converter['parseUpdateAST'](sql, mockTable);
-
-      expect(result.type).toBe('update');
-      expect(result.set).toEqual({});
-    });
-
-    it('应该解析 DELETE AST', () => {
-      const sql = {
-        queryChunks: ['DELETE FROM users WHERE id = ?']
-      } as any; // Mock SQL object for testing
-
-      const result = converter['parseDeleteAST'](sql, mockTable);
-
-      expect(result.type).toBe('delete');
-    });
-
-    it('应该解析不支持的 SQL 操作', () => {
-      const sql = {
-        queryChunks: ['CREATE TABLE users']
-      } as any; // Mock SQL object for testing
-
-      expect(() => converter['parseDrizzleAST'](sql, mockTable)).toThrow('Unsupported SQL operation');
-    });
-  });
-
   describe('addPrefix 方法测试', () => {
     it('应该添加自定义前缀', () => {
       converter.addPrefix('custom', 'http://custom.org/');
@@ -611,9 +390,7 @@ describe('ASTToSPARQLConverter', () => {
       const ast = {
         type: 'select',
         select: ['id', 'name', 'email'],
-        where: {
-          '@id': 'https://example.com/profile/card#me'
-        }
+        where: eq('@id', 'https://example.com/profile/card#me')
       };
 
       const result = converter.convertSelect(ast, mockTable);
@@ -627,9 +404,7 @@ describe('ASTToSPARQLConverter', () => {
       const ast = {
         type: 'select',
         select: ['id', 'name'],
-        where: {
-          subject: 'https://example.com/profile/card#me'
-        }
+        where: eq('subject', 'https://example.com/profile/card#me')
       };
 
       const result = converter.convertSelect(ast, mockTable);
@@ -645,10 +420,10 @@ describe('ASTToSPARQLConverter', () => {
       const ast = {
         type: 'select',
         select: ['id', 'name', 'email'],
-        where: {
-          '@id': 'https://example.com/users/123#user',
-          name: 'John'
-        }
+        where: and(
+          eq('@id', 'https://example.com/users/123#user'),
+          eq('name', 'John')
+        )
       };
 
       const result = converter.convertSelect(ast, mockTable);

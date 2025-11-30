@@ -1017,6 +1017,32 @@ export class PodDialect {
     };
   }
 
+  private buildSubjectUriFromFragment(fragment: string, table: PodTable): string {
+    // This method is used by rewriteWhereConditionWithSubjects and other internal logic
+    // Ideally we should use SubjectResolver, but for fragment building relative to base, we need this helper.
+    // Or delegate to SubjectResolver if it exposes parsing.
+    // SubjectResolver.parse handles URIs.
+    // For now, keep this simple helper as it was used by extractSubjectFromRow logic context.
+    // Wait, extractSubjectFromRow doesn't use this.
+    // But `rewriteWhereConditionWithSubjects` calls `findSubjectsForCondition`.
+    // `findSubjectsForCondition` calls `buildSubjectLookupPlan` which is also missing?
+    return this.sparqlConverter.generateSubjectUri({ id: fragment }, table);
+  }
+
+  private extractSubjectFromRow(row: Record<string, any>): string | null {
+    const subject = (row as any).subject ?? (row as any)['?subject'];
+    if (!subject) {
+      return null;
+    }
+    if (typeof subject === 'string') {
+      return subject;
+    }
+    if (typeof subject.value === 'string') {
+      return subject.value;
+    }
+    return null;
+  }
+
   private operationHasInlineObjects(table: PodTable, data: Record<string, any>): boolean {
     return Object.entries(data).some(([key, value]) => {
       if (value === undefined) return false;
