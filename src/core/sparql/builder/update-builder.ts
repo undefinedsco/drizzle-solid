@@ -2,8 +2,8 @@ import * as sparqljs from 'sparqljs';
 import { PodTable, PodColumnBase } from '../../pod-table';
 import { SPARQLQuery } from '../types';
 import { getPredicateForColumn, formatValue, generateSubjectUri } from '../helpers';
-import { subjectResolver } from '../../subject';
 import { QueryCondition } from '../../query-conditions';
+import { tripleBuilder } from '../../triple/builder';
 
 export class UpdateBuilder {
   private generator: any;
@@ -14,7 +14,6 @@ export class UpdateBuilder {
     this.prefixes = prefixes;
   }
 
-  // 转换 INSERT 查询 - 使用 sparqljs
   convertInsert(valuesOrPlan: any[] | { table: PodTable; rows: any[] }, table?: PodTable): SPARQLQuery {
     if (!table && !valuesOrPlan) {
       throw new Error('INSERT operation requires a target table');
@@ -76,14 +75,12 @@ export class UpdateBuilder {
       const subjectUri = generateSubjectUri(row, table);
       const subjectTerm = { termType: 'NamedNode', value: subjectUri };
 
-      // rdf:type
       triples.push({
         subject: subjectTerm,
         predicate: { termType: 'NamedNode', value: 'http://www.w3.org/1999/02/22-rdf-syntax-ns#type' },
         object: { termType: 'NamedNode', value: rdfClass }
       });
 
-      // subClassOf
       if (table.config.subClassOf) {
         const parents = Array.isArray(table.config.subClassOf) ? table.config.subClassOf : [table.config.subClassOf];
         parents.forEach(parent => {
@@ -102,18 +99,22 @@ export class UpdateBuilder {
         const column = table.columns[key];
         if (!column) return;
 
-        // Inline object handling omitted for brevity in legacy SPARQL builder, 
-        // assuming LdpExecutor handles complex cases. 
-        // But for completeness we should probably handle basic values.
-        
         const predicate = getPredicateForColumn(column, table);
-        // Handle inverse
+        const isInline =
+          column.dataType === 'object' ||
+          column.dataType === 'json' ||
+          (column.dataType === 'array' && ((column as any).elementType === 'object' || column.options?.baseType === 'object'));
+
+        if (isInline) {
+          const result = tripleBuilder.buildInsert(subjectUri, column, value, table);
+          triples.push(...result.triples.map(this.toSparqlJsTriple), ...(result.childTriples?.map(this.toSparqlJsTriple) ?? []));
+          return;
+        }
+
         if (column.options?.inverse) {
-           // Inverse insert: object <predicate> subject
-           // value is the subject of the inverse triple
            const values = Array.isArray(value) ? value : [value];
            values.forEach(v => {
-             const valStr = String(v).replace(/^<|>$/g, ''); // strip <> if present
+             const valStr = String(v).replace(/^<|>$/g, '');
              triples.push({
                subject: { termType: 'NamedNode', value: valStr },
                predicate: { termType: 'NamedNode', value: predicate },
@@ -124,7 +125,7 @@ export class UpdateBuilder {
         }
 
         const formatted = formatValue(value, column);
-        const objectTerm = this.parseTermString(formatted as string); // Simplified
+        const objectTerm = this.parseTermString(formatted as string);
 
         triples.push({
           subject: subjectTerm,
@@ -136,18 +137,205 @@ export class UpdateBuilder {
     return triples;
   }
 
+  convertUpdate(setData: any, whereConditions: any, table: PodTable): SPARQLQuery {
+    const targetRecords = this.extractSubjectRecords(whereConditions);
+    if (targetRecords.length === 0) {
+      throw new Error('UPDATE operation requires an id or @id condition to target a specific resource');
+    }
+
+    const updates: any[] = [];
+
+    for (const record of targetRecords) {
+      const resourceUri = generateSubjectUri(record, table);
+      const updateBlock = this.buildUpdateBlockForRecord(resourceUri, setData, table);
+      if (updateBlock) {
+        updates.push(updateBlock);
+      }
+    }
+
+    if (updates.length === 0) {
+      throw new Error('No valid update statements generated for provided data');
+    }
+
+    const updateQuery: any = {
+      type: 'update',
+      prefixes: this.prefixes,
+      updates
+    };
+
+    return {
+      type: 'UPDATE',
+      query: this.generator.stringify(updateQuery),
+      prefixes: this.prefixes
+    };
+  }
+
+  convertDelete(whereConditions: any, table: PodTable): SPARQLQuery {
+    const updates: any[] = [];
+
+    if (!whereConditions) {
+      updates.push({
+        updateType: 'deletewhere',
+        delete: [{
+          type: 'bgp',
+          triples: [{
+            subject: { termType: 'Variable', value: 'subject' },
+            predicate: { termType: 'NamedNode', value: 'http://www.w3.org/1999/02/22-rdf-syntax-ns#type' },
+            object: { termType: 'NamedNode', value: table.config.type }
+          }, {
+            subject: { termType: 'Variable', value: 'subject' },
+            predicate: { termType: 'Variable', value: 'p' },
+            object: { termType: 'Variable', value: 'o' }
+          }]
+        }]
+      });
+    } else {
+      const targetRecords = this.extractSubjectRecords(whereConditions);
+      if (targetRecords.length === 0) {
+        throw new Error('DELETE operation requires an id or @id condition to target a specific resource');
+      }
+
+      for (const record of targetRecords) {
+        const resourceUri = generateSubjectUri(record, table);
+        updates.push({
+          updateType: 'deletewhere',
+          delete: [{
+            type: 'bgp',
+            triples: [{
+              subject: { termType: 'NamedNode', value: resourceUri },
+              predicate: { termType: 'Variable', value: 'p' },
+              object: { termType: 'Variable', value: 'o' }
+            }]
+          }]
+        });
+      }
+    }
+
+    const deleteQuery: any = {
+      type: 'update',
+      prefixes: this.prefixes,
+      updates
+    };
+
+    return {
+      type: 'DELETE',
+      query: this.generator.stringify(deleteQuery),
+      prefixes: this.prefixes
+    };
+  }
+
+  private buildUpdateBlockForRecord(resourceUri: string, setData: Record<string, any>, table: PodTable): any | null {
+    const deleteTriples: any[] = [];
+    const insertTriples: any[] = [];
+    const wherePatterns: any[] = [];
+
+    Object.entries(setData).forEach(([columnName, value], index) => {
+      const column = table.columns[columnName];
+      if (!column) return;
+
+      const predicate = getPredicateForColumn(column, table);
+      const variableName = `old_${columnName}_${index}`;
+      const isInline =
+        column.dataType === 'object' ||
+        column.dataType === 'json' ||
+        (column.dataType === 'array' && ((column as any).elementType === 'object' || column.options?.baseType === 'object'));
+      
+      const subjectTerm = { termType: 'NamedNode', value: resourceUri };
+      const predicateTerm = { termType: 'NamedNode', value: predicate };
+      const varTerm = { termType: 'Variable', value: variableName };
+
+      if (isInline) {
+        deleteTriples.push({ subject: subjectTerm, predicate: predicateTerm, object: varTerm });
+        deleteTriples.push({
+          subject: varTerm,
+          predicate: { termType: 'Variable', value: `p_${variableName}` },
+          object: { termType: 'Variable', value: `o_${variableName}` }
+        });
+        
+        wherePatterns.push({
+          type: 'optional',
+          patterns: [{
+            type: 'bgp',
+            triples: [
+              { subject: subjectTerm, predicate: predicateTerm, object: varTerm },
+              {
+                subject: varTerm,
+                predicate: { termType: 'Variable', value: `p_${variableName}` },
+                object: { termType: 'Variable', value: `o_${variableName}` }
+              }
+            ]
+          }]
+        });
+
+        if (value !== null && value !== undefined) {
+          const result = tripleBuilder.buildInsert(resourceUri, column, value, table);
+          insertTriples.push(...result.triples.map(this.toSparqlJsTriple), ...(result.childTriples?.map(this.toSparqlJsTriple) ?? []));
+        }
+        return;
+      }
+      
+      if (column.options?.inverse) {
+         deleteTriples.push({ subject: varTerm, predicate: predicateTerm, object: subjectTerm });
+         wherePatterns.push({
+           type: 'optional',
+           patterns: [{ type: 'bgp', triples: [{ subject: varTerm, predicate: predicateTerm, object: subjectTerm }] }]
+         });
+
+         if (value !== null && value !== undefined) {
+            const valStr = String(value).replace(/^<|>$/g, '');
+            insertTriples.push({
+              subject: { termType: 'NamedNode', value: valStr },
+              predicate: predicateTerm,
+              object: subjectTerm
+            });
+         }
+      } else {
+         deleteTriples.push({ subject: subjectTerm, predicate: predicateTerm, object: varTerm });
+         wherePatterns.push({
+           type: 'optional',
+           patterns: [{ type: 'bgp', triples: [{ subject: subjectTerm, predicate: predicateTerm, object: varTerm }] }]
+         });
+
+         if (value !== null && value !== undefined) {
+            const formatted = formatValue(value, column);
+            const objectTerm = this.parseTermString(formatted as string);
+            insertTriples.push({ subject: subjectTerm, predicate: predicateTerm, object: objectTerm });
+         }
+      }
+    });
+
+    if (deleteTriples.length === 0 && insertTriples.length === 0) return null;
+
+    // Use 'insertdelete' as the updateType key. 
+    // Note: sparqljs might require 'delete' and 'insert' keys to be present.
+    return {
+      updateType: 'insertdelete', 
+      delete: deleteTriples.length > 0 ? [{ type: 'bgp', triples: deleteTriples }] : [],
+      insert: insertTriples.length > 0 ? [{ type: 'bgp', triples: insertTriples }] : [],
+      where: wherePatterns
+    };
+  }
+
+  private toSparqlJsTriple = (triple: any): any => {
+    return triple;
+  }
+
   private parseTermString(str: string): any {
+    if (typeof str !== 'string') {
+      return { termType: 'Literal', value: String(str) };
+    }
     if (str.startsWith('<')) return { termType: 'NamedNode', value: str.slice(1, -1) };
     if (str.startsWith('_:')) return { termType: 'BlankNode', value: str.slice(2) };
     if (str.startsWith('"')) {
-       // Simple literal parsing
        const lastQuote = str.lastIndexOf('"');
        const value = str.slice(1, lastQuote);
        const suffix = str.slice(lastQuote + 1);
        let datatype = undefined;
        let language = undefined;
        if (suffix.startsWith('^^')) {
-         datatype = { termType: 'NamedNode', value: suffix.slice(3, -1) };
+         const dtUri = suffix.slice(2); 
+         const dtVal = dtUri.startsWith('<') ? dtUri.slice(1, -1) : dtUri;
+         datatype = { termType: 'NamedNode', value: dtVal };
        } else if (suffix.startsWith('@')) {
          language = suffix.slice(1);
        }
@@ -156,110 +344,6 @@ export class UpdateBuilder {
     return { termType: 'Literal', value: str };
   }
 
-  // 转换 UPDATE 查询 - 使用 DELETE/INSERT 组合 (Legacy String Builder)
-  convertUpdate(setData: any, whereConditions: any, table: PodTable): SPARQLQuery {
-    const targetRecords = this.extractSubjectRecords(whereConditions);
-    if (targetRecords.length === 0) {
-      throw new Error('UPDATE operation requires an id or @id condition to target a specific resource');
-    }
-
-    const prefixLines = Object.entries(this.prefixes)
-      .map(([prefix, uri]) => `PREFIX ${prefix}: <${uri}>`)
-      .join('\n');
-
-    const statements: string[] = [];
-
-    for (const record of targetRecords) {
-      const resourceUri = generateSubjectUri(record, table);
-      const updateBlock = this.buildUpdateStatementsForRecord(resourceUri, setData, table);
-      if (updateBlock) {
-        statements.push(updateBlock);
-      }
-    }
-
-    if (statements.length === 0) {
-      throw new Error('No valid update statements generated for provided data');
-    }
-
-    const query = `${prefixLines}\n${statements.join(';\n')}`;
-
-    return {
-      type: 'UPDATE',
-      query,
-      prefixes: this.prefixes
-    };
-  }
-
-  // 转换 DELETE 查询 - 使用正确的 SPARQL UPDATE 格式 (Legacy String Builder)
-  convertDelete(whereConditions: any, table: PodTable): SPARQLQuery {
-    const prefixLines = Object.entries(this.prefixes)
-      .map(([prefix, uri]) => `PREFIX ${prefix}: <${uri}>`)
-      .join('\n');
-
-    let query: string;
-
-    if (!whereConditions) {
-      query = `${prefixLines}\nDELETE WHERE {
-  ?subject rdf:type <${table.config.type}> .
-  ?subject ?p ?o .
-}`;
-    } else {
-      const targetRecords = this.extractSubjectRecords(whereConditions);
-      if (targetRecords.length === 0) {
-        throw new Error('DELETE operation requires an id or @id condition to target a specific resource');
-      }
-
-      const deleteBlocks = targetRecords.map((record) => {
-        const resourceUri = generateSubjectUri(record, table);
-        return `DELETE WHERE {\n  <${resourceUri}> ?p ?o .\n}`;
-      });
-
-      query = `${prefixLines}\n${deleteBlocks.join(';\n')}`;
-    }
-
-    return {
-      type: 'DELETE',
-      query,
-      prefixes: this.prefixes
-    };
-  }
-
-  private buildUpdateStatementsForRecord(resourceUri: string, setData: Record<string, any>, table: PodTable): string | null {
-    const deleteTriples: string[] = [];
-    const insertTriples: string[] = [];
-
-    Object.entries(setData).forEach(([columnName, value], index) => {
-      const column = table.columns[columnName];
-      if (!column) return;
-
-      const predicate = getPredicateForColumn(column, table);
-      const variableName = `old_${columnName}_${index}`;
-      
-      if (column.options?.inverse) {
-         deleteTriples.push(`?${variableName} <${predicate}> <${resourceUri}> .`);
-         if (value !== null && value !== undefined) {
-            const valStr = String(value).replace(/^<|>$/g, '');
-            insertTriples.push(`<${valStr}> <${predicate}> <${resourceUri}> .`);
-         }
-      } else {
-         deleteTriples.push(`<${resourceUri}> <${predicate}> ?${variableName} .`);
-         if (value !== null && value !== undefined) {
-            const formatted = formatValue(value, column);
-            insertTriples.push(`<${resourceUri}> <${predicate}> ${formatted} .`);
-         }
-      }
-    });
-
-    if (deleteTriples.length === 0 && insertTriples.length === 0) return null;
-
-    const deleteBlock = deleteTriples.length > 0 ? `DELETE { ${deleteTriples.join(' ')} }` : '';
-    const insertBlock = insertTriples.length > 0 ? `INSERT { ${insertTriples.join(' ')} }` : '';
-    const whereBlock = deleteTriples.length > 0 ? `WHERE { ${deleteTriples.map(t => `OPTIONAL { ${t} }`).join(' ')} }` : 'WHERE {}';
-
-    return `${deleteBlock} ${insertBlock} ${whereBlock}`;
-  }
-
-  // Helpers for condition extraction
   private extractSubjectRecords(where: any): Record<string, any>[] {
     if (!where) return [];
     if (this.isQueryCondition(where)) {
@@ -281,12 +365,10 @@ export class UpdateBuilder {
   }
 
   private findConditionValue(condition: QueryCondition | any, column: string): any | undefined {
-    // Direct property check (standard QueryCondition)
     if (condition.column === column && condition.value !== undefined) {
       return condition.value;
     }
     
-    // Legacy/Raw Binary Expression check (left.column = column, right.value = value)
     if (condition.type === 'binary_expr' && condition.operator === '=') {
       const leftCol = condition.left?.column;
       const rightVal = condition.right?.value;
@@ -302,13 +384,5 @@ export class UpdateBuilder {
       }
     }
     return undefined;
-  }
-  
-  private extractConditionValues(condition: QueryCondition): any[] {
-     // Simplified extraction for IN clause
-     if (condition.operator === 'IN' && Array.isArray(condition.value)) {
-         return condition.value;
-     }
-     return [];
   }
 }

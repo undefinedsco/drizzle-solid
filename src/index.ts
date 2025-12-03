@@ -67,20 +67,30 @@ export {
   type InferUpdateData
 } from './core/pod-table';
 
-// Pod 发现和认证
+// 查询构建器
 export {
-  discoverPodContainers,
-  authenticateWithSolid,
-  type PodContainer,
-  type AuthenticationResult
-} from './core/pod-discovery';
+  SelectQueryBuilder,
+  InsertQueryBuilder,
+  UpdateQueryBuilder,
+  DeleteQueryBuilder,
+} from './core/query-builders';
+export const asc = 'asc';
+export const desc = 'desc';
+export type { SelectFieldMap, InsertQueryPlan, UpdateQueryPlan, DeleteQueryPlan } from './core/query-builders/types';
 
-// TypeIndex 管理
+// Shape 管理
 export {
-  TypeIndexManager,
-  type TypeIndexEntry,
-  type TypeIndexConfig
-} from './core/typeindex-manager';
+  DrizzleShapeManager,
+  XSD,
+  SHACL,
+} from './core/shape';
+export type {
+  ShapeManager,
+  Shape,
+  ShapeProperty,
+  ValidationResult as ShapeValidationResult,
+  ValidationError as ShapeValidationError
+} from './core/shape';
 
 // DataDiscovery 数据发现
 export {
@@ -123,8 +133,10 @@ export {
 export {
   validateRDFData,
   parseRDFResponse,
-  type ValidationResult,
-  type ParsedRDFData
+} from './utils/rdf-validation';
+export type {
+  ValidationResult as RdfValidationResult,
+  ParsedRDFData
 } from './utils/rdf-validation';
 
 export { extendNamespace } from './utils/namespace';

@@ -9,6 +9,7 @@ vi.mock('@inrupt/solid-client', async () => {
     getSolidDataset: vi.fn(),
     getThing: vi.fn(),
     getUrl: vi.fn(),
+    getUrlAll: vi.fn(),
     getThingAll: vi.fn(),
     saveSolidDatasetAt: vi.fn(),
   };
@@ -202,6 +203,58 @@ describe('TypeIndexManager', () => {
       expect(result).toBeNull();
       // Should have tried profile + 3 standard locations
       expect(getSolidDataset).toHaveBeenCalledTimes(4);
+    });
+
+    it('prefers solid/pim storage from profile to build pod base', async () => {
+      const { getSolidDataset, getThing, getUrl, getUrlAll } = await import('@inrupt/solid-client');
+      const webIdWithRoot = 'https://alice.example/profile/card#me';
+      const manager = new TypeIndexManager(webIdWithRoot, 'https://alice.example/');
+
+      const mockProfileDataset = { type: 'Dataset', graphs: { default: {} } };
+      const mockProfileThing = { type: 'Subject', url: webIdWithRoot };
+
+      vi.mocked(getSolidDataset).mockResolvedValue(mockProfileDataset as any);
+      vi.mocked(getThing).mockReturnValue(mockProfileThing as any);
+
+      // Provide two storage values; prefer same-origin solid:storage
+      vi.mocked(getUrlAll)
+        .mockReturnValueOnce(['https://cdn.example/storage/']) // solid:storage
+        .mockReturnValueOnce(['https://alice.example/pod/']); // pim:storage
+
+      // No type index in profile; fallback to standard location using storage base
+      vi.mocked(getUrl).mockReturnValue(null);
+      // First check profile, then standard private location
+      vi.mocked(getSolidDataset)
+        .mockResolvedValueOnce(mockProfileDataset as any) // profile
+        .mockResolvedValueOnce(mockProfileDataset as any); // standard location exists
+
+      const result = await manager.findTypeIndex();
+
+      expect(getSolidDataset).toHaveBeenNthCalledWith(
+        2,
+        'https://alice.example/pod/settings/privateTypeIndex.ttl',
+        expect.objectContaining({ fetch: expect.any(Function) })
+      );
+      expect(result).toBe('https://alice.example/pod/settings/privateTypeIndex.ttl');
+    });
+
+    it('falls back to WebID user segment when podUrl lacks path segments', async () => {
+      const { getSolidDataset } = await import('@inrupt/solid-client');
+      const webIdWithUser = 'http://localhost:3000/test/profile/card#me';
+      const manager = new TypeIndexManager(webIdWithUser, 'http://localhost:3000/');
+
+      vi.mocked(getSolidDataset)
+        .mockRejectedValueOnce(new Error('Profile not loaded'))
+        .mockResolvedValueOnce({ type: 'Dataset', graphs: { default: {} } } as any);
+
+      const result = await manager.findTypeIndex();
+
+      expect(getSolidDataset).toHaveBeenNthCalledWith(
+        2,
+        'http://localhost:3000/test/settings/privateTypeIndex.ttl',
+        expect.objectContaining({ fetch: expect.any(Function) })
+      );
+      expect(result).toBe('http://localhost:3000/test/settings/privateTypeIndex.ttl');
     });
   });
 

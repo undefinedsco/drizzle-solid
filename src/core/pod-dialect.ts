@@ -5,11 +5,13 @@ import { QueryCondition } from './query-conditions';
 import { ASTToSPARQLConverter, type SPARQLQuery } from './ast-to-sparql';
 import { ComunicaSPARQLExecutor, SolidSPARQLExecutor } from './sparql-executor';
 import { TypeIndexManager, TypeIndexEntry, TypeIndexConfig, DiscoveredTable } from './typeindex-manager';
-import { DataDiscovery, TypeIndexDiscovery } from './discovery';
+import { DataDiscovery, TypeIndexDiscovery, InteropDiscovery, CompositeDiscovery } from './discovery';
 import { LdpExecutor } from './execution/ldp-executor';
 import { subjectResolver } from './subject/resolver';
 import type { SelectQueryPlan } from './select-plan';
 import type { InsertQueryPlan, UpdateQueryPlan, DeleteQueryPlan } from './pod-session';
+import { ShapeManager, DrizzleShapeManager } from './shape';
+import { resolvePodBase } from './utils/pod-root';
 
 // 最小 Solid Session 接口定义
 export interface SolidAuthSession {
@@ -75,6 +77,7 @@ export class PodDialect {
   private ldpExecutor: LdpExecutor;
   private typeIndexManager: TypeIndexManager;
   private discovery: DataDiscovery;
+  private shapeManager: ShapeManager; // Add ShapeManager instance
   public config: PodDialectConfig;
   private registeredTables: Set<string> = new Set();
   private preparedContainers: Set<string> = new Set();
@@ -86,13 +89,15 @@ export class PodDialect {
     
     // 从session中获取webId和podUrl
     const webId = this.session.info.webId;
+    const clientId = (this.session.info as any).clientId || (this.session.info as any).client_id; // Try both camelCase and snake_case
+
     if (!webId) {
       throw new Error('Session中未找到webId');
     }
     this.webId = webId;
     
-    // 从webId推导podUrl
-    this.podUrl = this.derivePodUrlFromWebId(this.webId);
+    // 从 webId (可带用户段) 推导 podUrl
+    this.podUrl = resolvePodBase({ webId: this.webId, podUrl: (config as any).podUrl });
     
     // 设置 subjectResolver 的 Pod URL
     subjectResolver.setPodUrl(this.podUrl);
@@ -110,7 +115,22 @@ export class PodDialect {
     
     // 初始化 TypeIndex 管理器
     this.typeIndexManager = new TypeIndexManager(this.webId, this.podUrl, this.session.fetch);
-    this.discovery = new TypeIndexDiscovery(this.typeIndexManager, this.podUrl);
+    
+    // 初始化发现策略
+    const typeIndexDiscovery = new TypeIndexDiscovery(this.typeIndexManager, this.podUrl);
+    const interopDiscovery = new InteropDiscovery(this.webId, this.session.fetch, clientId);
+    
+    // 使用组合策略，优先使用 TypeIndex
+    this.discovery = new CompositeDiscovery([typeIndexDiscovery, interopDiscovery]);
+    
+    this.shapeManager = new DrizzleShapeManager(this.podUrl); // Pass podUrl
+  }
+
+  /**
+   * 获取 ShapeManager 实例
+   */
+  getShapeManager(): ShapeManager {
+    return this.shapeManager;
   }
 
   private async findSubjectsForCondition(
@@ -191,15 +211,6 @@ export class PodDialect {
       return false;
     }
     return error.message.includes('requires an id or @id condition');
-  }
-
-  private derivePodUrlFromWebId(webId: string): string {
-    try {
-      const url = new URL(webId);
-      return `${url.protocol}//${url.host}`;
-    } catch (error) {
-      throw new Error(`Invalid WebID format: ${webId}`);
-    }
   }
 
   async connect(): Promise<void> {
@@ -518,9 +529,18 @@ export class PodDialect {
     const userPrefixWithSlash = normalizedUser.length > 0 ? `${normalizedUser}/` : '';
 
     if (normalizedUser.length > 0) {
+      let podPathHasUser = false;
+      try {
+        const podPath = new URL(base).pathname.replace(/^\/+|\/+$/g, '');
+        podPathHasUser = podPath.startsWith(normalizedUser);
+      } catch {
+        podPathHasUser = false;
+      }
+
       const needsUserPrefix =
-        relativePath.length === 0 ||
-        (relativePath !== normalizedUser && !relativePath.startsWith(userPrefixWithSlash));
+        (!podPathHasUser) &&
+        (relativePath.length === 0 ||
+          (relativePath !== normalizedUser && !relativePath.startsWith(userPrefixWithSlash)));
 
       if (needsUserPrefix) {
         relativePath = relativePath.length > 0
@@ -647,7 +667,7 @@ export class PodDialect {
       (typeof (table as any).getResourcePath === 'function' && (table as any).getResourcePath()) ||
       (table as any).config?.resourcePath;
 
-    const configuredContainerPath = table.getContainerPath();
+    console.log(`[PodDialect] ensureTableResourcePath check: table=${table.config.name}, resourcePath=${configuredResourcePath}, typeIndex=${table.config.typeIndex}`);
 
     if (configuredResourcePath && configuredResourcePath.trim().length > 0) {
       // 已经有 resourcePath，无需 TypeIndex 检查，直接使用配置
@@ -657,7 +677,7 @@ export class PodDialect {
     // 没有 resourcePath，且未要求使用 TypeIndex，直接使用默认容器
     if (!table.config.typeIndex) {
       console.log(`[AutoDiscover] Table ${table.config.name} has no resourcePath, using default container path`);
-      (table as any).config.containerPath = configuredContainerPath || '/data/';
+      (table as any).config.containerPath = '/data/';
       return;
     }
 
@@ -1538,87 +1558,4 @@ export class PodDialect {
       return null;
     }
   }
-
-  // 添加getSubjectURI辅助方法
-  private getSubjectURI(table: PodTable, id: string): string {
-    return `${table.getContainerPath() || '/'}#${id}`;
-  }
-
-  // 同时修复convertInsert方法，确保INSERT也使用正确谓词
-  private convertInsert(operation: PodOperation): SPARQLQuery {
-    const table = operation.table;
-    const rdfClass = table.config.type || 'http://example.org/Entity';
-    const values = operation.values as Record<string, any>;
-    const namespace = table.config.namespace || '';
-    
-    const prefixes = [
-      'PREFIX rdf: <http://www.w3.org/1999/02/22-rdf-syntax-ns#>',
-      'PREFIX foaf: <http://xmlns.com/foaf/0.1/>',
-      'PREFIX schema: <https://schema.org/>',
-      'PREFIX dc: <http://purl.org/dc/terms/>',
-      'PREFIX xsd: <http://www.w3.org/2001/XMLSchema#>'
-    ];
-    
-    const triples: string[] = [`<${this.getSubjectURI(table, values.id || 'new-entity')}> a <${rdfClass}> .`];
-    
-    Object.keys(values).forEach(key => {
-      const value = values[key];
-      if (value !== undefined && value !== null) {
-        let predicate;
-
-        // 尝试从ColumnBuilder获取
-        if (typeof (table.columns[key] as any).getPredicateUri === 'function') {
-          predicate = (table.columns[key] as any).getPredicateUri();
-          console.log(`INSERT: getPredicateUri for ${key}:`, predicate);
-        } else if ((table.columns[key] as any)._predicateUri) {
-          predicate = (table.columns[key] as any)._predicateUri;
-          console.log(`INSERT: _predicateUri for ${key}:`, predicate);
-        } else {
-          predicate = (table.columns[key] as any).predicate;
-          console.log(`INSERT: predicate for ${key}:`, predicate);
-        }
-
-        // 从options中获取predicate
-        if (!predicate) {
-          predicate = (table.columns[key] as any).options?.predicate;
-        }
-        if (!predicate) {
-          predicate = this.defaultPredicates[key as keyof typeof this.defaultPredicates];
-        }
-        if (!predicate) {
-          predicate = `${namespace}${key}`;
-        }
-        if (predicate && !predicate.startsWith('http')) {
-          predicate = `http://example.org/${predicate}`;
-        }
-
-        if (predicate) {
-          let literal = value;
-          if (typeof value === 'string') {
-            literal = `"${value.replace(/"/g, '\\"')}"`;
-          } else if (typeof value === 'number') {
-            literal = value.toString();
-          } else if (value instanceof Date) {
-            literal = `"${value.toISOString()}"^^xsd:dateTime`;
-          }
-
-          triples.push(`<${this.getSubjectURI(table, values.id || 'new-entity')}> <${predicate}> ${literal} .`);
-        }
-      }
-    });
-    
-    const query = `${prefixes.join('\n')}\nINSERT DATA {\n  ${triples.join('\n  ')}\n}`;
-    
-    return {
-      type: 'INSERT',
-      query: query.trim(),
-      prefixes: {
-        'rdf': 'http://www.w3.org/1999/02/22-rdf-syntax-ns#',
-        'schema': 'https://schema.org/',
-        'foaf': 'http://xmlns.com/foaf/0.1/',
-        'dc': 'http://purl.org/dc/terms/'
-      }
-    };
-  }
-
 }

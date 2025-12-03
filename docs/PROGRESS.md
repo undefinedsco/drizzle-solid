@@ -4,6 +4,23 @@
 
 我们已经成功创建了一个完整的文档和示例体系，从认证开始逐步介绍 Drizzle Solid 的用法和 Solid 概念。
 
+## 📅 最新更新 (2025-12-02)
+
+我们完成了重大的架构重构和功能增强 (v0.2.0)：
+
+### 1. 🏗️ 架构重构
+- **PodSession 拆分**: 将庞大的 `PodSession` 类拆分为独立的查询构建器 (`SelectQueryBuilder`, `InsertQueryBuilder`, `UpdateQueryBuilder`, `DeleteQueryBuilder`)。
+- **PodDialect 模块化**: 引入了 `CompositeDiscovery` 策略，支持多种数据发现机制。
+- **Interop Spec 支持**: 实现了 `InteropDiscovery`，为支持 Solid Application Interoperability (SAI) 规范奠定了基础。
+
+### 2. ✨ 新增功能
+- **ShapeManager**: 新增 `ShapeManager` 模块，支持从 `PodTable` 定义自动生成 SHACL Shape 文件。这是实现基于 Shape 的数据验证和迁移系统的关键一步。
+
+### 3. 🧹 代码清理
+- **清理技术债务**: 移除了 `ASTToSPARQLConverter` 中硬编码的 `defaultPredicates`，强制使用更规范的谓词定义方式。
+
+---
+
 ## ✅ 已完成的工作
 
 ### 1. 📚 文档结构

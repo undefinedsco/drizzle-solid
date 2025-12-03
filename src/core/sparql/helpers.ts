@@ -57,9 +57,12 @@ export function getPredicateForColumn(column: PodColumnBase | any, table: PodTab
     return `${nsUri}${column.name}`;
   }
 
-  // 4. 默认 fallback (deprecated but kept for compatibility)
-  // Note: We removed the hardcoded list, so we fallback to example.org or error
-  // Ideally this should throw if strict.
+  // Debugging for test
+  if (column.name === 'id') {
+     console.log(`[DEBUG] getPredicateForColumn 'id' fallback to example.org. Column:`, column);
+  }
+
+  // 4. 默认 fallback
   return `http://example.org/${column.name}`;
 }
 

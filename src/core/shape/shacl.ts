@@ -121,7 +121,7 @@ function propertyToSHACL(prop: ShapeProperty): string[] {
 /**
  * 获取节点类型 URI
  */
-function getNodeKindUri(nodeKind: 'IRI' | 'Literal' | 'BlankNode'): string {
+function getNodeKindUri(nodeKind: 'IRI' | 'Literal' | 'BlankNode' | string): string {
   switch (nodeKind) {
     case 'IRI':
       return 'sh:IRI';

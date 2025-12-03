@@ -63,7 +63,10 @@ export class ExpressionBuilder {
     if (!colName) return '';
 
     const variable = (colName === 'subject' || colName === '@id') ? '?subject' : `?${colName}`;
-    const value = condition.value ?? condition.right?.value;
+    let value = condition.value ?? condition.right?.value;
+    if (colName === 'id' && typeof value === 'string' && value.startsWith('#')) {
+      value = value.slice(1);
+    }
     
     // Handle IN / NOT IN
     if (condition.operator === 'IN' || condition.operator === 'NOT IN') {
@@ -77,6 +80,9 @@ export class ExpressionBuilder {
          if (isSubject) {
             const str = String(v);
             return str.startsWith('<') ? str : `<${str}>`;
+         } else if (colName === 'id') {
+            const str = typeof v === 'string' && v.startsWith('#') ? v.slice(1) : String(v);
+            return `"${str}"`;
          }
          return formatValue(v, column);
       }).join(', ');
@@ -105,11 +111,15 @@ export class ExpressionBuilder {
     // Basic operators
     const column = table.columns[colName];
     const isSubject = colName === 'subject' || colName === '@id';
+    const isId = colName === 'id';
     let formattedValue;
     
     if (isSubject) {
         const str = String(value);
         formattedValue = str.startsWith('<') ? str : `<${str}>`;
+    } else if (isId) {
+        const str = typeof value === 'string' && value.startsWith('#') ? value.slice(1) : String(value);
+        formattedValue = `"${str}"`;
     } else {
         formattedValue = formatValue(value, column);
     }

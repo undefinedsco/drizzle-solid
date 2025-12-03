@@ -68,26 +68,26 @@ Drizzle Solid 当前通过 `SelectQueryBuilder` 暴露 Drizzle 风格的 `join` 
 - 所有 `sparqlExecutor` 请求都以 Pod URL 为数据源，无法针对第三方端点进行区分。
 
 #### 设计要点
-- **配置扩展**：
+- **配置扩展**（已实现）：
   - 为 `PodTableOptions` 增加 `accessMode?: 'ldp' | 'sparql'`（默认 `'ldp'`）与 `sparqlEndpoint?: string`, `defaultGraph?: string`。
   - 在 `podTable` 构造时记录新配置，并在 `PodDialect` 初始化时允许注册多个 SPARQL 数据源。
-- **执行路径调整**：
+- **执行路径调整**（已实现）：
   - 当 `accessMode === 'sparql'` 时，`resolveTableUrls` 直接返回端点 URL，不再拼接 `.ttl`。
-  - `query` 根据 accessMode 决定是否跳过 LDP 校验流程；端点模式下直接构建 `SPARQLQuery` 并调用 `sparqlExecutor.executeQuery`.
-  - `INSERT`/`UPDATE`/`DELETE` 依旧使用现有 `ASTToSPARQLConverter` 的 `convertInsert` / `convertUpdate` / `convertDelete` 输出，但通过 `POST` 到端点而非 `PATCH` 资源。
+  - `query` 根据 accessMode 决定是否跳过 LDP 校验流程；端点模式下直接构建 `SPARQLQuery` 并调用 `sparqlExecutor.executeQuery`。
+  - `INSERT`/`UPDATE`/`DELETE` 使用 `ASTToSPARQLConverter` 输出完整 SPARQL UPDATE，并通过端点执行（不再走 PATCH）。
   - 在 executor 中新增 `registerSparqlEndpoint`，把端点 URL 与可选的 `defaultGraph` 注册到 `sources`。
 - **错误处理**：
   - 捕获 401/405/415 等响应并返回带上下文的错误信息；在日志中脱敏 `Authorization` header。
   - 对短暂网络错误（`ECONNRESET` 等）在 fetch 包装层重试一次。
 - **兼容性**：
   - 表级别支持混合模式，同一 `PodDialect` 可以同时操作 Pod 和纯 SPARQL 端点。
-  - 为保持向后兼容，若开发者未显式设置 `accessMode`，行为保持不变。
+  - 为保持向后兼容，若开发者未显式设置 `accessMode`，行为保持不变（仍按 LDP 模式）。
 
 #### 验证计划
-- **单元测试**：
+- **单元/集成测试（已覆盖）**：
   - `resolveTableUrls` 根据 accessMode 返回正确的 URL。
-  - `PodDialect.query` 在 `'sparql'` 模式下不会调用 `ensureContainerExists`（通过 spy 验证）。
-  - `sparqlExecutor` 针对端点模式发起 `POST` 请求的 payload 正确。
+  - `PodDialect.query` 在 `'sparql'` 模式下跳过 LDP 校验流程，直接走端点执行。
+  - `sparqlExecutor` 针对端点模式发起 SPARQL UPDATE 请求。
 - **集成测试**：
   - 在 `tests/integration/css` 新增针对远程 SPARQL 端点的 CRUD 流程，验证不再触发 HEAD/PUT。
   - 在 `.env.local` 中记录端点所需的 `SOLID_SPARQL_ENDPOINT`，并在测试说明中列出前置条件。

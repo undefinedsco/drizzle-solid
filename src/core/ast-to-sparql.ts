@@ -26,31 +26,13 @@ export class ASTToSPARQLConverter {
     'xsd': 'http://www.w3.org/2001/XMLSchema#'
   };
 
-  /**
-   * @deprecated Hardcoded default predicates are an anti-pattern and will be removed in future versions.
-   */
-  private defaultPredicates: Record<string, string> = {
-    'id': 'http://www.w3.org/1999/02/22-rdf-syntax-ns#about',
-    'name': 'http://xmlns.com/foaf/0.1/name',
-    'title': 'http://purl.org/dc/terms/title',
-    'description': 'http://purl.org/dc/terms/description',
-    'content': 'http://purl.org/dc/terms/description',
-    'createdAt': 'https://schema.org/dateCreated',
-    'updatedAt': 'https://schema.org/dateModified',
-    'created_at': 'https://schema.org/dateCreated',
-    'updated_at': 'https://schema.org/dateModified',
-    'email': 'http://xmlns.com/foaf/0.1/mbox',
-    'url': 'http://xmlns.com/foaf/0.1/homepage',
-    'homepage': 'http://xmlns.com/foaf/0.1/homepage'
-  };
-
   constructor(private podUrl: string, private webId?: string) {
     this.selectBuilder = new SelectBuilder(this.prefixes);
     this.updateBuilder = new UpdateBuilder(this.prefixes);
     this.expressionBuilder = new ExpressionBuilder();
   }
 
-  convertSelect(ast: any, table: PodTable): SPARQLQuery {
+  convertSelect(ast: any, table: PodTable, _overrideBase?: string): SPARQLQuery {
     return this.selectBuilder.convertSelect(ast, table);
   }
 
@@ -58,7 +40,7 @@ export class ASTToSPARQLConverter {
     return this.expressionBuilder.buildWhereClause(whereAst as QueryCondition, table);
   }
 
-  convertSelectPlan(plan: SelectQueryPlan): SPARQLQuery {
+  convertSelectPlan(plan: SelectQueryPlan, _overrideBase?: string): SPARQLQuery {
     return this.selectBuilder.convertSelectPlan(plan);
   }
 

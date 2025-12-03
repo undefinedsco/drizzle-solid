@@ -30,7 +30,28 @@ const profileTable = podTable('profile', {
   name: string('name'),
   email: string('email'),
   age: int('age')
+}, {
+  // 相对 Pod 根的容器/资源路径，不需要 idp:// 前缀
+  base: '/profiles/',
+  type: 'https://schema.org/Person'
 });
+
+// 自定义 subject 模板示例：按年月目录、文件名是 id，仍指向单独文件
+const logsTable = podTable('logs', {
+  id: string('id').primaryKey(),
+  message: string('message')
+}, {
+  type: 'https://schema.org/DigitalDocument',
+  base: '/logs/',
+  subjectTemplate: '{yyyy}/{MM}/{dd}/{id}.ttl'
+});
+
+// subjectTemplate（选填）：
+// - 作用：控制每条记录主体 URI 的形态，支持占位符 {yyyy}/{MM}/{dd}/{HH}/{mm}/{ss}/{id}。
+// - 推断：未指定时按 base 判断：base 是容器（以 / 结尾且包含表名）→ document 模式；base 是具体文件 → fragment 模式。模板含 #（如 '#{id}'）也强制 fragment；其他模板按 document 处理，可用 {yyyy}/{MM}/{dd}/{id}.ttl 等。
+// - document 模式：每条记录独立文件，URI 形如 .../users/{id}.ttl，SELECT/UPDATE/DELETE 由 Comunica dereference 目标文件后本地求值；适合记录级隔离/按目录分片。
+// - fragment 模式：多条记录共享同一文件，主体是片段（.../file.ttl#{id}），SELECT 同样由 Comunica 拉取该文件求值；适合小表或聚合存放的数据。
+// - 示例：subjectTemplate: '{yyyy}/{MM}/{dd}/{id}.ttl'（document 分日期分片）；subjectTemplate: '#{id}'（fragment，共享文件）。
 
 // 创建数据库连接
 const session = new Session(); // 已认证的session
@@ -48,6 +69,18 @@ await db.insert(profileTable).values({
   email: 'alice@example.com',
   age: 30
 });
+
+// 直连 SPARQL 端点（跳过 LDP 容器）
+const sparqlTable = podTable('posts', {
+  id: string('id').primaryKey(),
+  title: string('title'),
+}, {
+  type: 'https://schema.org/CreativeWork',
+  // 只要提供 sparqlEndpoint 即可，CRUD 会直接走端点，不再创建容器/资源
+  sparqlEndpoint: 'https://your-endpoint.example/sparql'
+});
+await db.init([sparqlTable]); // 不会创建容器，直接使用端点执行 SPARQL UPDATE/SELECT
+await db.insert(sparqlTable).values({ id: 'post-1', title: 'Hello SPARQL' });
 ```
 
 ## 📚 示例教程

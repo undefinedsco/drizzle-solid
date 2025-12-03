@@ -103,6 +103,7 @@ describe('ASTToSPARQLConverter', () => {
     });
 
     it('应该遵循 IR 计划中的 select/order/limit', () => {
+      const condition = eq(mockTable.columns.name, 'Alice');
       const plan = {
         baseTable: mockTable,
         baseAlias: 'users',
@@ -111,13 +112,15 @@ describe('ASTToSPARQLConverter', () => {
         },
         selectAll: false,
         where: undefined,
-        conditionTree: undefined,
+        conditionTree: condition,
         joins: undefined,
         joinFilters: undefined,
         groupBy: undefined,
-        orderBy: [
-          { rawColumn: 'name', direction: 'desc' }
-        ],
+        orderBy: [{
+          column: 'name',
+          rawColumn: 'name',
+          direction: 'desc'
+        }],
         distinct: true,
         limit: 5,
         offset: 2,
@@ -126,11 +129,12 @@ describe('ASTToSPARQLConverter', () => {
       } as any;
 
       const result = converter.convertSelectPlan(plan);
-      expect(result.query).toContain('ORDER BY DESC (?name)');
+      expect(result.query).toContain('DISTINCT');
       expect(result.query).toContain('LIMIT 5');
       expect(result.query).toContain('OFFSET 2');
-      expect(result.query).toContain('?subject schema:name ?name');
-      expect(result.query).toContain('?name');
+      expect(result.query).toContain('SELECT DISTINCT ?subject (?name AS ?userName)');
+      expect(result.query).toContain('ORDER BY DESC (?name)');
+      expect(result.query).toContain('FILTER(?name = "Alice")');
     });
   });
 
@@ -278,11 +282,12 @@ describe('ASTToSPARQLConverter', () => {
 
     it('inverse 列更新应删除并插入反向三元组', () => {
       const data = { organization: 'https://org.example/new' };
-      const where = { id: 2 };
+      const where = { id: '2' };
       const result = converter.convertUpdate(data, where, mockTable);
       // Inverse columns should swap subject/object: ?var <pred> <subject> instead of <subject> <pred> ?var
-      expect(result.query).toContain('?old_organization_0 <https://schema.org/member> <https://example.com/users/index.ttl#');
-      expect(result.query).toContain('<https://org.example/new> <https://schema.org/member> <https://example.com/users/index.ttl#');
+      // sparqljs generator will use prefixes if available
+      expect(result.query).toContain('?old_organization_0 schema:member <https://example.com/users/index.ttl#2>');
+      expect(result.query).toContain('<https://org.example/new> schema:member <https://example.com/users/index.ttl#2>');
     });
   });
 
@@ -317,7 +322,7 @@ describe('ASTToSPARQLConverter', () => {
 
       const result = converter.convertSelect(ast, mockTable);
 
-      expect(result.query).toContain('SELECT ?subject ?name ?email');
+      expect(result.query).toContain('SELECT ?subject ?id ?name ?email ?organization');
     });
 
     it('应该处理复杂的 WHERE 条件', () => {

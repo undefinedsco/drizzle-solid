@@ -231,7 +231,7 @@ export class SelectBuilder {
       return variables.concat(mapped);
     }
 
-    const skipColumns = new Set(['id', 'subject']);
+    const skipColumns = new Set(['subject']);
 
     if (ast.columns === '*' || !ast.columns) {
       const cols = Object.keys(table.columns)
@@ -300,9 +300,14 @@ export class SelectBuilder {
     const optionalTriples: sparqljs.Triple[] = [];
 
     Object.entries(table.columns).forEach(([columnName, column]) => {
-      if (columnName === 'id') return; // 跳过 id 字段
-
       const predicate = getPredicateForColumn(column, table);
+
+      // Fix: Do not generate triple patterns for virtual @id predicate.
+      // The ID is derived via BIND from the subject, not matched via a property.
+      if (predicate === '@id') {
+        return;
+      }
+
       const subjectVar = { termType: 'Variable', value: 'subject' } as any;
       const valueVar = { termType: 'Variable', value: columnName } as any;
       
@@ -336,6 +341,26 @@ export class SelectBuilder {
         }]
       });
     });
+
+    // 仅当 id 使用 @id（未绑定谓词）时，绑定 fragment 为 ?id 便于过滤
+    const idColumn = (table.columns as Record<string, PodColumnBase | undefined>)['id'];
+    if (idColumn) {
+      const idPredicate = getPredicateForColumn(idColumn, table);
+      if (idPredicate === '@id') {
+        patterns.push({
+          type: 'bind',
+          variable: { termType: 'Variable', value: 'id' } as any,
+          expression: {
+            type: 'operation',
+            operator: 'strafter',
+            args: [
+              { type: 'operation', operator: 'str', args: [{ termType: 'Variable', value: 'subject' } as any] },
+              { termType: 'Literal', value: '#' } as any
+            ]
+          }
+        } as any);
+      }
+    }
 
     // 添加 FILTER
     if (ast.where) {

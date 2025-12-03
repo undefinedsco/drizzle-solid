@@ -1,5 +1,6 @@
 import { Session } from '@inrupt/solid-client-authn-node';
 import { config as loadEnv } from 'dotenv';
+import { resolvePodBase } from '@src/core/utils/pod-root';
 
 type FetchLike = typeof fetch;
 
@@ -94,15 +95,76 @@ if (process.env.SOLID_ENABLE_REAL_TESTS !== 'false') {
   });
 }
 
-function derivePodBaseFromWebId(webId: string): string {
-  const url = new URL(webId);
-  url.hash = '';
-  const origin = `${url.protocol}//${url.host}`;
-  const segments = url.pathname.split('/').filter(Boolean);
-  if (segments.length > 0 && segments[0] !== 'profile') {
-    return `${origin}/${segments[0]}/`;
+export async function createSecondSessionInstance(): Promise<Session> {
+  bootstrapEnv();
+
+  const clientId = process.env.SOLID_CLIENT_ID_2;
+  const clientSecret = process.env.SOLID_CLIENT_SECRET_2;
+  const oidcIssuer = process.env.SOLID_OIDC_ISSUER;
+  
+  if (!clientId || !clientSecret || !oidcIssuer) {
+    throw new Error('Missing SOLID_CLIENT_ID_2, SOLID_CLIENT_SECRET_2, or SOLID_OIDC_ISSUER in environment for dual-user tests');
   }
-  return `${origin}/`;
+
+  const session = new Session();
+  await session.login({
+    clientId,
+    clientSecret,
+    oidcIssuer,
+    tokenType: 'DPoP'
+  });
+
+  console.log('   ✅ 第二用户 Session创建成功');
+  console.log(`   🆔 Session WebID: ${session.info.webId || 'N/A'}`);
+
+  return session;
+}
+
+export async function grantAccess(
+  ownerSession: Session,
+  resourceUrl: string,
+  agentWebId: string,
+  modes: ('Read' | 'Write' | 'Append' | 'Control')[] = ['Read']
+) {
+  // Simplified ACL discovery: assume .acl suffix for WAC
+  // In a robust impl, we should check Link headers for rel="acl"
+  const aclUrl = `${resourceUrl}.acl`; 
+  const modeString = modes.map(m => `<http://www.w3.org/ns/auth/acl#${m}>`).join(', ');
+  
+  const aclBody = `
+    @prefix acl: <http://www.w3.org/ns/auth/acl#>.
+    
+    # Owner access (Keep owner access!)
+    <#owner>
+      a acl:Authorization;
+      acl:agent <${ownerSession.info.webId}>;
+      acl:accessTo <${resourceUrl}>;
+      acl:default <${resourceUrl}>;
+      acl:mode acl:Read, acl:Write, acl:Control.
+
+    # Grant for Agent
+    <#grant>
+      a acl:Authorization;
+      acl:agent <${agentWebId}>;
+      acl:accessTo <${resourceUrl}>;
+      acl:default <${resourceUrl}>;
+      acl:mode ${modeString}.
+  `;
+
+  const response = await ownerSession.fetch(aclUrl, {
+    method: 'PUT',
+    headers: { 'Content-Type': 'text/turtle' },
+    body: aclBody
+  });
+
+  if (!response.ok) {
+    throw new Error(`Failed to grant access on ${aclUrl}: ${response.status} ${response.statusText}`);
+  }
+}
+
+function derivePodBaseFromWebId(webId: string): string {
+  // legacy helper now delegates to shared resolver
+  return resolvePodBase({ webId });
 }
 
 function normalizeContainerUrl(baseUrl: string, containerPath: string): string {

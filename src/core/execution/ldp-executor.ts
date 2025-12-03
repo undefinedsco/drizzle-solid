@@ -60,9 +60,6 @@ export class LdpExecutor {
       return [];
     }
 
-    // Add a small delay to mitigate CSS transaction race conditions
-    await new Promise(r => setTimeout(r, 500));
-
     // console.log(`[LdpExecutor] executeInsert: ${resourceUrl}, triples: ${insertTriples.length}`);
 
     // Fragment Mode 且资源存在时，使用 PATCH 追加数据
@@ -78,13 +75,33 @@ export class LdpExecutor {
     // Document Mode 或资源不存在时，使用 PUT 创建/覆盖
     const body = insertTriples.join('\n');
     // console.log(`[LdpExecutor] PUT ${resourceUrl} content length:`, body.length);
-    const response = await this.fetchFn(resourceUrl, {
+    let response = await this.fetchFn(resourceUrl, {
       method: 'PUT',
       headers: { 'Content-Type': 'text/turtle' },
       body
     });
 
     if (![200, 201, 202, 204, 205].includes(response.status)) {
+      // 尝试使用 SPARQL UPDATE (INSERT DATA) 作为降级
+      const sparql = `INSERT DATA {\n${insertTriples.join('\n')}\n}`;
+      try {
+        const patchRes = await this.fetchFn(resourceUrl, {
+          method: 'PATCH',
+          headers: { 'Content-Type': 'application/sparql-update' },
+          body: sparql
+        });
+        if (patchRes.ok) {
+          await this.sparqlExecutor.invalidateHttpCache(resourceUrl);
+          return [{ success: true, source: resourceUrl, status: patchRes.status, via: 'sparql-update' }];
+        }
+        response = patchRes;
+      } catch (fallbackError) {
+        const text = await response.text().catch(() => '');
+        const err: any = new Error(`PUT failed: ${response.status} ${response.statusText}${text ? ` - ${text}` : ''} (fallback error: ${String(fallbackError)})`);
+        err.status = response?.status;
+        throw err;
+      }
+
       const text = await response.text().catch(() => '');
       const err: any = new Error(`PUT failed: ${response.status} ${response.statusText}${text ? ` - ${text}` : ''}`);
       err.status = response.status;
@@ -153,9 +170,6 @@ export class LdpExecutor {
            if (childUri.startsWith('<')) {
              const cleanUri = childUri.slice(1, -1);
              const childTriples = await this.fetchRecursiveTriplesToDelete(cleanUri, table, resourceUrl);
-             // if (process.env.DEBUG_INLINE_PATCH === 'true') {
-             //    console.log('[LdpExecutor] Inline object triples to delete:', { cleanUri, childTriples, count: childTriples.length });
-             // }
              deleteTriples.push(...childTriples);
            }
         }
@@ -324,9 +338,6 @@ export class LdpExecutor {
     //   }
     // }
 
-    // Add a small delay to mitigate CSS transaction race conditions
-    await new Promise(r => setTimeout(r, 500));
-
     // Use PUT fallback (Read-Modify-Write) for consistency
     const putOk = await this.applyByPut(resourceUrl, deleteTriples, insertTriples);
     if (putOk) {
@@ -351,10 +362,6 @@ export class LdpExecutor {
           body: patch
         });
 
-        if (process.env.DEBUG_INLINE_PATCH === 'true' || process.env.DEBUG === 'true') {
-          console.log(`[LdpExecutor] PATCH response ${response.status} for ${resourceUrl}`);
-        }
-
         if (response.status === 404) {
           // 创建资源后重试
           const createRes = await this.fetchFn(resourceUrl, {
@@ -362,9 +369,6 @@ export class LdpExecutor {
             headers: { 'Content-Type': 'text/turtle' },
             body: ''
           });
-          if (process.env.DEBUG_INLINE_PATCH === 'true' || process.env.DEBUG === 'true') {
-            console.log(`[LdpExecutor] create resource ${resourceUrl} -> ${createRes.status}`);
-          }
           if (!createRes.ok && createRes.status !== 409) {
             throw new Error(`Failed to create resource ${resourceUrl}: ${createRes.status} ${createRes.statusText}`);
           }
@@ -378,14 +382,12 @@ export class LdpExecutor {
         if (response.ok) break;
         
         if (response.status >= 500 || response.status === 409) {
-          console.warn(`[LdpExecutor] Attempt ${i + 1}/3 failed with ${response.status}, retrying...`);
           await new Promise(r => setTimeout(r, 1000));
           continue;
         }
         break;
       } catch (e) {
         lastError = e;
-        console.warn(`[LdpExecutor] Attempt ${i + 1}/3 failed with error:`, e);
         if (i < 2) await new Promise(r => setTimeout(r, 1000));
       }
     }
@@ -426,14 +428,8 @@ export class LdpExecutor {
         headers: { 'Content-Type': 'application/sparql-update' },
         body: sparql
       });
-      if (process.env.DEBUG_INLINE_PATCH === 'true' || process.env.DEBUG === 'true') {
-        console.log('[LdpExecutor] SPARQL PATCH', response.status, sparql);
-      }
       return response.ok;
     } catch (error) {
-      if (process.env.DEBUG_INLINE_PATCH === 'true' || process.env.DEBUG === 'true') {
-        console.warn('[LdpExecutor] SPARQL PATCH failed, falling back to N3:', error);
-      }
       return false;
     }
   }
@@ -474,13 +470,8 @@ export class LdpExecutor {
         body
       });
 
-      if (!response.ok) {
-        console.warn(`[LdpExecutor] PUT fallback failed with status ${response.status} ${response.statusText}`);
-      }
-
       return response.ok;
     } catch (error) {
-      console.warn('[LdpExecutor] PUT fallback error:', error);
       return false;
     }
   }

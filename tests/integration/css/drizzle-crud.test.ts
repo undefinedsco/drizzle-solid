@@ -29,8 +29,9 @@ import {
 import type { SolidDatabase } from '../../../src/driver';
 import type { Session } from '@inrupt/solid-client-authn-node';
 import { createTestSession, ensureContainer } from './helpers';
+import { ComunicaSPARQLExecutor } from '../../../src/core/sparql-executor';
 
-const containerPath = `/test/integration/${Date.now()}/`;
+const containerPath = `/integration/${Date.now()}/`;
 const schemaNamespace = { prefix: SCHEMA.PREFIX, uri: SCHEMA.NAMESPACE };
 
 vi.setConfig({ testTimeout: 60_000 });
@@ -374,6 +375,41 @@ describe('CSS integration: drizzle CRUD', () => {
     await session.fetch(resourceUrl, { method: 'DELETE' }).catch(() => undefined);
   });
 
+  test('matches numeric columns even when SPARQL uses typed literals', async () => {
+    await session.fetch(resourceUrl, { method: 'DELETE' }).catch(() => undefined);
+
+    const numId = `numeric-${Date.now()}`;
+    await db.insert(profileTable).values({
+      id: numId,
+      name: 'Numeric Typed Literal',
+      age: 20,
+      createdAt: new Date()
+    });
+
+    // Query via Comunica executor using xsd:integer typed literal
+    const executor = new ComunicaSPARQLExecutor({
+      sources: [resourceUrl],
+      fetch: session.fetch.bind(session)
+    });
+
+    const typedQuery = `
+      PREFIX schema: <https://schema.org/>
+      PREFIX xsd: <http://www.w3.org/2001/XMLSchema#>
+      SELECT ?id WHERE {
+        ?s a schema:Person;
+           schema:identifier ?id;
+           schema:age "20"^^xsd:integer.
+      }
+    `;
+
+    const results = await executor.executeSelect(typedQuery);
+    const ids = results.map((row: any) => row.id).filter(Boolean);
+
+    expect(ids).toContain(numId);
+
+    await session.fetch(resourceUrl, { method: 'DELETE' }).catch(() => undefined);
+  });
+
   test('supports regex filters on string columns', async () => {
     await session.fetch(resourceUrl, { method: 'DELETE' }).catch(() => undefined);
 
@@ -440,8 +476,8 @@ describe('CSS integration: drizzle CRUD', () => {
 
   test('supports joins across tables', async () => {
     const timestamp = Date.now();
-    const usersPath = `/drizzle-tests/users-${timestamp}/`;
-    const postsPath = `/drizzle-tests/posts-${timestamp}/`;
+    const usersPath = `/users-${timestamp}/`;
+    const postsPath = `/posts-${timestamp}/`;
 
     const usersTable = podTable('users', {
       id: string('id').primaryKey().predicate('https://schema.org/identifier'),
@@ -513,8 +549,8 @@ describe('CSS integration: drizzle CRUD', () => {
 
   test('supports db.query helpers with with + findByIRI', async () => {
     const timestamp = Date.now();
-    const usersPath = `/drizzle-tests/query-users-${timestamp}/`;
-    const postsPath = `/drizzle-tests/query-posts-${timestamp}/`;
+    const usersPath = `/query-users-${timestamp}/`;
+    const postsPath = `/query-posts-${timestamp}/`;
 
     const usersTable = podTable('users', {
       id: string('id').primaryKey().predicate('https://schema.org/identifier'),
@@ -598,8 +634,8 @@ SELECT ?post ?author WHERE {
 
   test('supports db.query helpers with inverse relations', async () => {
     const timestamp = Date.now();
-    const threadsPath = `/drizzle-tests/inverse-threads-${timestamp}/`;
-    const messagesPath = `/drizzle-tests/inverse-messages-${timestamp}/`;
+    const threadsPath = `/inverse-threads-${timestamp}/`;
+    const messagesPath = `/inverse-messages-${timestamp}/`;
 
     const messagesTable = podTable('messages', {
       id: string('id').primaryKey().predicate('https://schema.org/identifier'),
@@ -701,7 +737,7 @@ SELECT ?post ?author WHERE {
 
   test('supports inline object array cascade CRUD', async () => {
     const timestamp = Date.now();
-    const inlinePath = `/test/integration/inline-${timestamp}/`;
+    const inlinePath = `/integration/inline-${timestamp}/`;
     const inlineSession = await createTestSession({ skipTypeIndex: true });
     const containerUrl = await ensureContainer(inlineSession, inlinePath);
     const inlineResource = `${containerUrl}threads.ttl`;
@@ -774,7 +810,7 @@ SELECT ?post ?author WHERE {
 
   test('can update/delete plain IRI reference fields', async () => {
     const now = Date.now();
-    const probeContainer = await ensureContainer(session, '/test/integration/');
+    const probeContainer = await ensureContainer(session, '/integration/');
     const resource = `${probeContainer}res.ttl`;
 
     const contactsTable = podTable('contacts', {

@@ -17,7 +17,7 @@ export interface ShapeProperty {
   datatype?: string;
 
   /** 节点类型 (SHACL sh:nodeKind) */
-  nodeKind?: 'IRI' | 'Literal' | 'BlankNode';
+  nodeKind?: 'IRI' | 'Literal' | 'BlankNode' | string;
 
   /** 最小出现次数 (SHACL sh:minCount) */
   minCount?: number;

@@ -1,5 +1,6 @@
-import { getSolidDataset, getThing, getUrl, getStringNoLocale, saveSolidDatasetAt, createThing, buildThing, setThing, createSolidDataset, getThingAll } from '@inrupt/solid-client';
+import { getSolidDataset, getThing, getUrl, getUrlAll, getStringNoLocale, saveSolidDatasetAt, createThing, buildThing, setThing, createSolidDataset, getThingAll } from '@inrupt/solid-client';
 import { RDF_PREDICATES } from './rdf-constants';
+import { resolvePodBase } from './utils/pod-root';
 
 export interface TypeIndexEntry {
   rdfClass: string;
@@ -104,6 +105,9 @@ export class TypeIndexManager {
       }
 
       if (profile) {
+        const storages = this.extractStorages(profile);
+        this.podUrl = resolvePodBase({ webId: this.webId, podUrl: this.podUrl, storages });
+
         // 1. 首先查找 Private TypeIndex (优先)
         const privateTypeIndexUrls = getUrl(profile, 'http://www.w3.org/ns/solid/terms#privateTypeIndex');
         if (privateTypeIndexUrls) {
@@ -405,36 +409,19 @@ export class TypeIndexManager {
     }
   }
 
-  private getUserBaseUrl(): string {
-    const normalize = (base: string): string => (base.endsWith('/') ? base : `${base}/`);
+  private getUserBaseUrl(storages?: string[]): string {
+    return resolvePodBase({ webId: this.webId, podUrl: this.podUrl, storages });
+  }
 
-    const derive = (raw?: string): string | null => {
-      if (!raw || raw.trim().length === 0) return null;
-      try {
-        const url = new URL(raw);
-        const segments = url.pathname.split('/').filter(Boolean);
-        const first = segments[0];
-        const path =
-          first && first !== 'profile'
-            ? `/${first}/`
-            : '/';
-        return normalize(`${url.origin}${path}`);
-      } catch {
-        return null;
-      }
-    };
-
-    const fromPod = derive(this.podUrl);
-    if (fromPod) return fromPod;
-
-    const fromWebId = derive(this.webId);
-    if (fromWebId) return fromWebId;
-
+  private extractStorages(profile: any): string[] {
     try {
-      const url = new URL(this.webId);
-      return normalize(`${url.origin}`);
+      const storages = [
+        ...(getUrlAll(profile, 'http://www.w3.org/ns/solid/terms#storage') || []),
+        ...(getUrlAll(profile, 'http://www.w3.org/ns/pim/space#storage') || []),
+      ].filter(Boolean) as string[];
+      return storages;
     } catch {
-      return normalize(this.webId);
+      return [];
     }
   }
 

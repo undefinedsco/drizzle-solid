@@ -1,6 +1,7 @@
 import { afterAll, afterEach, beforeAll, describe, expect, test } from 'vitest';
 import { getSolidDataset, getThing, removeThing, saveSolidDatasetAt } from '@inrupt/solid-client';
 import { TypeIndexManager, type TypeIndexEntry } from '@src/core/typeindex-manager';
+import { resolvePodBase } from '@src/core/utils/pod-root';
 import type { Session } from '@inrupt/solid-client-authn-node';
 import { createTestSession, ensureContainer } from './helpers';
 
@@ -17,7 +18,8 @@ describe('CSS integration: TypeIndexManager', () => {
     session = await createTestSession();
     const fetchFn = session.fetch.bind(session);
     const webId = session.info.webId!;
-    manager = new TypeIndexManager(webId, process.env.SOLID_TEST_POD_BASE || derivePodBaseFromWebId(webId), fetchFn);
+    const podBase = process.env.SOLID_TEST_POD_BASE || resolvePodBase({ webId });
+    manager = new TypeIndexManager(webId, podBase, fetchFn);
 
     registeredContainerUrl = await ensureContainer(session, containerPath);
     typeIndexUrl = await manager.findTypeIndex();
@@ -65,13 +67,4 @@ async function cleanupTypeIndexEntry(session: Session, typeIndexUrl: string, thi
     // eslint-disable-next-line no-console
     console.warn(`[cleanup] failed to remove type index entry ${thingUrl}:`, error);
   }
-}
-
-function derivePodBaseFromWebId(webId: string): string {
-  const url = new URL(webId);
-  url.hash = '';
-  const segments = url.pathname.split('/').filter(Boolean);
-  const podSegment = segments[0] ? `${segments[0]}/` : '';
-  url.pathname = `/${podSegment}`;
-  return url.toString();
 }

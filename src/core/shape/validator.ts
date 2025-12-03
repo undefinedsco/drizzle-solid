@@ -196,7 +196,7 @@ function validateDatatype(
  */
 function validateNodeKind(
   value: unknown,
-  nodeKind: 'IRI' | 'Literal' | 'BlankNode',
+  nodeKind: 'IRI' | 'Literal' | 'BlankNode' | string,
   fieldName: string,
   path: string
 ): ValidationError | null {
