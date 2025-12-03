@@ -74,8 +74,6 @@ export {
   UpdateQueryBuilder,
   DeleteQueryBuilder,
 } from './core/query-builders';
-export const asc = 'asc';
-export const desc = 'desc';
 export type { SelectFieldMap, InsertQueryPlan, UpdateQueryPlan, DeleteQueryPlan } from './core/query-builders/types';
 
 // Shape 管理

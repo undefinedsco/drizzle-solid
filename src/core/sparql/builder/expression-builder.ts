@@ -68,6 +68,14 @@ export class ExpressionBuilder {
       value = value.slice(1);
     }
     
+    // EXISTS / NOT EXISTS (expects subquery string)
+    if (condition.operator === 'EXISTS' || condition.operator === 'NOT EXISTS') {
+      const subquery = typeof value === 'string' ? value.trim() : '';
+      if (!subquery) return '';
+      const expr = `EXISTS { ${subquery} }`;
+      return condition.operator === 'NOT EXISTS' ? `!(${expr})` : expr;
+    }
+
     // Handle IN / NOT IN
     if (condition.operator === 'IN' || condition.operator === 'NOT IN') {
       if (!Array.isArray(value) || value.length === 0) return condition.operator === 'IN' ? 'false' : 'true';
@@ -106,6 +114,25 @@ export class ExpressionBuilder {
         .replace(/%/g, '.*')
         .replace(/_/g, '.');
       return `REGEX(STR(${variable}), "^${pattern}$", "i")`;
+    }
+    // Handle ILIKE (case-insensitive)
+    if (condition.operator === 'ILIKE') {
+      let pattern = String(value)
+        .replace(/[.+^${}()|[\\]/g, '\\$&')
+        .replace(/%/g, '.*')
+        .replace(/_/g, '.');
+      return `REGEX(STR(${variable}), "^${pattern}$", "i")`;
+    }
+
+    // Handle BETWEEN / NOT BETWEEN
+    if (condition.operator === 'BETWEEN' || condition.operator === 'NOT BETWEEN') {
+      if (!Array.isArray(value) || value.length !== 2) return '';
+      const [min, max] = value;
+      const column = table.columns[colName];
+      const left = formatValue(min, column);
+      const right = formatValue(max, column);
+      const expr = `(${variable} >= ${left} && ${variable} <= ${right})`;
+      return condition.operator === 'NOT BETWEEN' ? `!${expr}` : expr;
     }
 
     // Basic operators

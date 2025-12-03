@@ -15,6 +15,7 @@ import {
   date,
   json,
   object,
+  id,
   RDF_CLASSES
 } from '@src/core/pod-table';
 import { SCHEMA_INRUPT as SCHEMA } from '@inrupt/vocab-common-rdf';
@@ -301,8 +302,10 @@ describe('Zod 集成测试', () => {
       }).toThrow();
     });
 
-    it('应该处理空的表定义', () => {
-      const emptyTable = podTable('empty', {}, {
+    it('应该处理仅有 ID 的表定义', () => {
+      const emptyTable = podTable('empty', {
+        id: id()
+      }, {
         base: 'idp:///empty/index.ttl',
         type: RDF_CLASSES.SCHEMA_PERSON,
         namespace: schemaNamespace

@@ -4,7 +4,7 @@ import { PodTable, PodStringColumn } from '@src/core/pod-table';
 import { SCHEMA_INRUPT as SCHEMA } from '@inrupt/vocab-common-rdf';
 
 const mockTable = new PodTable('users', {
-  id: new PodStringColumn('id'),
+  id: new PodStringColumn('id', { primaryKey: true }),
   name: new PodStringColumn('name')
 }, {
   base: 'idp:///users.ttl',

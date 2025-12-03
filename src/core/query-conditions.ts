@@ -83,6 +83,39 @@ export function like(column: PodColumnBase | string, pattern: string): QueryCond
   return createBinaryCondition(column, 'LIKE', pattern);
 }
 
+// ILIKE 条件（不区分大小写匹配）
+export function ilike(column: PodColumnBase | string, pattern: string): QueryCondition {
+  return createBinaryCondition(column, 'ILIKE', pattern);
+}
+
+// BETWEEN 条件
+export function between(column: PodColumnBase | string, min: any, max: any): QueryCondition {
+  const { columnName, tableName } = resolveColumnAndTable(column);
+  return {
+    type: 'binary_expr',
+    operator: 'BETWEEN',
+    left: { column: columnName },
+    right: { value: [min, max] },
+    column: columnName,
+    value: [min, max],
+    table: tableName
+  };
+}
+
+// NOT BETWEEN 条件
+export function notBetween(column: PodColumnBase | string, min: any, max: any): QueryCondition {
+  const { columnName, tableName } = resolveColumnAndTable(column);
+  return {
+    type: 'binary_expr',
+    operator: 'NOT BETWEEN',
+    left: { column: columnName },
+    right: { value: [min, max] },
+    column: columnName,
+    value: [min, max],
+    table: tableName
+  };
+}
+
 // REGEX 条件（自定义正则）
 export function regex(column: PodColumnBase | string, pattern: string, flags?: string): QueryCondition {
   return createBinaryCondition(column, 'REGEX', { pattern, flags });
@@ -167,6 +200,24 @@ export function not(condition: QueryCondition): QueryCondition {
   };
 }
 
+// EXISTS 条件（传入子查询字符串或条件表达式）
+export function exists(subquery: string): QueryCondition {
+  return {
+    type: 'unary_expr',
+    operator: 'EXISTS',
+    left: { value: subquery }
+  };
+}
+
+// NOT EXISTS 条件
+export function notExists(subquery: string): QueryCondition {
+  return {
+    type: 'unary_expr',
+    operator: 'NOT EXISTS',
+    left: { value: subquery }
+  };
+}
+
 // 导出所有条件函数
 export const conditions = {
   eq,
@@ -176,6 +227,9 @@ export const conditions = {
   lt,
   lte,
   like,
+  ilike,
+  between,
+  notBetween,
   regex,
   inArray,
   notInArray,
@@ -183,7 +237,9 @@ export const conditions = {
   isNotNull,
   and,
   or,
-  not
+  not,
+  exists,
+  notExists
 };
 
 // 默认导出

@@ -976,7 +976,21 @@ export class SelectQueryBuilder<TTable extends PodTable<any> = PodTable<any>> {
             combined.push(entry);
           }
         });
-        target[col] = combined.length === 1 ? combined[0] : combined;
+
+        const colDef = this.selectedTable?.columns[col];
+        const isArrayType = colDef?.options?.isArray || (colDef as any)?.dataType === 'array';
+
+        if (!isArrayType && combined.length > 1) {
+            console.warn(`[Data Integrity] Multiple values found for single-value column '${col}' on subject '${key}'. Using first value.`);
+            target[col] = combined[0];
+        } else {
+            // If array type, always return array. If unknown/implicit, fallback to auto-collapse.
+            if (isArrayType) {
+              target[col] = combined;
+            } else {
+              target[col] = combined.length === 1 ? combined[0] : combined;
+            }
+        }
       });
     });
     const result = order.map((key) => merged.get(key)!);

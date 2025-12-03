@@ -10,6 +10,7 @@ describe('Compile-time Types', () => {
   describe('createTypedTable', () => {
     it('应该创建类型安全的表', () => {
       const usersTable = createTypedTable('users', {
+        id: field('id', 'https://schema.org/identifier', 'string', { primaryKey: true }),
         name: field('name', 'https://schema.org/name', 'string'),
         age: field('age', 'https://schema.org/age', 'number'),
         email: field('email', 'https://schema.org/email', 'string'),
@@ -54,6 +55,7 @@ describe('Compile-time Types', () => {
         type: 'https://schema.org/Person',
         namespace: { prefix: 'schema', uri: 'https://schema.org/' }
       })
+        .addField(field('id', 'https://schema.org/identifier', 'string', { primaryKey: true }))
         .addField(CommonFields.name())
         .addField(CommonFields.age())
         .addField(CommonFields.email())
@@ -72,6 +74,7 @@ describe('Compile-time Types', () => {
     it('应该提供正确的类型信息', () => {
       // 这个测试主要验证 TypeScript 类型检查
       const usersTable = createTypedTable('users', {
+        id: field('id', 'https://schema.org/identifier', 'string', { primaryKey: true }),
         name: field('name', 'https://schema.org/name', 'string'),
         age: field('age', 'https://schema.org/age', 'number'),
         email: field('email', 'https://schema.org/email', 'string'),
@@ -97,6 +100,7 @@ describe('Compile-time Types', () => {
         type: 'https://schema.org/BlogPosting',
         namespace: { prefix: 'schema', uri: 'https://schema.org/' }
       })
+        .addField(field('id', 'https://schema.org/identifier', 'string', { primaryKey: true }))
         .addField(CommonFields.name('https://schema.org/headline'))
         .addField(field('content', 'https://schema.org/text', 'string'))
         .addField(field('author', 'https://schema.org/author', 'string'))

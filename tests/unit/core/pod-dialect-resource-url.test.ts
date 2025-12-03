@@ -1,5 +1,5 @@
 import { vi } from 'vitest';
-import { PodTable } from '../../../src/core/pod-table';
+import { PodTable, PodStringColumn } from '../../../src/core/pod-table';
 import { PodDialect } from '../../../src/core/pod-dialect';
 
 const queryContainerMock = vi.fn().mockResolvedValue([]);
@@ -66,7 +66,9 @@ const createDialect = (fetchImpl: typeof fetch) => {
 
 describe('PodDialect resource URL normalization', () => {
   const fetchMock = vi.fn() as vi.MockedFunction<typeof fetch>;
-const table = new PodTable('profile', {}, {
+const table = new PodTable('profile', {
+  id: new PodStringColumn('id', { primaryKey: true, predicate: '@id' })
+}, {
   containerPath: '/profile/',
   base: 'idp:///profile/card',
   type: 'http://xmlns.com/foaf/0.1/Person'

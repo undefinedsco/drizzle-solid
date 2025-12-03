@@ -21,6 +21,7 @@ const profileTable = podTable('profiles', {
 });
 
 const primitiveTable = podTable('primitive', {
+  id: string('id').primaryKey(),
   score: int('score').notNull(),
   flag: boolean('flag'),
   publishedAt: date('publishedAt').defaultNow(),
@@ -97,6 +98,7 @@ describe('PodTable type inference', () => {
 
   it('infers primitives for select correctly', () => {
     expectTypeOf<PrimitiveSelect>().toEqualTypeOf<{
+      id: string;
       score: number;
       flag: boolean;
       publishedAt: Date;

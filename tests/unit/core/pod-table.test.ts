@@ -216,8 +216,8 @@ describe('PodTable', () => {
 
   it('relations 应该挂载关系元数据', () => {
     const posts = podTable('posts', {
-      id: string('id'),
-      authorId: string('authorId').reference('https://schema.org/Person')
+      id: string('id').primaryKey().predicate('http://schema.org/identifier'),
+      authorId: string('authorId').predicate('http://schema.org/author').reference('https://schema.org/Person')
     }, {
       base: 'idp:///posts.ttl',
       type: 'https://schema.org/Article',
@@ -225,8 +225,8 @@ describe('PodTable', () => {
     });
 
     const users = podTable('users', {
-      id: string('id'),
-      name: string('name')
+      id: string('id').primaryKey().predicate('http://schema.org/identifier'),
+      name: string('name').predicate('http://schema.org/name')
     }, {
       base: 'idp:///users.ttl',
       type: 'https://schema.org/Person',
@@ -270,6 +270,7 @@ describe('PodColumn 选项', () => {
 describe('inverse 谓词映射', () => {
   it('应该在表映射中记录 inverse 列', () => {
     const table = podTable('members', {
+      id: id(),
       org: string('org')
         .predicate(RDF_PREDICATES.FOAF_NAME)
         .inverse()
@@ -445,6 +446,7 @@ describe('新的列定义函数', () => {
 
   it('ColumnBuilder 应该在 podTable 中转换为具体列类型', () => {
     const table = podTable('people', {
+      id: id(),
       name: string('name').notNull(),
       born: date('born'),
       active: boolean('active'),

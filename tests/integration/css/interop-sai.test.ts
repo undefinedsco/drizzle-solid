@@ -89,6 +89,13 @@ describe('SAI Interoperability (Dual User)', () => {
     const bobDb = drizzle(bobSession);
     const bobTables = getTestTables(bobPodBase);
 
+    // Cleanup Bob's old SAI data to prevent duplicate key errors
+    try {
+        await bobSession.fetch(`${bobTables.registriesPath}set.ttl`, { method: 'DELETE' });
+        await bobSession.fetch(bobTables.appRegResource, { method: 'DELETE' });
+        await new Promise(resolve => setTimeout(resolve, 500));
+    } catch (e) {}
+
     // 2. Alice: Prepare Data
     const aliceDataContainer = `${alicePodBase}data/shared-notes/`;
     await ensureContainer(aliceSession, 'data/shared-notes/');
@@ -147,8 +154,11 @@ describe('SAI Interoperability (Dual User)', () => {
     
     // 4.1 Create RegistrySet
     await ensureContainer(bobSession, 'registries/');
+    
+    const setId = `set-${Date.now()}`;
+    
     await bobDb.insert(bobTables.registrySet).values({
-      id: 'set',
+      id: setId,
       hasAgentRegistry: [bobTables.agentRegistryPath]
     });
 
@@ -162,7 +172,7 @@ describe('SAI Interoperability (Dual User)', () => {
       @prefix solid: <http://www.w3.org/ns/solid/terms#>.
       @prefix interop: <${INTEROP.NS}>.
       _:patch a solid:InsertDeletePatch;
-        solid:inserts { <${bobWebId}> interop:hasRegistrySet <${bobTables.registriesPath}set.ttl#set> . } .
+        solid:inserts { <${bobWebId}> interop:hasRegistrySet <${bobTables.registriesPath}set.ttl#${setId}> . } .
     `;
     
     const patchResponse = await bobSession.fetch(bobProfileResource, {
@@ -197,9 +207,10 @@ describe('SAI Interoperability (Dual User)', () => {
       body: ''
     });
     
-    const appRegId = 'app-registration';
-    const accessGrantId = 'access-grant';
-    const dataGrantId = 'data-grant-1';
+    const ts = Date.now();
+    const appRegId = `app-reg-${ts}`;
+    const accessGrantId = `access-grant-${ts}`;
+    const dataGrantId = `data-grant-${ts}`;
 
     // Insert Data Grant
     await bobDb.insert(bobTables.dataGrant).values({

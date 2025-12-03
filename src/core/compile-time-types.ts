@@ -9,6 +9,7 @@ export interface TypedField<T extends string> {
   name: T;
   predicate: string;
   type: 'string' | 'number' | 'boolean' | 'Date';
+  primaryKey?: boolean;
 }
 
 // 类型安全的表定义
@@ -39,6 +40,9 @@ export function createTypedTable<T extends Record<string, TypedField<any>>>(
         columns[fieldName] = date(fieldName).predicate(fieldDef.predicate);
         break;
     }
+    if (fieldDef.primaryKey) {
+      columns[fieldName].primaryKey();
+    }
   }
   
   return podTable(name, columns, options);
@@ -48,9 +52,10 @@ export function createTypedTable<T extends Record<string, TypedField<any>>>(
 export function field<T extends string>(
   name: T,
   predicate: string,
-  type: 'string' | 'number' | 'boolean' | 'Date'
+  type: 'string' | 'number' | 'boolean' | 'Date',
+  options?: { primaryKey?: boolean }
 ): TypedField<T> {
-  return { name, predicate, type };
+  return { name, predicate, type, primaryKey: options?.primaryKey };
 }
 
 // 预定义的常用字段

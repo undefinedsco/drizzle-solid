@@ -1,6 +1,31 @@
 import { entityKind } from 'drizzle-orm';
 import { SQL } from 'drizzle-orm';
 
+// NanoID-like ID Generator (URL-friendly, cryptographically strong)
+const urlAlphabet = 'useandom-26T198340PX75pxJACKVERYMINDBUSHWOLF_GQZbfghjklqvwyzrict';
+const generateNanoId = (size = 21): string => { // Default size 21 for 1 in 10^38 collision chance
+  let id = '';
+  // Use crypto for randomness (browser & modern Node)
+  let bytes: Uint8Array;
+  if (typeof globalThis.crypto !== 'undefined' && typeof globalThis.crypto.getRandomValues === 'function') {
+    bytes = globalThis.crypto.getRandomValues(new Uint8Array(size));
+  } else {
+    // Fallback for older Node.js or environments without Web Crypto API (less secure)
+    // For Node.js, require('crypto') might be an option but we avoid dynamic require for bundling.
+    // This fallback is less secure but prevents crashes.
+    console.warn("Using Math.random fallback for NanoID generation. Consider polyfilling crypto or upgrading Node.js for production.");
+    bytes = new Uint8Array(size);
+    for (let i = 0; i < size; i++) {
+      bytes[i] = Math.floor(Math.random() * 256); // Fill with pseudo-random bytes
+    }
+  }
+
+  for (let i = 0; i < size; i++) {
+    id += urlAlphabet[bytes[i] % urlAlphabet.length];
+  }
+  return id;
+};
+
 // 命名空间配置
 export interface NamespaceConfig {
   prefix: string;
@@ -679,10 +704,27 @@ export class PodTable<TColumns extends Record<string, PodColumnBase<any, any, an
     // 将列直接添加到表对象上，以便直接访问
     Object.assign(this, columns);
 
-    // 记录列所属的表，便于 JOIN/分组等语义解析
+    // 记录列所属的表，便于 JOIN/分组等语义解析，并检查主键数量
+    let primaryKeyCount = 0;
     for (const column of Object.values(columns)) {
+      if (column.options.primaryKey) {
+        primaryKeyCount++;
+      }
       column.table = this;
       column.tableName = name;
+
+      // 检查所有列是否都有有效的 predicate 或表级 namespace
+      if (
+        !column.options.predicate && // 没有明确的 predicate
+        !((column as any)._virtualId) && // 不是虚拟 ID 列 (@id)
+        !options.namespace // 表没有定义 namespace
+      ) {
+        throw new Error(`Column "${column.name}" in table "${name}" is missing a predicate. Please set a 'predicate' option for the column or a 'namespace' for the table.`);
+      }
+    }
+
+    if (primaryKeyCount !== 1) {
+      throw new Error(`PodTable "${name}" must have exactly one primary key column. Found ${primaryKeyCount}.`);
     }
 
     // 初始化 drizzle-zod 兼容的属性
@@ -1050,7 +1092,13 @@ export function podObject(name: string, options: PodColumnOptions = {}): PodObje
 // 专用 ID 列，自动 predicate 为 @id，便于构造 subject IRI
 // 特殊 ID 列：不单独存储谓词，只用于生成/解析 subject/@id（最多一个）
 export function id(name = 'id', options: PodColumnOptions = {}): PodStringColumn {
-  const col = new PodStringColumn(name, { ...options, predicate: '@id', primaryKey: true, required: true });
+  const col = new PodStringColumn(name, { 
+    ...options, 
+    predicate: '@id', 
+    primaryKey: true, 
+    required: true,
+    defaultValue: options.defaultValue ?? generateNanoId // Default to NanoID generation
+  });
   // 标记为“虚拟 ID 列”，生成/解析 subject 时使用，但不额外输出三元组
   (col as any)._virtualId = true;
   return col;

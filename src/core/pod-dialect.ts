@@ -789,28 +789,26 @@ export class PodDialect {
               await this.ensureContainerExists(containerUrl);
             }
             if (!this.preparedResources.has(this.normalizeResourceKey(resourceUrl))) {
-              // 只有在 document 模式下，且文件不存在时才需要 createIfMissing
-              // 但这里我们无法轻易区分是否是 fragment mode。
-              // LdpExecutor.executeInsert 会处理具体的三元组，但它假定资源可写。
-              // 为了简单起见，这里总是确保资源存在。
-              // 实际上，如果使用 subjectResolver，它会决定写入哪个文件。
-              // 如果 subjectResolver 决定写入不同的文件，那么这里的 normalizedResourceUrl 可能不准确。
-              // 但目前的架构是 PodTable 绑定到一个 resourceUrl (或 containerUrl)。
-              
-              // 修正：如果 LdpExecutor 使用 SubjectResolver，它可能会根据记录生成不同的 URI。
-              // 如果是 document mode，每个记录可能有自己的文件。
-              // LdpExecutor.executeInsert 可能会发现需要写入不同的文件。
-              // 但目前 LdpExecutor.executeInsert 接受一个 resourceUrl 参数，这意味着它是批量写入同一个文件。
-              // 如果是 Document Mode，我们应该在 LdpExecutor 内部处理多文件写入，或者在此处拆分。
-              // 为了保持兼容性，目前假设所有插入都针对同一个资源（Fragment Mode）或者主资源（Document Mode 的容器）。
-              
-              // 实际上，如果是 Document Mode，resourceUrl 可能是 containerUrl + 'new-id.ttl'。
-              // 但如果是批量插入，会有多个 IDs。
-              
-              // 我们应该让 LdpExecutor 处理资源创建，或者在此处更智能地处理。
-              // 暂时保持原样，确保主资源存在。
               await this.ensureResourceExists(normalizedResourceUrl, { createIfMissing: true });
             }
+
+            // Pre-flight check for duplicates (Strategy: INSERT means NEW)
+            // Only possible if resource exists (which we ensured above)
+            for (const row of values) {
+               try {
+                 const subject = this.sparqlConverter.generateSubjectUri(row, operation.table);
+                 const askQuery = { type: 'ASK' as const, query: `ASK { <${subject}> ?p ?o }`, prefixes: {} };
+                 const results = await this.sparqlExecutor.executeQueryWithSource(askQuery, normalizedResourceUrl);
+                 if (results[0]?.result) {
+                   throw new Error(`Duplicate primary key: ${subject} already exists.`);
+                 }
+               } catch (e: any) {
+                 if (e.message && e.message.includes('Duplicate primary key')) throw e;
+                 // Ignore subject generation errors or other check failures to allow insert to proceed if check is flaky
+                 console.warn('[INSERT] Duplicate check warning:', e);
+               }
+            }
+
             const insertPlan = this.isInsertPlan(operation.plan)
               ? operation.plan
               : { table: operation.table, rows: values };
