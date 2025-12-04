@@ -1,54 +1,23 @@
 import { QueryCondition } from '../query-conditions';
+import { BinaryExpression, LogicalExpression, UnaryExpression } from '../expressions';
 import { PodColumnBase } from '../pod-table';
-
-function resolveColumnAndTable(column: PodColumnBase | string): { columnName: string; tableName?: string } {
-  if (typeof column === 'string') {
-    if (column.includes('.')) {
-      const [table, col] = column.split('.', 2);
-      return { columnName: col, tableName: table };
-    }
-    return { columnName: column };
-  }
-
-  return { columnName: column.name, tableName: column.tableName };
-}
 
 export function createLiteralCondition(
   alias: string | undefined,
   column: string,
   value: any
 ): QueryCondition {
+  const colRef = alias ? `${alias}.${column}` : column;
+
   if (value === undefined || value === null) {
-    return {
-      type: 'unary_expr',
-      operator: 'IS NULL',
-      column,
-      left: { column },
-      table: alias
-    };
+    return new UnaryExpression('IS NULL', colRef);
   }
 
   if (Array.isArray(value)) {
-    return {
-      type: 'binary_expr',
-      operator: 'IN',
-      column,
-      left: { column },
-      right: { value },
-      value,
-      table: alias
-    };
+    return new BinaryExpression(colRef, 'IN', value);
   }
 
-  return {
-    type: 'binary_expr',
-    operator: '=',
-    column,
-    left: { column },
-    right: { value },
-    value,
-    table: alias
-  };
+  return new BinaryExpression(colRef, '=', value);
 }
 
 export function buildConditionTreeFromObject(
@@ -72,9 +41,5 @@ export function buildConditionTreeFromObject(
     return nodes[0];
   }
 
-  return {
-    type: 'logical_expr',
-    operator: 'AND',
-    conditions: nodes
-  };
+  return new LogicalExpression('AND', nodes);
 }

@@ -356,10 +356,12 @@ describe('CSS integration: drizzle CRUD', () => {
       createdAt: new Date()
     });
 
+    // In fragment mode, id should be passed without '#' prefix
+    // The resolver will construct the full URI: resource.ttl#${id}
     const fragmentResults = await db
       .select()
       .from(profileTable)
-      .where({ id: `#${subjectId}` });
+      .where({ id: subjectId });
 
     expect(fragmentResults).toHaveLength(1);
     expect(fragmentResults[0]?.name).toBe(targetName);

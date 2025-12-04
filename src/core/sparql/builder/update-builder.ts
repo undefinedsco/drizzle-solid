@@ -365,24 +365,43 @@ export class UpdateBuilder {
   }
 
   private findConditionValue(condition: QueryCondition | any, column: string): any | undefined {
-    if (condition.column === column && condition.value !== undefined) {
-      return condition.value;
-    }
-    
+    // Support new BinaryExpression format: { left, operator, right }
     if (condition.type === 'binary_expr' && condition.operator === '=') {
-      const leftCol = condition.left?.column;
-      const rightVal = condition.right?.value;
-      if (leftCol === column && rightVal !== undefined) {
-        return rightVal;
+      const left = condition.left;
+      const right = condition.right;
+
+      // New format: left is string or object with 'name' property
+      let colName: string | undefined;
+      if (typeof left === 'string') {
+        colName = left.includes('.') ? left.split('.')[1] : left;
+      } else if (left && typeof left === 'object' && 'name' in left) {
+        colName = left.name;
+      } else if (left && typeof left === 'object' && 'column' in left) {
+        // Legacy format support
+        colName = left.column;
+      }
+
+      if (colName === column) {
+        // New format: right is the value directly
+        if (right !== undefined && right !== null) {
+          // Check if it's legacy format with { value: ... }
+          if (typeof right === 'object' && 'value' in right) {
+            return right.value;
+          }
+          return right;
+        }
       }
     }
 
-    if (condition.type === 'logical_expr' && condition.conditions) {
-      for (const child of condition.conditions) {
+    // Support LogicalExpression with 'expressions' property (new format)
+    if (condition.type === 'logical_expr') {
+      const children = condition.expressions || condition.conditions || [];
+      for (const child of children) {
         const found = this.findConditionValue(child, column);
         if (found !== undefined) return found;
       }
     }
+
     return undefined;
   }
 }

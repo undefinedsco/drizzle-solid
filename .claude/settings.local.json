@@ -19,7 +19,8 @@
       "WebSearch",
       "Bash(yarn test:*)",
       "Bash(yarn build)",
-      "Bash(yarn build:*)"
+      "Bash(yarn build:*)",
+      "Bash(npx vitest:*)"
     ],
     "deny": []
   }

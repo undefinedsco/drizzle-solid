@@ -72,13 +72,13 @@ describe('PodDialect resolveTableUrls source selection', () => {
     expect(sources).toEqual(['https://example.com/profile/shared/posts.ttl']);
   });
 
-  it('derives resource path from container-style base values', () => {
+  it('derives resource path from container-style base values (document mode)', () => {
     const dialect = new PodDialect({ session: createSession() });
 
     const logTable = podTable('logs', {
       id: string('id').primaryKey().predicate('https://schema.org/identifier')
     }, {
-      base: 'logs/',
+      base: 'logs/',  // ends with / -> document mode
       type: 'https://schema.org/Message',
       namespace: { prefix: 'schema', uri: 'https://schema.org/' }
     });
@@ -97,7 +97,8 @@ describe('PodDialect resolveTableUrls source selection', () => {
       tableToAlias: new Map([[ logTable, 'logs' ]])
     } as unknown as SelectQueryPlan;
 
+    // Document mode: SELECT queries the container, not a single file
     const sources = (dialect as any).collectSelectSources(plan);
-    expect(sources).toEqual(['https://example.com/profile/logs/logs.ttl']);
+    expect(sources).toEqual(['https://example.com/profile/logs/']);
   });
 });

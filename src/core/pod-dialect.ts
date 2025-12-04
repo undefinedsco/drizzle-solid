@@ -2,16 +2,20 @@ import { entityKind } from 'drizzle-orm';
 import { SQL } from 'drizzle-orm';
 import { PodTable } from './pod-table';
 import { QueryCondition } from './query-conditions';
+import { BinaryExpression } from './expressions';
 import { ASTToSPARQLConverter, type SPARQLQuery } from './ast-to-sparql';
 import { ComunicaSPARQLExecutor, SolidSPARQLExecutor } from './sparql-executor';
 import { TypeIndexManager, TypeIndexEntry, TypeIndexConfig, DiscoveredTable } from './typeindex-manager';
 import { DataDiscovery, TypeIndexDiscovery, InteropDiscovery, CompositeDiscovery } from './discovery';
 import { LdpExecutor } from './execution/ldp-executor';
+import { ExecutionStrategyFactoryImpl, type ExecutionStrategy } from './execution';
 import { subjectResolver } from './subject/resolver';
 import type { SelectQueryPlan } from './select-plan';
 import type { InsertQueryPlan, UpdateQueryPlan, DeleteQueryPlan } from './pod-session';
 import { ShapeManager, DrizzleShapeManager } from './shape';
 import { resolvePodBase } from './utils/pod-root';
+import { isSameOrigin, getFetchForOrigin } from './utils/origin-auth';
+import { ResourceResolverFactoryImpl, type ResourceResolver } from './resource-resolver';
 
 // 最小 Solid Session 接口定义
 export interface SolidAuthSession {
@@ -75,9 +79,11 @@ export class PodDialect {
   private sparqlConverter: ASTToSPARQLConverter;
   private sparqlExecutor: ComunicaSPARQLExecutor;
   private ldpExecutor: LdpExecutor;
+  private strategyFactory: ExecutionStrategyFactoryImpl;
   private typeIndexManager: TypeIndexManager;
   private discovery: DataDiscovery;
-  private shapeManager: ShapeManager; // Add ShapeManager instance
+  private shapeManager: ShapeManager;
+  private resolverFactory: ResourceResolverFactoryImpl;
   public config: PodDialectConfig;
   private registeredTables: Set<string> = new Set();
   private preparedContainers: Set<string> = new Set();
@@ -123,7 +129,36 @@ export class PodDialect {
     // 使用组合策略，优先使用 TypeIndex
     this.discovery = new CompositeDiscovery([typeIndexDiscovery, interopDiscovery]);
     
-    this.shapeManager = new DrizzleShapeManager(this.podUrl); // Pass podUrl
+    this.shapeManager = new DrizzleShapeManager(this.podUrl);
+
+    // Initialize ResourceResolver factory
+    this.resolverFactory = new ResourceResolverFactoryImpl(this.podUrl);
+
+    // Initialize ExecutionStrategy factory
+    this.strategyFactory = new ExecutionStrategyFactoryImpl({
+      sparqlExecutor: this.sparqlExecutor,
+      sparqlConverter: this.sparqlConverter,
+      sessionFetch: this.session.fetch,
+      podUrl: this.podUrl,
+      getResolver: (table) => this.getResolver(table),
+      listContainerResources: (containerUrl) => this.listContainerResources(containerUrl),
+      findSubjectsForCondition: (condition, table, resourceUrl) =>
+        this.findSubjectsForCondition(condition, table, resourceUrl)
+    });
+  }
+
+  /**
+   * Get the ResourceResolver for a table
+   */
+  getResolver(table: PodTable): ResourceResolver {
+    return this.resolverFactory.getResolver(table);
+  }
+
+  /**
+   * Get the ExecutionStrategy for a table
+   */
+  getStrategy(table: PodTable): ExecutionStrategy {
+    return this.strategyFactory.getStrategy(table);
   }
 
   /**
@@ -398,10 +433,16 @@ export class PodDialect {
     for (const table of tables) {
       const descriptor = this.resolveTableResource(table);
       if (descriptor.mode === 'ldp') {
-        const key = `ldp:${descriptor.resourceUrl}`;
+        // Document mode: query the container, not a single file
+        const resourceMode = subjectResolver.getResourceMode(table);
+        const sourceUrl = resourceMode === 'document'
+          ? descriptor.containerUrl
+          : descriptor.resourceUrl;
+
+        const key = `ldp:${sourceUrl}`;
         if (!seen.has(key)) {
           seen.add(key);
-          sources.push(descriptor.resourceUrl);
+          sources.push(sourceUrl);
         }
       } else {
         const key = `sparql:${descriptor.endpoint}`;
@@ -634,12 +675,35 @@ export class PodDialect {
     throw new Error('LDP mode does not support SPARQL UPDATE; use N3 patch helpers instead.');
   }
 
+  /**
+   * Get the appropriate fetch function for a SPARQL endpoint
+   * - Same-origin endpoints (e.g., CSS SPARQL sidecar): use authenticated session.fetch
+   * - Cross-origin endpoints: use unauthenticated fetch (standard SPARQL endpoint behavior)
+   */
+  private getFetchForEndpoint(endpoint: string): typeof fetch {
+    return getFetchForOrigin(endpoint, this.podUrl, this.session.fetch);
+  }
+
   private async executeOnSparqlEndpoint(endpoint: string, sparqlQuery: SPARQLQuery): Promise<any[]> {
+    const fetchFn = this.getFetchForEndpoint(endpoint);
+
     if (sparqlQuery.type === 'SELECT' || sparqlQuery.type === 'ASK') {
-      return await this.sparqlExecutor.executeQueryWithSource(sparqlQuery, endpoint);
+      // For SELECT/ASK, we need to create a temporary executor with the appropriate fetch
+      if (isSameOrigin(endpoint, this.podUrl)) {
+        // Same origin: use authenticated executor
+        return await this.sparqlExecutor.executeQueryWithSource(sparqlQuery, endpoint);
+      } else {
+        // Cross-origin: create an unauthenticated executor
+        const unauthExecutor = new ComunicaSPARQLExecutor({
+          sources: [endpoint],
+          fetch: fetch, // Use standard fetch without auth
+          logging: false
+        });
+        return await unauthExecutor.executeQueryWithSource(sparqlQuery, endpoint);
+      }
     }
 
-    const response = await this.session.fetch(endpoint, {
+    const response = await fetchFn(endpoint, {
       method: 'POST',
       headers: { 'Content-Type': 'application/sparql-update' },
       body: sparqlQuery.query
@@ -733,250 +797,264 @@ export class PodDialect {
     }
   }
 
-  // 核心查询方法 - 通过 Comunica 执行 SPARQL
+  // 核心查询方法 - 通过 ExecutionStrategy 执行
   async query(operation: PodOperation): Promise<unknown[]> {
     if (!this.connected) {
       await this.connect();
     }
 
-    const descriptor = this.resolveTableResource(operation.table);
-    const mode = descriptor.mode;
-
     // 如果表没有指定 resourcePath，尝试从 TypeIndex 自动发现
     await this.ensureTableResourcePath(operation.table);
 
-    const { containerUrl, resourceUrl } = mode === 'sparql'
-      ? { containerUrl: descriptor.endpoint, resourceUrl: descriptor.endpoint }
-      : this.resolveTableUrls(operation.table);
+    const descriptor = this.resolveTableResource(operation.table);
+    const strategy = this.getStrategy(operation.table);
+    const { containerUrl, resourceUrl } = this.resolveTableUrls(operation.table);
     const normalizedResourceUrl = this.normalizeResourceUrl(resourceUrl);
 
     try {
-      let sparqlQuery: SPARQLQuery;
-
-      // ... (omitted logging)
-
       switch (operation.type) {
-        case 'select': {
-          // ... (select logic unchanged)
-          if (operation.plan && this.isSelectPlan(operation.plan)) {
-            sparqlQuery = this.sparqlConverter.convertSelectPlan(operation.plan);
-          } else if (operation.plan && !this.isSelectPlan(operation.plan)) {
-            throw new Error('Invalid plan supplied for select operation');
-          } else if (operation.sql) {
-            const ast = this.sparqlConverter.parseDrizzleAST(operation.sql, operation.table);
-            sparqlQuery = this.sparqlConverter.convertSelect(ast, operation.table);
-          } else {
-            sparqlQuery = this.sparqlConverter.convertSimpleSelect({
-              table: operation.table,
-              where: operation.where as Record<string, unknown>,
-              limit: operation.limit,
-              offset: operation.offset,
-              orderBy: operation.orderBy,
-              distinct: operation.distinct
-            });
-          }
-          break;
-        }
+        case 'select':
+          return await this.executeSelect(operation, strategy, containerUrl, normalizedResourceUrl);
 
-        case 'insert': {
-          const values = Array.isArray(operation.values) ? operation.values : [operation.values];
-          if (!values || values.length === 0) {
-            throw new Error('INSERT operation requires at least one value');
-          }
+        case 'insert':
+          return await this.executeInsert(operation, strategy, containerUrl, normalizedResourceUrl, descriptor);
 
-          if (mode === 'ldp') {
-            if (!this.preparedContainers.has(this.normalizeContainerKey(containerUrl))) {
-              await this.ensureContainerExists(containerUrl);
-            }
-            if (!this.preparedResources.has(this.normalizeResourceKey(resourceUrl))) {
-              await this.ensureResourceExists(normalizedResourceUrl, { createIfMissing: true });
-            }
+        case 'update':
+          return await this.executeUpdate(operation, strategy, containerUrl, normalizedResourceUrl, descriptor);
 
-            // Pre-flight check for duplicates (Strategy: INSERT means NEW)
-            // Only possible if resource exists (which we ensured above)
-            for (const row of values) {
-               try {
-                 const subject = this.sparqlConverter.generateSubjectUri(row, operation.table);
-                 const askQuery = { type: 'ASK' as const, query: `ASK { <${subject}> ?p ?o }`, prefixes: {} };
-                 const results = await this.sparqlExecutor.executeQueryWithSource(askQuery, normalizedResourceUrl);
-                 if (results[0]?.result) {
-                   throw new Error(`Duplicate primary key: ${subject} already exists.`);
-                 }
-               } catch (e: any) {
-                 if (e.message && e.message.includes('Duplicate primary key')) throw e;
-                 // Ignore subject generation errors or other check failures to allow insert to proceed if check is flaky
-                 console.warn('[INSERT] Duplicate check warning:', e);
-               }
-            }
-
-            const insertPlan = this.isInsertPlan(operation.plan)
-              ? operation.plan
-              : { table: operation.table, rows: values };
-            
-            // Delegate to LdpExecutor
-            return await this.ldpExecutor.executeInsert(insertPlan.rows, insertPlan.table, normalizedResourceUrl);
-          }
-
-          const insertPlan = this.isInsertPlan(operation.plan)
-            ? operation.plan
-            : { table: operation.table, rows: values };
-          sparqlQuery = this.sparqlConverter.convertInsert(insertPlan, insertPlan.table);
-          break;
-        }
-        
-        // ... (update/delete)
-
-
-        case 'update': {
-          if (!operation.data) {
-            throw new Error('UPDATE operation requires data');
-          }
-          if (!operation.where || Object.keys(operation.where).length === 0) {
-            throw new Error('UPDATE operation requires where conditions to locate target resources');
-          }
-
-          if (mode === 'ldp') {
-            if (!this.preparedContainers.has(this.normalizeContainerKey(containerUrl))) {
-              try {
-                await this.ensureContainerExists(containerUrl);
-              } catch (error) {
-                const message = error instanceof Error ? error.message : String(error);
-                if (message.includes('Failed to check container: 401') || message.includes('Failed to check container: 403')) {
-                  console.warn(`[UPDATE] Skipping container existence check for ${containerUrl}: ${message}`);
-                } else {
-                  throw error;
-                }
-              }
-            }
-
-            if (!this.preparedResources.has(this.normalizeResourceKey(resourceUrl))) {
-              await this.ensureResourceExists(normalizedResourceUrl, { createIfMissing: false });
-            }
-          }
-
-          const updatePlan = this.isUpdatePlan(operation.plan)
-            ? operation.plan
-            : {
-                table: operation.table,
-                data: operation.data,
-                where: operation.where as QueryCondition
-              };
-
-          const ensuredCondition = await this.ensureIdentifierCondition(
-            updatePlan.where,
-            updatePlan.table,
-            normalizedResourceUrl
-          );
-
-          if (!ensuredCondition) {
-            console.warn('[UPDATE] No matching subjects found for provided condition, skipping update.');
-            return [];
-          }
-
-          const resourceMode = updatePlan.table.getResourceMode?.() ?? 'ldp';
-
-          if (resourceMode !== 'sparql') {
-            // Find subjects using Comunica (READ)
-            const subjects = await this.findSubjectsForCondition(updatePlan.where, updatePlan.table, resourceUrl);
-            
-            if (subjects.length === 0) {
-      return [];
-    }
-            
-            // Delegate execution to LdpExecutor (WRITE)
-            return await this.ldpExecutor.executeUpdate(updatePlan.table, updatePlan.data, subjects, normalizedResourceUrl);
-          }
-
-          try {
-            sparqlQuery = this.sparqlConverter.convertUpdate(updatePlan.data, ensuredCondition, updatePlan.table);
-          } catch (error) {
-            if (this.isSubjectResolutionError(error)) {
-              console.warn('[UPDATE] Subject resolution failed after rewrite:', error);
-              return [];
-            }
-            throw error;
-          }
-          break;
-        }
-
-        case 'delete': {
-          if (mode === 'ldp') {
-            if (!this.preparedContainers.has(this.normalizeContainerKey(containerUrl))) {
-              await this.ensureContainerExists(containerUrl);
-            }
-
-            const hasResource = this.preparedResources.has(this.normalizeResourceKey(resourceUrl))
-              ? true
-              : await this.resourceExists(normalizedResourceUrl);
-            if (!hasResource) {
-              console.log('[DELETE] Target resource does not exist, skipping SPARQL execution');
-              return [{
-                success: true,
-                source: normalizedResourceUrl,
-                status: 404
-              }];
-            }
-          }
-
-          const deletePlan = this.isDeletePlan(operation.plan)
-            ? operation.plan
-            : {
-                table: operation.table,
-                where: operation.where as QueryCondition | undefined
-              };
-
-          let deleteCondition = deletePlan.where;
-          if (deleteCondition) {
-            deleteCondition = await this.ensureIdentifierCondition(deleteCondition, deletePlan.table, normalizedResourceUrl);
-            if (!deleteCondition) {
-              console.warn('[DELETE] No matching subjects found for provided condition, skipping delete.');
-              return [];
-            }
-          }
-
-          if (mode === 'ldp') {
-            if (!deleteCondition) {
-               // Cannot delete without condition in LDP mode (safety)
-               return [];
-            }
-            // Find subjects using Comunica (READ)
-            const subjects = await this.findSubjectsForCondition(deleteCondition, deletePlan.table, normalizedResourceUrl);
-            if (subjects.length === 0) {
-              return [];
-            }
-
-            // Delegate execution to LdpExecutor (WRITE)
-            const results = await this.ldpExecutor.executeDelete(subjects, deletePlan.table, normalizedResourceUrl);
-            console.log(`[DELETE] LDP mode: Deleted ${results.length} subjects via N3 Patch`);
-            return results;
-          }
-
-          try {
-            sparqlQuery = this.sparqlConverter.convertDelete(deleteCondition, deletePlan.table);
-          } catch (error) {
-            if (this.isSubjectResolutionError(error)) {
-              console.warn('[DELETE] Subject resolution failed after rewrite:', error);
-              return [];
-            }
-            throw error;
-          }
-          break;
-        }
+        case 'delete':
+          return await this.executeDelete(operation, strategy, containerUrl, normalizedResourceUrl, descriptor);
 
         default:
           throw new Error(`Unsupported operation type: ${operation.type}`);
       }
-
-      console.log('Generated SPARQL:', sparqlQuery.query);
-
-      const results = await this.executeOnResource(normalizedResourceUrl, sparqlQuery, descriptor);
-      console.log(`${operation.type.toUpperCase()} operation completed, ${results.length} records affected`);
-      return results;
-
     } catch (error) {
       console.error(`${operation.type.toUpperCase()} operation failed:`, error);
       throw error;
     }
+  }
+
+  /**
+   * Execute SELECT operation via ExecutionStrategy
+   */
+  private async executeSelect(
+    operation: PodOperation,
+    strategy: ExecutionStrategy,
+    containerUrl: string,
+    resourceUrl: string
+  ): Promise<unknown[]> {
+    // Build SelectQueryPlan
+    let plan: SelectQueryPlan;
+
+    if (operation.plan && this.isSelectPlan(operation.plan)) {
+      plan = operation.plan;
+    } else if (operation.plan && !this.isSelectPlan(operation.plan)) {
+      throw new Error('Invalid plan supplied for select operation');
+    } else {
+      // Create plan from simple options or SQL
+      const alias = operation.table.config.name ?? 'table';
+      const basePlan: SelectQueryPlan = {
+        baseTable: operation.table,
+        baseAlias: alias,
+        selectAll: true,
+        conditionTree: operation.where as QueryCondition | undefined,
+        limit: operation.limit,
+        offset: operation.offset,
+        distinct: operation.distinct,
+        aliasToTable: new Map([[alias, operation.table]]),
+        tableToAlias: new Map([[operation.table, alias]])
+      };
+
+      // Store the original operation for Strategy to use appropriate conversion
+      // Use type assertion to add internal properties
+      (basePlan as any)._simpleSelectOptions = !operation.sql ? {
+        table: operation.table,
+        where: operation.where as Record<string, unknown>,
+        limit: operation.limit,
+        offset: operation.offset,
+        orderBy: operation.orderBy,
+        distinct: operation.distinct
+      } : undefined;
+      (basePlan as any)._sql = operation.sql;
+
+      plan = basePlan;
+    }
+
+    const results = await strategy.executeSelect(plan, containerUrl, resourceUrl);
+    console.log(`SELECT operation completed, ${results.length} records affected`);
+    return results;
+  }
+
+  /**
+   * Execute INSERT operation via ExecutionStrategy
+   */
+  private async executeInsert(
+    operation: PodOperation,
+    strategy: ExecutionStrategy,
+    containerUrl: string,
+    resourceUrl: string,
+    descriptor: TableResourceDescriptor
+  ): Promise<unknown[]> {
+    const values = Array.isArray(operation.values) ? operation.values : [operation.values];
+    if (!values || values.length === 0) {
+      throw new Error('INSERT operation requires at least one value');
+    }
+
+    // LDP mode: ensure container and resource exist first
+    if (descriptor.mode === 'ldp') {
+      if (!this.preparedContainers.has(this.normalizeContainerKey(containerUrl))) {
+        await this.ensureContainerExists(containerUrl);
+      }
+      if (!this.preparedResources.has(this.normalizeResourceKey(resourceUrl))) {
+        await this.ensureResourceExists(resourceUrl, { createIfMissing: true });
+      }
+
+      // Pre-flight check for duplicates (Strategy: INSERT means NEW)
+      for (const row of values) {
+        try {
+          const subject = this.sparqlConverter.generateSubjectUri(row, operation.table);
+          const askQuery = { type: 'ASK' as const, query: `ASK { <${subject}> ?p ?o }`, prefixes: {} };
+          const results = await this.sparqlExecutor.executeQueryWithSource(askQuery, resourceUrl);
+          if (results[0]?.result) {
+            throw new Error(`Duplicate primary key: ${subject} already exists.`);
+          }
+        } catch (e: any) {
+          if (e.message && e.message.includes('Duplicate primary key')) throw e;
+          console.warn('[INSERT] Duplicate check warning:', e);
+        }
+      }
+    }
+
+    const insertPlan = this.isInsertPlan(operation.plan)
+      ? operation.plan
+      : { table: operation.table, rows: values };
+
+    const results = await strategy.executeInsert(insertPlan, containerUrl, resourceUrl);
+    console.log(`INSERT operation completed, ${results.length} records affected`);
+    return results;
+  }
+
+  /**
+   * Execute UPDATE operation via ExecutionStrategy
+   */
+  private async executeUpdate(
+    operation: PodOperation,
+    strategy: ExecutionStrategy,
+    containerUrl: string,
+    resourceUrl: string,
+    descriptor: TableResourceDescriptor
+  ): Promise<unknown[]> {
+    if (!operation.data) {
+      throw new Error('UPDATE operation requires data');
+    }
+    if (!operation.where || Object.keys(operation.where).length === 0) {
+      throw new Error('UPDATE operation requires where conditions to locate target resources');
+    }
+
+    // LDP mode: ensure container and resource exist first
+    if (descriptor.mode === 'ldp') {
+      if (!this.preparedContainers.has(this.normalizeContainerKey(containerUrl))) {
+        try {
+          await this.ensureContainerExists(containerUrl);
+        } catch (error) {
+          const message = error instanceof Error ? error.message : String(error);
+          if (message.includes('Failed to check container: 401') || message.includes('Failed to check container: 403')) {
+            console.warn(`[UPDATE] Skipping container existence check for ${containerUrl}: ${message}`);
+          } else {
+            throw error;
+          }
+        }
+      }
+
+      if (!this.preparedResources.has(this.normalizeResourceKey(resourceUrl))) {
+        await this.ensureResourceExists(resourceUrl, { createIfMissing: false });
+      }
+    }
+
+    const updatePlan = this.isUpdatePlan(operation.plan)
+      ? operation.plan
+      : {
+          table: operation.table,
+          data: operation.data as Record<string, any>,
+          where: operation.where as QueryCondition
+        };
+
+    // For SPARQL mode, ensure we have identifier condition
+    if (descriptor.mode === 'sparql') {
+      const ensuredCondition = await this.ensureIdentifierCondition(
+        updatePlan.where,
+        updatePlan.table,
+        resourceUrl
+      );
+
+      if (!ensuredCondition) {
+        console.warn('[UPDATE] No matching subjects found for provided condition, skipping update.');
+        return [];
+      }
+
+      updatePlan.where = ensuredCondition;
+    }
+
+    const results = await strategy.executeUpdate(updatePlan, containerUrl, resourceUrl);
+    console.log(`UPDATE operation completed, ${results.length} records affected`);
+    return results;
+  }
+
+  /**
+   * Execute DELETE operation via ExecutionStrategy
+   */
+  private async executeDelete(
+    operation: PodOperation,
+    strategy: ExecutionStrategy,
+    containerUrl: string,
+    resourceUrl: string,
+    descriptor: TableResourceDescriptor
+  ): Promise<unknown[]> {
+    // LDP mode: ensure container exists and check resource
+    if (descriptor.mode === 'ldp') {
+      if (!this.preparedContainers.has(this.normalizeContainerKey(containerUrl))) {
+        await this.ensureContainerExists(containerUrl);
+      }
+
+      const hasResource = this.preparedResources.has(this.normalizeResourceKey(resourceUrl))
+        ? true
+        : await this.resourceExists(resourceUrl);
+      if (!hasResource) {
+        console.log('[DELETE] Target resource does not exist, skipping execution');
+        return [{
+          success: true,
+          source: resourceUrl,
+          status: 404
+        }];
+      }
+    }
+
+    const deletePlan = this.isDeletePlan(operation.plan)
+      ? operation.plan
+      : {
+          table: operation.table,
+          where: operation.where as QueryCondition | undefined
+        };
+
+    // For SPARQL mode with condition, ensure identifier condition
+    if (descriptor.mode === 'sparql' && deletePlan.where) {
+      const ensuredCondition = await this.ensureIdentifierCondition(
+        deletePlan.where,
+        deletePlan.table,
+        resourceUrl
+      );
+
+      if (!ensuredCondition) {
+        console.warn('[DELETE] No matching subjects found for provided condition, skipping delete.');
+        return [];
+      }
+
+      deletePlan.where = ensuredCondition;
+    }
+
+    const results = await strategy.executeDelete(deletePlan, containerUrl, resourceUrl);
+    console.log(`DELETE operation completed, ${results.length} records affected`);
+    return results;
   }
 
 
@@ -984,14 +1062,7 @@ export class PodDialect {
     if (!subjects || subjects.length === 0) {
       return undefined;
     }
-    return {
-      type: 'binary_expr',
-      operator: 'IN',
-      column: '@id',
-      left: { column: '@id' },
-      right: { value: subjects },
-      value: subjects
-    };
+    return new BinaryExpression('@id', 'IN', subjects);
   }
 
   private isInsertPlan(plan: PodOperation['plan']): plan is InsertQueryPlan {
@@ -1084,16 +1155,30 @@ export class PodDialect {
     if (!condition) {
       return false;
     }
-    if (condition.column && (condition.column === '@id' || condition.column === 'id')) {
-      return true;
+
+    // BinaryExpression: check 'left' property
+    if (condition.type === 'binary_expr') {
+      const left = (condition as any).left;
+      const colName = typeof left === 'string' ? left : left?.name;
+      if (colName === '@id' || colName === 'id') {
+        return true;
+      }
     }
 
-    if (condition.type === 'logical_expr' && condition.conditions) {
-      return condition.conditions.some((child) => this.conditionTargetsIdentifier(child));
+    // LogicalExpression: check 'expressions' property
+    if (condition.type === 'logical_expr') {
+      const exprs = (condition as any).expressions;
+      if (exprs) {
+        return exprs.some((child: QueryCondition) => this.conditionTargetsIdentifier(child));
+      }
     }
 
-    if (condition.type === 'unary_expr' && condition.left) {
-      return this.conditionTargetsIdentifier(condition.left as QueryCondition);
+    // UnaryExpression: check 'value' property
+    if (condition.type === 'unary_expr') {
+      const val = (condition as any).value;
+      if (val && typeof val === 'object' && 'type' in val) {
+        return this.conditionTargetsIdentifier(val as QueryCondition);
+      }
     }
 
     return false;
@@ -1226,7 +1311,9 @@ export class PodDialect {
 
   // 查询特定容器
   async queryContainer(containerPath: string, sql: SQL, table: PodTable): Promise<unknown[]> {
-    const sparqlQuery = this.sparqlConverter.convert(sql);
+    // Use proper AST conversion with table context
+    const ast = this.sparqlConverter.parseDrizzleAST(sql, table);
+    const sparqlQuery = this.sparqlConverter.convertSelect(ast, table);
     // 使用表定义中的容器路径，如果提供了的话
     const targetPath = table?.config?.containerPath || containerPath;
     return this.sparqlExecutor.queryContainer(targetPath, sparqlQuery);
@@ -1555,5 +1642,64 @@ export class PodDialect {
       console.error('[Container] 解析父容器 URL 失败:', error);
       return null;
     }
+  }
+
+  /**
+   * List all resources in a container
+   * Uses LDP containment triples to discover resources
+   */
+  private async listContainerResources(containerUrl: string): Promise<string[]> {
+    const normalizedUrl = this.normalizeContainerKey(containerUrl);
+    const resources: string[] = [];
+
+    try {
+      // Query the container for ldp:contains relationships
+      const sparql = {
+        type: 'SELECT' as const,
+        query: `
+          PREFIX ldp: <http://www.w3.org/ns/ldp#>
+          SELECT ?resource WHERE {
+            <${normalizedUrl}> ldp:contains ?resource .
+          }
+        `,
+        prefixes: { ldp: 'http://www.w3.org/ns/ldp#' }
+      };
+
+      const results = await this.sparqlExecutor.queryContainer(normalizedUrl, sparql);
+
+      for (const row of results) {
+        const resource = (row as any).resource;
+        if (resource) {
+          const resourceUrl = typeof resource === 'object' && resource.value
+            ? resource.value
+            : String(resource);
+          resources.push(resourceUrl);
+        }
+      }
+    } catch (e) {
+      console.warn('[listContainerResources] SPARQL query failed, falling back to GET:', e);
+
+      // Fallback: GET the container and parse the turtle
+      try {
+        const response = await this.session.fetch(normalizedUrl, {
+          method: 'GET',
+          headers: { 'Accept': 'text/turtle' }
+        });
+
+        if (response.ok) {
+          const turtle = await response.text();
+          // Simple regex to extract ldp:contains objects
+          const containsRegex = /<http:\/\/www\.w3\.org\/ns\/ldp#contains>\s*<([^>]+)>/g;
+          let match;
+          while ((match = containsRegex.exec(turtle)) !== null) {
+            resources.push(match[1]);
+          }
+        }
+      } catch (fallbackError) {
+        console.warn('[listContainerResources] Fallback GET also failed:', fallbackError);
+      }
+    }
+
+    return resources;
   }
 }

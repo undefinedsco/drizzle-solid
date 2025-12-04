@@ -108,6 +108,16 @@ export {
   type TimeContext
 } from './core/subject';
 
+// ResourceResolver 资源解析抽象
+export {
+  ResourceResolverFactoryImpl,
+  FragmentResourceResolver,
+  DocumentResourceResolver,
+  getResourceMode,
+  type ResourceResolver,
+  type ResourceResolverFactory
+} from './core/resource-resolver';
+
 // TripleBuilder 三元组构建
 export {
   TripleBuilderImpl,

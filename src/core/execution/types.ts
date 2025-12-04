@@ -1,0 +1,108 @@
+/**
+ * ExecutionStrategy Types
+ *
+ * Defines the interface for different execution modes (LDP, SPARQL)
+ */
+
+import type { PodTable } from '../pod-table';
+import type { QueryCondition } from '../query-conditions';
+import type { SelectQueryPlan } from '../select-plan';
+
+// Re-export plan types for convenience
+export interface InsertQueryPlan {
+  table: PodTable;
+  rows: any[];
+}
+
+export interface UpdateQueryPlan {
+  table: PodTable;
+  data: Record<string, any>;
+  where: QueryCondition;
+}
+
+export interface DeleteQueryPlan {
+  table: PodTable;
+  where?: QueryCondition;
+}
+
+/**
+ * Result of an execution operation
+ */
+export interface ExecutionResult {
+  success: boolean;
+  source: string;
+  status: number;
+  via?: string;
+  error?: string;
+  retried?: boolean;
+}
+
+/**
+ * Context passed to execution strategies
+ */
+export interface ExecutionContext {
+  /** Pod base URL */
+  podUrl: string;
+  /** Authenticated fetch function */
+  fetch: typeof fetch;
+  /** WebID of the current user */
+  webId: string;
+}
+
+/**
+ * ExecutionStrategy interface
+ *
+ * Abstracts the difference between LDP and SPARQL execution modes.
+ * Each strategy handles SELECT, INSERT, UPDATE, DELETE operations
+ * in its own way.
+ */
+export interface ExecutionStrategy {
+  /** Mode identifier */
+  readonly mode: 'ldp' | 'sparql';
+
+  /**
+   * Execute a SELECT query
+   */
+  executeSelect(
+    plan: SelectQueryPlan,
+    containerUrl: string,
+    resourceUrl: string
+  ): Promise<any[]>;
+
+  /**
+   * Execute an INSERT operation
+   */
+  executeInsert(
+    plan: InsertQueryPlan,
+    containerUrl: string,
+    resourceUrl: string
+  ): Promise<ExecutionResult[]>;
+
+  /**
+   * Execute an UPDATE operation
+   */
+  executeUpdate(
+    plan: UpdateQueryPlan,
+    containerUrl: string,
+    resourceUrl: string
+  ): Promise<ExecutionResult[]>;
+
+  /**
+   * Execute a DELETE operation
+   */
+  executeDelete(
+    plan: DeleteQueryPlan,
+    containerUrl: string,
+    resourceUrl: string
+  ): Promise<ExecutionResult[]>;
+}
+
+/**
+ * Factory interface for creating execution strategies
+ */
+export interface ExecutionStrategyFactory {
+  /**
+   * Get the appropriate execution strategy for a table
+   */
+  getStrategy(table: PodTable): ExecutionStrategy;
+}

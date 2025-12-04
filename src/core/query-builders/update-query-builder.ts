@@ -49,11 +49,15 @@ export class UpdateQueryBuilder<TTable extends PodTable<any> = PodTable<any>> {
   }
 
   private convertQueryConditionToSimple(condition: QueryCondition): Record<string, any> {
-    if (condition.type === 'binary_expr' && condition.column && condition.value !== undefined) {
-      return { [condition.column]: condition.value };
+    if (condition.type === 'binary_expr') {
+      const left = (condition as any).left;
+      const right = (condition as any).right;
+      const colName = typeof left === 'string' ? left : left?.name;
+      if (colName && right !== undefined) {
+        return { [colName]: right };
+      }
     }
     // For complex conditions, temporarily return empty object; can be extended later
-    // console.warn('Complex query conditions not yet supported, using empty condition');
     return {};
   }
 

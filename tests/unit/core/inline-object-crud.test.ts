@@ -44,7 +44,7 @@ describe('inline object CRUD SPARQL generation', () => {
         { id: '#participants-1', name: 'Alice Updated' },
         { name: 'Carol' }
       ]
-    }, { column: '@id', operator: '=', value: 'threads.ttl#thread-1', type: 'binary_expr' }, threadsTable);
+    }, { left: '@id', operator: '=', right: 'threads.ttl#thread-1', type: 'binary_expr' }, threadsTable);
 
     expect(query.query).toContain('DELETE {');
     expect(query.query).toContain('<https://pod.example/threads.ttl#thread-1>');

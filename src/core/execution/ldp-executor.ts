@@ -60,21 +60,61 @@ export class LdpExecutor {
       return [];
     }
 
-    // console.log(`[LdpExecutor] executeInsert: ${resourceUrl}, triples: ${insertTriples.length}`);
-
-    // Fragment Mode 且资源存在时，使用 PATCH 追加数据
     const mode = subjectResolver.getResourceMode(table);
-    if (mode === 'fragment') {
-      const exists = await this.resourceExists(resourceUrl);
-      if (exists) {
-        // console.log(`[LdpExecutor] Resource exists, appending via N3 Patch: ${resourceUrl}`);
-        return this.executeN3Patch(resourceUrl, [], insertTriples, []);
+
+    // Document Mode: 每条记录单独写入各自的文件
+    if (mode === 'document') {
+      const results: any[] = [];
+      for (let idx = 0; idx < rows.length; idx++) {
+        const row = rows[idx];
+        const subject = subjectResolver.resolve(table, row, idx);
+
+        // 从 subject URI 提取资源 URL (去掉 fragment 如果有)
+        const docResourceUrl = subjectResolver.getResourceUrl(subject);
+        console.log(`[LdpExecutor] Document mode INSERT: subject=${subject}, resourceUrl=${docResourceUrl}`);
+
+        // 收集该记录的三元组
+        const recordTriples: string[] = [];
+        const typeTriple = this.tripleBuilder.buildTypeTriple(subject, table.config.type as string);
+        recordTriples.push(...this.tripleBuilder.toN3Strings([typeTriple]));
+
+        Object.entries(table.columns ?? {}).forEach(([key, col]) => {
+          if (row[key] === undefined || row[key] === null) return;
+          const result = this.tripleBuilder.buildInsert(subject, col as any, row[key], table);
+          recordTriples.push(...this.tripleBuilder.toN3Strings(result.triples));
+          if (result.childTriples && result.childTriples.length > 0) {
+            recordTriples.push(...this.tripleBuilder.toN3Strings(result.childTriples));
+          }
+        });
+
+        if (recordTriples.length === 0) continue;
+
+        const body = recordTriples.join('\n');
+        const response = await this.fetchFn(docResourceUrl, {
+          method: 'PUT',
+          headers: { 'Content-Type': 'text/turtle' },
+          body
+        });
+
+        if (![200, 201, 202, 204, 205].includes(response.status)) {
+          const text = await response.text().catch(() => '');
+          throw new Error(`PUT failed for ${docResourceUrl}: ${response.status} ${response.statusText}${text ? ` - ${text}` : ''}`);
+        }
+
+        await this.sparqlExecutor.invalidateHttpCache(docResourceUrl);
+        results.push({ success: true, source: docResourceUrl, status: response.status, via: 'put' });
       }
+      return results;
     }
 
-    // Document Mode 或资源不存在时，使用 PUT 创建/覆盖
+    // Fragment Mode: 所有记录写入同一个文件
+    const exists = await this.resourceExists(resourceUrl);
+    if (exists) {
+      return this.executeN3Patch(resourceUrl, [], insertTriples, []);
+    }
+
+    // 资源不存在时，使用 PUT 创建
     const body = insertTriples.join('\n');
-    // console.log(`[LdpExecutor] PUT ${resourceUrl} content length:`, body.length);
     let response = await this.fetchFn(resourceUrl, {
       method: 'PUT',
       headers: { 'Content-Type': 'text/turtle' },
@@ -126,10 +166,16 @@ export class LdpExecutor {
     }
 
     const results: any[] = [];
+    const mode = subjectResolver.getResourceMode(table);
 
     for (const subject of subjects) {
+      // Document mode: 从 subject URI 获取资源 URL
+      const targetResourceUrl = mode === 'document'
+        ? subjectResolver.getResourceUrl(subject)
+        : resourceUrl;
+
       // 1. 获取普通字段的 Patch 数据（无 WHERE 子句）
-      const patchData = await this.buildUpdatePatchPayload(subject, table, data, resourceUrl);
+      const patchData = await this.buildUpdatePatchPayload(subject, table, data, targetResourceUrl);
       
       if (!patchData) continue;
       
@@ -152,11 +198,11 @@ export class LdpExecutor {
         if (!isInline) continue;
 
         const predicate = this.tripleBuilder.getPredicateUri(col, table);
-        
+
         // A. 查找旧的内联对象
         // 使用 SPARQL 查询找到旧的链接
-        const childUris = await this.fetchExistingObjects(resourceUrl, subject, predicate);
-        
+        const childUris = await this.fetchExistingObjects(targetResourceUrl, subject, predicate);
+
         for (const childUriRaw of childUris) {
            let childUri = childUriRaw;
            if (!childUri.startsWith('<') && !childUri.startsWith('_:')) {
@@ -165,22 +211,22 @@ export class LdpExecutor {
 
            // 删除链接: <subject> <predicate> <childUri> .
            deleteTriples.push(`<${subject}> <${predicate}> ${childUri} .`);
-           
+
            // 删除子对象的所有三元组 (递归)
            if (childUri.startsWith('<')) {
              const cleanUri = childUri.slice(1, -1);
-             const childTriples = await this.fetchRecursiveTriplesToDelete(cleanUri, table, resourceUrl);
+             const childTriples = await this.fetchRecursiveTriplesToDelete(cleanUri, table, targetResourceUrl);
              deleteTriples.push(...childTriples);
            }
         }
-        
+
         // B. 插入逻辑由 buildInsert 处理，已经包含在 patchData.insertTriples 中
       }
 
       // 去重和冲突检查
       const uniqueDeletes = Array.from(new Set(deleteTriples));
       const uniqueInserts = Array.from(new Set(insertTriples));
-      
+
       // CSS N3 Patch forbids deleting and inserting the same triple in one patch
       const finalDeletes = uniqueDeletes.filter(t => !uniqueInserts.includes(t));
       const finalInserts = uniqueInserts.filter(t => !uniqueDeletes.includes(t));
@@ -189,7 +235,7 @@ export class LdpExecutor {
           continue;
       }
 
-      const res = await this.executeN3Patch(resourceUrl, finalDeletes, finalInserts, []);
+      const res = await this.executeN3Patch(targetResourceUrl, finalDeletes, finalInserts, []);
       results.push(...res);
       
       // Delay between updates to prevent server overload/locking
@@ -208,16 +254,22 @@ export class LdpExecutor {
     resourceUrl: string
   ): Promise<any[]> {
     const results: any[] = [];
-    
+    const mode = subjectResolver.getResourceMode(table);
+
     for (const subject of subjects) {
       try {
+        // Document mode: 从 subject URI 获取资源 URL
+        const targetResourceUrl = mode === 'document'
+          ? subjectResolver.getResourceUrl(subject)
+          : resourceUrl;
+
         // Recursively fetch all triples for this subject and its inline children
-        const deleteTriples = await this.fetchRecursiveTriplesToDelete(subject, table, resourceUrl);
+        const deleteTriples = await this.fetchRecursiveTriplesToDelete(subject, table, targetResourceUrl);
         const uniqueDeletes = Array.from(new Set(deleteTriples));
-        
+
         if (uniqueDeletes.length > 0) {
           const patchRes = await this.executeN3Patch(
-            resourceUrl,
+            targetResourceUrl,
             uniqueDeletes,
             [],
             [] // Empty WHERE since we delete explicit triples
@@ -229,7 +281,7 @@ export class LdpExecutor {
         throw error;
       }
     }
-    
+
     return results;
   }
 

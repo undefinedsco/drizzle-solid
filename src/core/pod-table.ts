@@ -407,6 +407,14 @@ export abstract class PodColumnBase<
   table?: PodTable<any>;
   relationName?: string;
 
+  // 添加 drizzle-zod 需要的 getSQL 方法
+  getSQL(): SQL {
+    return {
+      queryChunks: [{ value: this.name }],
+      params: [],
+    } as unknown as SQL;
+  }
+
   // 获取 RDF 谓词
   getPredicate(tableNamespace?: NamespaceConfig): string {
     if (this.options.predicate) {

@@ -224,14 +224,21 @@ export class SelectBuilder {
     const selectFields = ast.select;
     const variables: any[] = [{ termType: 'Variable', value: 'subject' }];
 
-    if (selectFields && typeof selectFields === 'object' && Object.keys(selectFields).length > 0) {
-      const mapped = Object.entries(selectFields).map(([alias, field]) =>
-        this.buildSelectEntry(alias, field, table)
-      );
-      return variables.concat(mapped);
+    // Skip columns that use @id predicate (virtual, derived from subject in JS)
+    const skipColumns = new Set(['subject']);
+    for (const [colName, column] of Object.entries(table.columns)) {
+      const predicate = getPredicateForColumn(column as PodColumnBase, table);
+      if (predicate === '@id') {
+        skipColumns.add(colName);
+      }
     }
 
-    const skipColumns = new Set(['subject']);
+    if (selectFields && typeof selectFields === 'object' && Object.keys(selectFields).length > 0) {
+      const mapped = Object.entries(selectFields)
+        .filter(([alias]) => !skipColumns.has(alias))
+        .map(([alias, field]) => this.buildSelectEntry(alias, field, table));
+      return variables.concat(mapped);
+    }
 
     if (ast.columns === '*' || !ast.columns) {
       const cols = Object.keys(table.columns)
@@ -241,8 +248,14 @@ export class SelectBuilder {
     }
 
     const cols = ast.columns
-      .filter((col: string) => !skipColumns.has(col))
-      .map((col: string) => ({ termType: 'Variable', value: col }));
+      .filter((col: any) => {
+        const colName = typeof col === 'string' ? col : col.name;
+        return !skipColumns.has(colName);
+      })
+      .map((col: any) => {
+        const colName = typeof col === 'string' ? col : col.name;
+        return { termType: 'Variable', value: colName };
+      });
     return variables.concat(cols);
   }
 
@@ -342,25 +355,8 @@ export class SelectBuilder {
       });
     });
 
-    // 仅当 id 使用 @id（未绑定谓词）时，绑定 fragment 为 ?id 便于过滤
-    const idColumn = (table.columns as Record<string, PodColumnBase | undefined>)['id'];
-    if (idColumn) {
-      const idPredicate = getPredicateForColumn(idColumn, table);
-      if (idPredicate === '@id') {
-        patterns.push({
-          type: 'bind',
-          variable: { termType: 'Variable', value: 'id' } as any,
-          expression: {
-            type: 'operation',
-            operator: 'strafter',
-            args: [
-              { type: 'operation', operator: 'str', args: [{ termType: 'Variable', value: 'subject' } as any] },
-              { termType: 'Literal', value: '#' } as any
-            ]
-          }
-        } as any);
-      }
-    }
+    // @id 列的 id 统一由 JS 端 extractIdFromSubject 从 ?subject 提取
+    // 不再生成 BIND(STRAFTER(...))，保持 SPARQL 简洁且兼容所有模式
 
     // 添加 FILTER
     if (ast.where) {

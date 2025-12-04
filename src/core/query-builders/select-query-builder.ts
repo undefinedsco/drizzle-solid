@@ -4,10 +4,11 @@ import { QueryCondition, inArray } from '../query-conditions';
 import { AggregateExpression, isAggregateExpression } from '../aggregates';
 import { PodOperation } from '../pod-dialect';
 import { SelectQueryPlan } from '../select-plan';
-import { 
-  SelectField, SelectFieldMap, JoinType, ColumnReference, ResolvedJoinCondition, SessionInterface 
+import {
+  SelectField, SelectFieldMap, JoinType, ColumnReference, ResolvedJoinCondition, SessionInterface
 } from './types';
 import { createLiteralCondition, buildConditionTreeFromObject } from './helpers';
+import { subjectResolver } from '../subject';
 
 export class SelectQueryBuilder<TTable extends PodTable<any> = PodTable<any>> {
   static readonly [entityKind] = 'SelectQueryBuilder';
@@ -72,25 +73,56 @@ export class SelectQueryBuilder<TTable extends PodTable<any> = PodTable<any>> {
   }
 
   private convertQueryConditionToSimple(condition: QueryCondition): Record<string, any> {
-    if (condition.type === 'binary_expr' && condition.operator === '=' && condition.column && condition.value !== undefined) {
-      return { [condition.column]: condition.value };
+    if (condition.type === 'binary_expr') {
+      const left = (condition as any).left;
+      const right = (condition as any).right;
+      const op = (condition as any).operator;
+      const colName = typeof left === 'string' ? left : left?.name;
+      if (op === '=' && colName && right !== undefined) {
+        return { [colName]: right };
+      }
     }
 
-    if (condition.type === 'logical_expr' && condition.operator === 'AND' && condition.conditions) {
-      const result: Record<string, any> = {};
-      for (const child of condition.conditions) {
-        const childResult = this.convertQueryConditionToSimple(child);
-        if (!childResult || Object.keys(childResult).length === 0) {
-          return {};
+    if (condition.type === 'logical_expr') {
+      const op = (condition as any).operator;
+      const exprs = (condition as any).expressions;
+      if (op === 'AND' && exprs) {
+        const result: Record<string, any> = {};
+        for (const child of exprs) {
+          const childResult = this.convertQueryConditionToSimple(child);
+          if (!childResult || Object.keys(childResult).length === 0) {
+            return {};
+          }
+          for (const [key, value] of Object.entries(childResult)) {
+            result[key] = value;
+          }
         }
-        for (const [key, value] of Object.entries(childResult)) {
-          result[key] = value;
-        }
+        return result;
       }
-      return result;
     }
 
     return {};
+  }
+
+  private extractTableFromCondition(condition: QueryCondition): string | undefined {
+    // For BinaryExpression, check if 'left' has a table reference
+    if (condition.type === 'binary_expr') {
+      const left = (condition as any).left;
+      if (left && typeof left === 'object' && 'table' in left) {
+        // left.table is a PodTable object, get its alias from our map
+        const tableObj = left.table;
+        if (tableObj) {
+          // Return the alias for this table from our tableAliases map
+          const alias = this.tableAliases.get(tableObj);
+          return alias;
+        }
+      }
+      // Check for alias.column string format
+      if (typeof left === 'string' && left.includes('.')) {
+        return left.split('.')[0];
+      }
+    }
+    return undefined;
   }
 
   leftJoin<TJoinTable extends PodTable<any>>(
@@ -247,7 +279,9 @@ export class SelectQueryBuilder<TTable extends PodTable<any> = PodTable<any>> {
   }
 
   private processQueryCondition(condition: QueryCondition): void {
-    if (condition.table && condition.table !== this.primaryAlias) {
+    // Check if condition targets a joined table by examining the 'left' property
+    const condTable = this.extractTableFromCondition(condition);
+    if (condTable && condTable !== this.primaryAlias) {
       this.joinFilters.push(condition);
       return;
     }
@@ -754,7 +788,7 @@ export class SelectQueryBuilder<TTable extends PodTable<any> = PodTable<any>> {
         row.uri = subjectValue;
       }
       if (row.id === undefined) {
-        const derivedId = this.extractIdFromSubject(subjectValue);
+        const derivedId = this.extractIdFromSubject(subjectValue, this.selectedTable);
         if (derivedId !== undefined) {
           row.id = derivedId;
         }
@@ -787,7 +821,7 @@ export class SelectQueryBuilder<TTable extends PodTable<any> = PodTable<any>> {
         result[`${alias}.subject`] = subjectValue;
         result[`${alias}.@id`] = subjectValue;
         result[`${alias}.uri`] = subjectValue;
-        const derivedId = this.extractIdFromSubject(subjectValue);
+        const derivedId = this.extractIdFromSubject(subjectValue, this.selectedTable);
         if (derivedId !== undefined) {
           if (result.id === undefined) {
             result.id = derivedId;
@@ -875,7 +909,7 @@ export class SelectQueryBuilder<TTable extends PodTable<any> = PodTable<any>> {
         parentMap.set(parentIri, perParent);
       }
       if (!childIri || !pred) return;
-      const child = childMap.get(childIri) ?? { '@id': childIri, id: this.extractIdFromSubject(childIri) };
+      const child = childMap.get(childIri) ?? { '@id': childIri, id: this.extractIdFromSubject(childIri, table) };
       const key = inlineNamespace && pred.startsWith(inlineNamespace) ? pred.slice(inlineNamespace.length) : pred;
       if (obj === undefined) {
         childMap.set(childIri, child);
@@ -903,7 +937,7 @@ export class SelectQueryBuilder<TTable extends PodTable<any> = PodTable<any>> {
     const hydrateValue = (parentKey: string | undefined, raw: any, column: any): any => {
       const irisFromParent = parentKey ? parentMap.get(parentKey)?.get(column.name) ?? [] : [];
       const iris = irisFromParent.length > 0 ? irisFromParent : fallbackNormalize(raw);
-      const objects = iris.map((iri) => childMap.get(iri) ?? { '@id': iri, id: this.extractIdFromSubject(iri) });
+      const objects = iris.map((iri) => childMap.get(iri) ?? { '@id': iri, id: this.extractIdFromSubject(iri, table) });
       if (column.dataType === 'array') {
         return objects;
       }
@@ -1104,7 +1138,7 @@ export class SelectQueryBuilder<TTable extends PodTable<any> = PodTable<any>> {
         normalized[`${join.alias}.subject`] = subjectValue;
         normalized[`${join.alias}.@id`] = subjectValue;
         normalized[`${join.alias}.uri`] = subjectValue;
-        const id = this.extractIdFromSubject(subjectValue);
+        const id = this.extractIdFromSubject(subjectValue, join.table);
         if (id !== undefined) {
           normalized[`${join.alias}.id`] = id;
         }
@@ -1200,14 +1234,35 @@ export class SelectQueryBuilder<TTable extends PodTable<any> = PodTable<any>> {
   }
 
   private evaluateBinaryCondition(row: Record<string, any>, condition: QueryCondition): boolean {
-    if (!condition.column) {
+    const left = (condition as any).left;
+    const right = (condition as any).right;
+    const op = (condition as any).operator;
+
+    if (!left) {
       return true;
     }
-    const columnRef = this.resolveColumnReference(`${condition.table ?? this.primaryAlias}.${condition.column}`);
-    const value = this.getRowValueForColumn(row, columnRef);
-    const target = condition.value;
 
-    switch (condition.operator.toUpperCase()) {
+    // Extract column name and table alias from left
+    let colName: string;
+    let tableAlias: string | undefined;
+    if (typeof left === 'string') {
+      if (left.includes('.')) {
+        [tableAlias, colName] = left.split('.');
+      } else {
+        colName = left;
+      }
+    } else if (left && typeof left === 'object') {
+      colName = left.name;
+      tableAlias = left.table;
+    } else {
+      return true;
+    }
+
+    const columnRef = this.resolveColumnReference(`${tableAlias ?? this.primaryAlias}.${colName}`);
+    const value = this.getRowValueForColumn(row, columnRef);
+    const target = right;
+
+    switch (op.toUpperCase()) {
       case '=':
         return value === target;
       case '!=':
@@ -1233,31 +1288,55 @@ export class SelectQueryBuilder<TTable extends PodTable<any> = PodTable<any>> {
   }
 
   private evaluateUnaryCondition(row: Record<string, any>, condition: QueryCondition): boolean {
-    if (!condition.column) {
+    const op = (condition as any).operator;
+    const val = (condition as any).value;
+
+    // For NOT operator, value is another condition
+    if (op.toUpperCase() === 'NOT') {
+      return !this.evaluateCondition(row, val as QueryCondition);
+    }
+
+    // For IS NULL / IS NOT NULL, value is the column reference
+    if (!val) {
       return true;
     }
-    const columnRef = this.resolveColumnReference(`${condition.table ?? this.primaryAlias}.${condition.column}`);
-    const value = this.getRowValueForColumn(row, columnRef);
 
-    switch (condition.operator.toUpperCase()) {
+    let colName: string;
+    let tableAlias: string | undefined;
+    if (typeof val === 'string') {
+      if (val.includes('.')) {
+        [tableAlias, colName] = val.split('.');
+      } else {
+        colName = val;
+      }
+    } else if (val && typeof val === 'object' && 'name' in val) {
+      colName = val.name;
+      tableAlias = val.table;
+    } else {
+      return true;
+    }
+
+    const columnRef = this.resolveColumnReference(`${tableAlias ?? this.primaryAlias}.${colName}`);
+    const rowValue = this.getRowValueForColumn(row, columnRef);
+
+    switch (op.toUpperCase()) {
       case 'IS NULL':
-        return value === null || value === undefined;
+        return rowValue === null || rowValue === undefined;
       case 'IS NOT NULL':
-        return value !== null && value !== undefined;
-      case 'NOT':
-        return !this.evaluateCondition(row, condition.left as QueryCondition);
+        return rowValue !== null && rowValue !== undefined;
       default:
         return true;
     }
   }
 
   private evaluateLogicalCondition(row: Record<string, any>, condition: QueryCondition): boolean {
-    const children = condition.conditions ?? [];
-    if (condition.operator.toUpperCase() === 'AND') {
-      return children.every((child) => this.evaluateCondition(row, child));
+    const op = (condition as any).operator;
+    const children = (condition as any).expressions ?? [];
+    if (op.toUpperCase() === 'AND') {
+      return children.every((child: QueryCondition) => this.evaluateCondition(row, child));
     }
-    if (condition.operator.toUpperCase() === 'OR') {
-      return children.some((child) => this.evaluateCondition(row, child));
+    if (op.toUpperCase() === 'OR') {
+      return children.some((child: QueryCondition) => this.evaluateCondition(row, child));
     }
     return true;
   }
@@ -1292,19 +1371,42 @@ export class SelectQueryBuilder<TTable extends PodTable<any> = PodTable<any>> {
     return String(value);
   }
 
-  private extractIdFromSubject(subject?: string): string | undefined {
+  private extractIdFromSubject(subject?: string, table?: PodTable<any>): string | undefined {
     if (!subject) {
       return undefined;
     }
-    const hasFragment = subject.includes('#');
-    if (!hasFragment) {
-      return undefined;
+
+    // Use SubjectResolver for proper document/fragment mode handling
+    if (table) {
+      const parsed = subjectResolver.parse(subject, table);
+      if (parsed && parsed.id) {
+        return parsed.id;
+      }
     }
-    const fragment = subject.split('#').pop();
-    if (!fragment || fragment.trim().length === 0) {
-      return undefined;
+
+    // Fallback when no table: try fragment first, then filename
+    const hashIndex = subject.indexOf('#');
+    if (hashIndex !== -1) {
+      const fragment = subject.slice(hashIndex + 1);
+      if (fragment.length > 0) {
+        return fragment;
+      }
     }
-    return fragment;
+
+    // Try filename extraction
+    const lastSlash = subject.lastIndexOf('/');
+    if (lastSlash !== -1) {
+      let filename = subject.slice(lastSlash + 1);
+      const extIndex = filename.lastIndexOf('.');
+      if (extIndex !== -1) {
+        filename = filename.slice(0, extIndex);
+      }
+      if (filename.length > 0) {
+        return filename;
+      }
+    }
+
+    return undefined;
   }
 
   private computeLikeMatch(value: string, pattern: string): boolean {

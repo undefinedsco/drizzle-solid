@@ -1,10 +1,30 @@
 /**
  * Execution Module
  *
- * 查询执行器模块
+ * Provides execution strategies for different modes (LDP, SPARQL)
  */
 
-// 实现导出
-export { LdpExecutor } from './ldp-executor';
-export { ComunicaSPARQLExecutor } from '../sparql-executor';
+// Types
+export type {
+  ExecutionStrategy,
+  ExecutionStrategyFactory,
+  ExecutionResult,
+  ExecutionContext,
+  InsertQueryPlan,
+  UpdateQueryPlan,
+  DeleteQueryPlan
+} from './types';
 
+// Strategies
+export { LdpStrategy } from './ldp-strategy';
+export type { LdpStrategyDependencies } from './ldp-strategy';
+
+export { SparqlStrategy } from './sparql-strategy';
+export type { SparqlStrategyDependencies } from './sparql-strategy';
+
+// Factory
+export { ExecutionStrategyFactoryImpl } from './strategy-factory';
+export type { StrategyFactoryDependencies } from './strategy-factory';
+
+// Legacy executor (used internally by LdpStrategy)
+export { LdpExecutor } from './ldp-executor';

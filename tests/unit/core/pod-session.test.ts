@@ -278,14 +278,13 @@ describe('SelectQueryBuilder', () => {
     expect(ir.baseAlias).toBe('users');
     expect(ir.limit).toBe(5);
     expect(ir.orderBy?.[0]).toMatchObject({ rawColumn: 'name', direction: 'desc' });
-    expect(ir.conditionTree).toEqual({
+    // New BinaryExpression format: { type, operator, left, right }
+    // left includes alias prefix when used with from()
+    expect(ir.conditionTree).toMatchObject({
       type: 'binary_expr',
       operator: '=',
-      column: 'name',
-      left: { column: 'name' },
-      right: { value: 'John' },
-      value: 'John',
-      table: 'users'
+      left: 'users.name',
+      right: 'John'
     });
   });
 });

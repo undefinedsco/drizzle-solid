@@ -331,9 +331,9 @@ describe('ASTToSPARQLConverter', () => {
         columns: ['id', 'name'],
         where: {
           type: 'binary_expr',
-          left: { column: 'name' },
+          left: 'name',
           operator: '=',
-          right: { value: 'John Doe' }
+          right: 'John Doe'
         }
       };
 
@@ -357,9 +357,9 @@ describe('ASTToSPARQLConverter', () => {
       const setData = { name: 'Jane Doe' };
       const whereConditions = {
         type: 'binary_expr',
-        left: { column: 'id' },
+        left: 'id',
         operator: '=',
-        right: { value: '1' }
+        right: '1'
       };
 
       const result = converter.convertUpdate(setData, whereConditions, mockTable);
@@ -371,9 +371,9 @@ describe('ASTToSPARQLConverter', () => {
     it('应该处理 DELETE 查询', () => {
       const whereConditions = {
         type: 'binary_expr',
-        left: { column: 'id' },
+        left: 'id',
         operator: '=',
-        right: { value: '1' }
+        right: '1'
       };
 
       const result = converter.convertDelete(whereConditions, mockTable);

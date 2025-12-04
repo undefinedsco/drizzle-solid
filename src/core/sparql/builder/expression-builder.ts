@@ -1,31 +1,167 @@
 import { QueryCondition } from '../../query-conditions';
+import { BinaryExpression, LogicalExpression, UnaryExpression } from '../../expressions';
 import { PodTable } from '../../pod-table';
-import { formatValue, resolveColumn } from '../helpers';
+import { formatValue, resolveColumn, getPredicateForColumn } from '../helpers';
+import { subjectResolver } from '../../subject';
 
 export class ExpressionBuilder {
-  buildWhereClause(condition: QueryCondition, table: PodTable): string {
+  buildWhereClause(condition: QueryCondition | any, table: PodTable): string {
     const expr = this.buildExpression(condition, table);
     return expr ? `FILTER(${expr})` : '';
   }
 
-  private buildExpression(condition: QueryCondition, table: PodTable): string {
+  private buildExpression(condition: QueryCondition | any, table: PodTable): string {
+    // Check if this is a drizzle-orm SQL object
+    if (this.isDrizzleSQL(condition)) {
+      return this.buildFromDrizzleSQL(condition, table);
+    }
+
     switch (condition.type) {
       case 'logical_expr':
-        return this.buildLogicalExpression(condition, table);
+        return this.buildLogicalExpression(condition as LogicalExpression, table);
       case 'unary_expr':
-        return this.buildUnaryExpression(condition, table);
+        return this.buildUnaryExpression(condition as UnaryExpression, table);
       case 'binary_expr':
-        return this.buildBinaryExpression(condition, table);
+        return this.buildBinaryExpression(condition as BinaryExpression, table);
       default:
         return '';
     }
   }
 
-  private buildLogicalExpression(condition: QueryCondition, table: PodTable): string {
-    if (!condition.conditions || condition.conditions.length === 0) return '';
+  /**
+   * Check if value is a drizzle-orm SQL object
+   */
+  private isDrizzleSQL(value: any): boolean {
+    if (!value || typeof value !== 'object') return false;
+    // Check for drizzle-orm SQL class signature
+    const entityKind = value.constructor?.[Symbol.for('drizzle:entityKind')];
+    return entityKind === 'SQL' || (Array.isArray(value.queryChunks) && typeof value.getSQL === 'function');
+  }
+
+  /**
+   * Parse drizzle-orm SQL object and convert to SPARQL expression
+   */
+  private buildFromDrizzleSQL(sql: any, table: PodTable): string {
+    const chunks = sql.queryChunks;
+    if (!chunks || chunks.length === 0) return '';
+
+    // Parse the SQL structure based on chunks
+    return this.parseChunks(chunks, table);
+  }
+
+  private parseChunks(chunks: any[], table: PodTable): string {
+    // Detect pattern: eq/neq/gt/lt etc -> ['', column, ' op ', value, '']
+    // Detect pattern: and/or -> ['(', SQL{[SQL, ' and/or ', SQL]}, ')']
+    // Detect pattern: in -> ['', column, ' in ', array, '']
+    // Detect pattern: isNull -> ['', column, ' is null', '']
+
+    // Find operator by looking for StringChunk with operator text
+    let operator = '';
+    let columnChunk: any = null;
+    let valueChunk: any = null;
+    let nestedSQLs: any[] = [];
+
+    for (let i = 0; i < chunks.length; i++) {
+      const chunk = chunks[i];
+      const chunkName = chunk?.constructor?.name;
+
+      if (chunkName === 'StringChunk') {
+        const val = chunk.value?.[0] || '';
+        if (val.includes(' = ')) operator = '=';
+        else if (val.includes(' <> ') || val.includes(' != ')) operator = '!=';
+        else if (val.includes(' > ')) operator = '>';
+        else if (val.includes(' >= ')) operator = '>=';
+        else if (val.includes(' < ')) operator = '<';
+        else if (val.includes(' <= ')) operator = '<=';
+        else if (val.includes(' in ')) operator = 'IN';
+        else if (val.includes(' not in ')) operator = 'NOT IN';
+        else if (val.includes(' like ')) operator = 'LIKE';
+        else if (val.includes(' is null')) operator = 'IS NULL';
+        else if (val.includes(' is not null')) operator = 'IS NOT NULL';
+        else if (val.includes(' and ')) operator = 'AND';
+        else if (val.includes(' or ')) operator = 'OR';
+      } else if (chunkName?.startsWith('Pod') && chunkName.endsWith('Column')) {
+        // It's one of our PodColumn types
+        columnChunk = chunk;
+      } else if (this.isDrizzleSQL(chunk)) {
+        // Nested SQL (for and/or or wrapped conditions)
+        nestedSQLs.push(chunk);
+      } else if (Array.isArray(chunk)) {
+        // Array value for IN clause
+        valueChunk = chunk;
+      } else if (typeof chunk === 'string' || typeof chunk === 'number' || typeof chunk === 'boolean') {
+        // Direct value
+        valueChunk = chunk;
+      } else if (chunkName === 'Param') {
+        valueChunk = chunk.value;
+      }
+    }
+
+    // Handle AND/OR: drizzle wraps as ['(', SQL{[SQL, ' and ', SQL]}, ')']
+    // So we need to look inside the nested SQL for the actual operator and conditions
+    if (nestedSQLs.length === 1 && !operator && !columnChunk) {
+      // This might be a wrapper like '(' + nestedSQL + ')'
+      // Check if the nested SQL contains AND/OR
+      const innerResult = this.parseChunks(nestedSQLs[0].queryChunks, table);
+      if (innerResult) return innerResult;
+    }
+
+    // Handle AND/OR with nested SQLs (direct pattern)
+    if ((operator === 'AND' || operator === 'OR') && nestedSQLs.length > 0) {
+      const parts = nestedSQLs
+        .map(sql => this.buildFromDrizzleSQL(sql, table))
+        .filter(s => s.length > 0);
+      if (parts.length === 0) return '';
+      const op = operator === 'OR' ? ' || ' : ' && ';
+      return `(${parts.join(op)})`;
+    }
+
+    // Handle IS NULL / IS NOT NULL
+    if (operator === 'IS NULL' || operator === 'IS NOT NULL') {
+      const colName = columnChunk?.name;
+      if (!colName) return '';
+      const variable = `?${colName}`;
+      return operator === 'IS NULL' ? `!(BOUND(${variable}))` : `BOUND(${variable})`;
+    }
+
+    // Handle comparison operators
+    if (columnChunk && operator) {
+      const colName = columnChunk.name;
+      const variable = (colName === 'subject' || colName === '@id') ? '?subject' : `?${colName}`;
+      const column = table.columns[colName];
+
+      // Handle IN
+      if (operator === 'IN' || operator === 'NOT IN') {
+        if (!Array.isArray(valueChunk) || valueChunk.length === 0) {
+          return operator === 'IN' ? 'false' : 'true';
+        }
+        const formattedValues = valueChunk.map((v: any) => formatValue(v, column)).join(', ');
+        const expr = `${variable} IN(${formattedValues})`;
+        return operator === 'NOT IN' ? `!(${expr})` : expr;
+      }
+
+      // Handle LIKE
+      if (operator === 'LIKE') {
+        let pattern = String(valueChunk)
+          .replace(/[.+^${}()|[\\]/g, '\\$&')
+          .replace(/%/g, '.*')
+          .replace(/_/g, '.');
+        return `REGEX(STR(${variable}), "^${pattern}$", "i")`;
+      }
+
+      // Basic comparison
+      const formattedValue = formatValue(valueChunk, column);
+      return `(${variable} ${operator} ${formattedValue})`;
+    }
+
+    return '';
+  }
+
+  private buildLogicalExpression(condition: LogicalExpression, table: PodTable): string {
+    if (!condition.expressions || condition.expressions.length === 0) return '';
     
-    const parts = condition.conditions
-      .map(c => this.buildExpression(c, table))
+    const parts = condition.expressions
+      .map(c => this.buildExpression(c as QueryCondition, table))
       .filter(s => s.length > 0);
 
     if (parts.length === 0) return '';
@@ -34,16 +170,17 @@ export class ExpressionBuilder {
     return `(${parts.join(op)})`;
   }
 
-  private buildUnaryExpression(condition: QueryCondition, table: PodTable): string {
+  private buildUnaryExpression(condition: UnaryExpression, table: PodTable): string {
     const op = condition.operator;
     
     if (op === 'NOT') {
-      const expr = this.buildExpression(condition.left, table);
+      const expr = this.buildExpression(condition.value as QueryCondition, table);
       return `!(${expr})`;
     }
 
     // IS NULL / IS NOT NULL
-    const colName = condition.column || (condition.left as any)?.column;
+    // For UnaryExpression, 'value' holds the target column
+    const colName = this.resolveColumnName(condition.value);
     if (!colName) return '';
     
     const variable = (colName === 'subject' || colName === '@id') ? '?subject' : `?${colName}`;
@@ -55,46 +192,50 @@ export class ExpressionBuilder {
       return `BOUND(${variable})`;
     }
     
+    // EXISTS / NOT EXISTS
+    if (op === 'EXISTS' || op === 'NOT EXISTS') {
+       const subquery = String(condition.value);
+       const expr = `EXISTS { ${subquery} }`;
+       return op === 'NOT EXISTS' ? `!(${expr})` : expr;
+    }
+
     return '';
   }
 
-  private buildBinaryExpression(condition: QueryCondition, table: PodTable): string {
-    const colName = condition.column || (condition.left as any)?.column;
+  private buildBinaryExpression(condition: BinaryExpression, table: PodTable): string {
+    const colName = this.resolveColumnName(condition.left);
     if (!colName) return '';
 
-    const variable = (colName === 'subject' || colName === '@id') ? '?subject' : `?${colName}`;
-    let value = condition.value ?? condition.right?.value;
-    if (colName === 'id' && typeof value === 'string' && value.startsWith('#')) {
-      value = value.slice(1);
-    }
-    
-    // EXISTS / NOT EXISTS (expects subquery string)
-    if (condition.operator === 'EXISTS' || condition.operator === 'NOT EXISTS') {
-      const subquery = typeof value === 'string' ? value.trim() : '';
-      if (!subquery) return '';
-      const expr = `EXISTS { ${subquery} }`;
-      return condition.operator === 'NOT EXISTS' ? `!(${expr})` : expr;
-    }
+    const column = table.columns[colName];
+
+    // Determine if id column uses @id predicate (virtual) or real predicate
+    const isIdColumn = colName === 'id';
+    const idPredicate = isIdColumn && column ? getPredicateForColumn(column, table) : null;
+    const isVirtualId = isIdColumn && idPredicate === '@id';
+
+    // For @id predicate, compare against ?subject; otherwise use column variable
+    const isSubject = colName === 'subject' || colName === '@id' || isVirtualId;
+    const variable = isSubject ? '?subject' : `?${colName}`;
+
+    let value = condition.right;
 
     // Handle IN / NOT IN
     if (condition.operator === 'IN' || condition.operator === 'NOT IN') {
       if (!Array.isArray(value) || value.length === 0) return condition.operator === 'IN' ? 'false' : 'true';
-      
-      // Get column definition to format values correctly (e.g. as URIs)
-      const column = table.columns[colName];
-      const isSubject = colName === 'subject' || colName === '@id';
-      
-      const formattedValues = value.map(v => {
+
+      const formattedValues = value.map((v: any) => {
          if (isSubject) {
+            // Convert id value to full URI
+            if (isVirtualId) {
+              const uri = subjectResolver.resolve(table, { id: String(v) });
+              return `<${uri}>`;
+            }
             const str = String(v);
             return str.startsWith('<') ? str : `<${str}>`;
-         } else if (colName === 'id') {
-            const str = typeof v === 'string' && v.startsWith('#') ? v.slice(1) : String(v);
-            return `"${str}"`;
          }
          return formatValue(v, column);
       }).join(', ');
-      
+
       const expr = `${variable} IN(${formattedValues})`;
       return condition.operator === 'NOT IN' ? `!(${expr})` : expr;
     }
@@ -106,16 +247,15 @@ export class ExpressionBuilder {
       return `REGEX(STR(${variable}), "${pattern}", "${flags}")`;
     }
 
-    // Handle LIKE (simple conversion to REGEX)
+    // Handle LIKE
     if (condition.operator === 'LIKE') {
-      // Escape regex chars but allow % as .* and _ as . 
       let pattern = String(value)
         .replace(/[.+^${}()|[\\]/g, '\\$&')
         .replace(/%/g, '.*')
         .replace(/_/g, '.');
       return `REGEX(STR(${variable}), "^${pattern}$", "i")`;
     }
-    // Handle ILIKE (case-insensitive)
+    // Handle ILIKE
     if (condition.operator === 'ILIKE') {
       let pattern = String(value)
         .replace(/[.+^${}()|[\\]/g, '\\$&')
@@ -128,29 +268,42 @@ export class ExpressionBuilder {
     if (condition.operator === 'BETWEEN' || condition.operator === 'NOT BETWEEN') {
       if (!Array.isArray(value) || value.length !== 2) return '';
       const [min, max] = value;
-      const column = table.columns[colName];
       const left = formatValue(min, column);
       const right = formatValue(max, column);
       const expr = `(${variable} >= ${left} && ${variable} <= ${right})`;
       return condition.operator === 'NOT BETWEEN' ? `!${expr}` : expr;
     }
 
-    // Basic operators
-    const column = table.columns[colName];
-    const isSubject = colName === 'subject' || colName === '@id';
-    const isId = colName === 'id';
+    // Basic operators (=, !=, <, >, <=, >=)
     let formattedValue;
-    
+
     if (isSubject) {
-        const str = String(value);
-        formattedValue = str.startsWith('<') ? str : `<${str}>`;
-    } else if (isId) {
-        const str = typeof value === 'string' && value.startsWith('#') ? value.slice(1) : String(value);
-        formattedValue = `"${str}"`;
+        // Convert id value to full URI for @id predicate
+        if (isVirtualId) {
+          const uri = subjectResolver.resolve(table, { id: String(value) });
+          formattedValue = `<${uri}>`;
+        } else {
+          const str = String(value);
+          formattedValue = str.startsWith('<') ? str : `<${str}>`;
+        }
     } else {
         formattedValue = formatValue(value, column);
     }
-    
+
     return `(${variable} ${condition.operator} ${formattedValue})`;
+  }
+
+  private resolveColumnName(target: any): string {
+     if (typeof target === 'string') {
+        return target.includes('.') ? target.split('.')[1] : target;
+     }
+     if (target && typeof target === 'object' && 'name' in target) {
+        return target.name;
+     }
+     // Handle simple object wrapper { column: 'name' } from old style if any remnants
+     if (target && typeof target === 'object' && 'column' in target) {
+        return target.column;
+     }
+     return '';
   }
 }

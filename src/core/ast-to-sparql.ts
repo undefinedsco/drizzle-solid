@@ -93,21 +93,21 @@ export class ASTToSPARQLConverter {
     return generateSubjectUri(record, table);
   }
 
-  // Drizzle AST Parsing
+  /**
+   * @deprecated Use parseDrizzleAST() + convertSelect() with table context instead
+   * Direct SQL conversion without table context is limited and may not work correctly
+   */
   convert(sql: SQL): SPARQLQuery {
     const sqlString = sql.queryChunks.join('');
-    
+
     if (sqlString.toLowerCase().includes('select')) {
       return this.convertSelect({
-        select: undefined, // TODO: Extract from SQL
+        select: undefined,
         columns: '*',
         where: this.parseWhereClause(sql)
-      }, {} as any); // We don't have table here easily unless passed
-    } 
-    // ... other cases ...
-    // Note: convert(sql) seems rarely used or requires table context.
-    // PodDialect calls convert(sql) but passes table separately sometimes.
-    
+      }, {} as any);
+    }
+
     throw new Error(`Direct SQL conversion without table context is limited: ${sqlString}`);
   }
 
