@@ -23,8 +23,9 @@ export class UriHandler implements ColumnHandler {
     const uri = String(value);
 
     // 验证 URI 格式
-    if (!uri.startsWith('http://') && !uri.startsWith('https://')) {
-      throw new Error(`URI column requires valid HTTP(S) URL, got: ${uri}`);
+    // 放宽验证：允许任何包含协议头的 URI (如 urn:, did:, oidc:)
+    if (!uri.includes(':')) {
+      throw new Error(`URI column requires valid URI (must contain scheme), got: ${uri}`);
     }
 
     return {

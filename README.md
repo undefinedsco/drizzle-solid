@@ -302,6 +302,88 @@ await db.delete(userTable)
   .where(eq(userTable.name, 'Bob'));
 ```
 
+## 🔍 数据发现与零配置访问 (Data Discovery & Interoperability)
+
+Drizzle Solid 实现了 Solid 的 **TypeIndex** 和 **SAI (Application Interoperability)** 规范，这意味着您**不需要**硬编码数据的具体路径（`base`）。只要定义好 RDF 类型，Drizzle 就会自动帮您找到数据，无论它是在您自己的 Pod 里，还是别人通过 SAI 授权给您的。
+
+### 核心概念
+
+- **TypeIndex**: 您的“个人数据索引”，记录了“我的笔记在哪里”、“我的联系人在哪里”。适合单用户场景。
+- **SAI Discovery**: 一种更高级的发现机制，用于发现**跨 Pod** 共享的数据（例如 Alice 分享给 Bob 的聊天室）。适合社交、协作场景。
+
+### 如何启用自动发现？
+
+只需在定义表时，移除 `base` 属性，并设置 `typeIndex: 'private'`（或 `'public'`）：
+
+```typescript
+const messageTable = podTable('message', {
+  id: id(),
+  content: string('content').predicate('http://schema.org/text'),
+}, {
+  type: 'http://schema.org/Message',
+  typeIndex: 'private' // ✨ 开启自动发现魔法
+});
+
+// 当您执行查询时，Drizzle 会自动：
+// 1. 查您的 Private TypeIndex
+// 2. 如果没找到，查 SAI Agent Registry (查看是否有授权给您的数据)
+// 3. 找到数据位置后，自动定向查询
+const messages = await db.select().from(messageTable);
+```
+
+### 跨 Pod 聊天应用示例 (SAI Chat)
+
+这是一个展示如何利用 SAI 发现机制构建“零配置”聊天应用的完整示例。Bob 不需要知道 Alice 的聊天室 URL，只要 Alice 授权了，Bob 的应用就能自动发现并加入聊天。
+
+> 查看完整可运行代码：[`examples/04-sai-chat.ts`](examples/04-sai-chat.ts)
+
+```typescript
+// 1. 定义通用的消息表（不绑定具体路径）
+const messageTable = podTable('message', {
+  id: id(),
+  content: string('content').predicate('http://schema.org/text'),
+  author: uri('author').predicate('http://schema.org/author'),
+  createdAt: datetime('createdAt').predicate('http://schema.org/dateCreated')
+}, {
+  type: 'http://schema.org/Message',
+  typeIndex: 'private', // 启用发现
+  autoRegister: false   // 对于访客 Bob，不仅不需要注册，而且不能注册到自己的 TypeIndex
+});
+
+// 2. Alice (房主) 初始化聊天室
+// Alice 需要明确指定存储位置 (base)
+const aliceChatTable = podTable('message', { ...messageTable.columns }, {
+    ...messageTable.config,
+    base: 'https://alice.pod/data/chat/room.ttl',
+    subjectTemplate: '#{id}' // 强制单文件存储模式
+});
+await db.insert(aliceChatTable).values({ ... });
+
+// ... (Alice 通过 SAI 授权给 Bob，此处省略 SAI 注册代码) ...
+
+// 3. Bob (访客) 发现并回复
+// Bob 初始化 Drizzle 时，完全不需要知道 room.ttl 的地址
+const bobDb = drizzle(bobSession);
+
+// 读取：自动发现 Alice 分享的数据
+const messages = await bobDb.select().from(messageTable);
+console.log(messages); // 包含 Alice 的消息
+
+// 写入：自动向发现的地址写入回复
+await bobDb.insert(messageTable).values({
+    content: 'Hi Alice! I found your chat room!',
+    author: bobSession.info.webId
+});
+```
+
+### Discovery 策略
+
+Drizzle Solid 使用组合策略 (`CompositeDiscovery`)：
+1.  **TypeIndex 优先**：检查用户的 `privateTypeIndex.ttl` 和 `publicTypeIndex.ttl`。
+2.  **SAI 后备**：如果 TypeIndex 未命中，检查用户的 Profile -> RegistrySet -> Agent Registry，寻找匹配当前 ClientID 的 Data Grant。
+
+这种设计确保了既能兼容旧的 Solid 应用（基于 TypeIndex），又能支持未来的互操作性规范（SAI）。
+
 ## ✅ 当前 SQL 支持范围
 
 - 已实现：`select/insert/update/delete`、Drizzle 风格的 `where` 条件构建器（`eq/ne/lt/gte/like/in/not` 等）、`orderBy`、`limit/offset`、`distinct`、嵌套布尔组合，以及基于本地回放的 `count/sum/avg/min/max` 聚合、`JOIN` 和 `GROUP BY`。
