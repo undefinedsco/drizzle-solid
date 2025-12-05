@@ -9,10 +9,11 @@ describe('InteropDiscovery', () => {
   let discovery: InteropDiscovery;
   const mockFetch = vi.fn();
   const webId = 'https://alice.example/profile/card#me';
+  const clientId = 'https://app.example/id';
 
   beforeEach(() => {
     vi.resetAllMocks();
-    discovery = new InteropDiscovery(webId, mockFetch);
+    discovery = new InteropDiscovery(webId, mockFetch, clientId);
   });
 
   it('should return empty list if profile has no registry set', async () => {
@@ -20,7 +21,7 @@ describe('InteropDiscovery', () => {
     const profileDataset = {} as any;
     vi.mocked(solidClient.getSolidDataset).mockResolvedValueOnce(profileDataset);
     vi.mocked(solidClient.getThing).mockReturnValueOnce({} as any); // Profile Thing
-    vi.mocked(solidClient.getUrl).mockReturnValueOnce(null); // No hasRegistrySet
+    vi.mocked(solidClient.getUrlAll).mockReturnValueOnce([]); // No hasRegistrySet
 
     const result = await discovery.discover('https://schema.org/Person');
     expect(result).toEqual([]);
@@ -30,7 +31,7 @@ describe('InteropDiscovery', () => {
     // Mock Profile
     vi.mocked(solidClient.getSolidDataset).mockResolvedValueOnce({} as any);
     vi.mocked(solidClient.getThing).mockReturnValueOnce({} as any);
-    vi.mocked(solidClient.getUrl).mockReturnValueOnce('https://alice.example/registrySet');
+    vi.mocked(solidClient.getUrlAll).mockReturnValueOnce(['https://alice.example/registrySet']);
 
     // Mock RegistrySet
     vi.mocked(solidClient.getSolidDataset).mockResolvedValueOnce({} as any);
@@ -52,7 +53,7 @@ describe('InteropDiscovery', () => {
     // 1. Profile -> RegistrySet
     vi.mocked(solidClient.getSolidDataset).mockResolvedValueOnce({} as any);
     vi.mocked(solidClient.getThing).mockReturnValueOnce({} as any);
-    vi.mocked(solidClient.getUrl).mockReturnValueOnce(registrySetUrl);
+    vi.mocked(solidClient.getUrlAll).mockReturnValueOnce([registrySetUrl]);
 
     // 2. RegistrySet -> DataRegistry
     vi.mocked(solidClient.getSolidDataset).mockResolvedValueOnce({} as any);

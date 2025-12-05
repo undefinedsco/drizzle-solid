@@ -25,9 +25,6 @@ export class CompositeDiscovery implements DataDiscovery {
       try {
         const locations = await strategy.discover(rdfClass);
         allLocations.push(...locations);
-        // If we found locations, we might want to stop or continue aggregating
-        // Typically, finding in TypeIndex is enough.
-        if (locations.length > 0) return locations;
       } catch (e) {
         console.warn('Discovery failed with strategy, trying next:', e);
       }

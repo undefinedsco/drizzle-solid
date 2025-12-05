@@ -111,22 +111,21 @@ export class InteropDiscovery implements DataDiscovery {
       
       if (!profileThing) return [];
 
-      const registrySetUrl = getUrl(profileThing, INTEROP.hasRegistrySet);
-      if (!registrySetUrl) {
+      const registrySetUrls = getUrlAll(profileThing, INTEROP.hasRegistrySet);
+      if (registrySetUrls.length === 0) {
         return [];
       }
-
-      // Strategy A: Direct Data Registration (Owner access)
-      const ownerLocations = await this.discoverDataRegistrations(registrySetUrl, rdfClass);
-      locations.push(...ownerLocations);
-
-      // Strategy B: Access Grants (Shared access)
-      const sharedLocations = await this.discoverAccessGrants(registrySetUrl, rdfClass);
-      locations.push(...sharedLocations);
       
-      console.log(`[InteropDiscovery] Discovering ${rdfClass} for ${this.webId}`);
-      console.log(`[InteropDiscovery] Found ${locations.length} locations:`, JSON.stringify(locations, null, 2));
+      for (const registrySetUrl of registrySetUrls) {
+        // Strategy A: Direct Data Registration (Owner access)
+        const ownerLocations = await this.discoverDataRegistrations(registrySetUrl, rdfClass);
+        locations.push(...ownerLocations);
 
+        // Strategy B: Access Grants (Shared access)
+        const sharedLocations = await this.discoverAccessGrants(registrySetUrl, rdfClass);
+        locations.push(...sharedLocations);
+      }
+      
       return locations;
 
     } catch (error) {
@@ -189,14 +188,20 @@ export class InteropDiscovery implements DataDiscovery {
   }
 
   async discoverAccessGrants(registrySetUrl: string, rdfClass: string): Promise<DataLocation[]> {
-    if (!this.clientId) return [];
+    if (!this.clientId) {
+        console.warn('[InteropDiscovery] No ClientID available, skipping Access Grant discovery');
+        return [];
+    }
     
     const locations: DataLocation[] = [];
     try {
       // 1. RegistrySet -> AgentRegistry
       const registrySetDataset = await getSolidDataset(registrySetUrl, { fetch: this.fetchFn });
       const registrySetThing = getThing(registrySetDataset, registrySetUrl);
-      if (!registrySetThing) return [];
+      if (!registrySetThing) {
+          console.warn(`[InteropDiscovery] RegistrySet Thing not found at ${registrySetUrl}`);
+          return [];
+      }
 
       const agentRegistryPred = getPredicateForColumn(registrySetTable.columns.hasAgentRegistry, registrySetTable);
       const agentRegistryUrls = getUrlAll(registrySetThing, agentRegistryPred);
@@ -225,12 +230,7 @@ export class InteropDiscovery implements DataDiscovery {
                 const registeredAgentPred = getPredicateForColumn(applicationRegistrationTable.columns.registeredAgent, applicationRegistrationTable);
                 const agent = getUrl(regThing, registeredAgentPred);
                 
-                console.log(`[InteropDiscovery] Checking Thing: ${regThing.url}`);
-                console.log(`[InteropDiscovery] -> Registered Agent: ${agent} vs ClientID: ${this.clientId}`);
-                
                 if (agent === this.clientId) {
-                  // Found our registration!
-                  console.log(`[InteropDiscovery] Match found!`);
                   const hasAccessGrantPred = getPredicateForColumn(applicationRegistrationTable.columns.hasAccessGrant, applicationRegistrationTable);
                   const accessGrantUrls = getUrlAll(regThing, hasAccessGrantPred);
 

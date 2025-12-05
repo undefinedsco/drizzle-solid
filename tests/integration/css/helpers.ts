@@ -126,39 +126,108 @@ export async function grantAccess(
   agentWebId: string,
   modes: ('Read' | 'Write' | 'Append' | 'Control')[] = ['Read']
 ) {
-  // Simplified ACL discovery: assume .acl suffix for WAC
-  // In a robust impl, we should check Link headers for rel="acl"
-  const aclUrl = `${resourceUrl}.acl`; 
-  const modeString = modes.map(m => `<http://www.w3.org/ns/auth/acl#${m}>`).join(', ');
-  
-  const aclBody = `
-    @prefix acl: <http://www.w3.org/ns/auth/acl#>.
-    
-    # Owner access (Keep owner access!)
-    <#owner>
-      a acl:Authorization;
-      acl:agent <${ownerSession.info.webId}>;
-      acl:accessTo <${resourceUrl}>;
-      acl:default <${resourceUrl}>;
-      acl:mode acl:Read, acl:Write, acl:Control.
+  // Discover ACL URL from Link header (works for both WAC and ACP)
+  const headRes = await ownerSession.fetch(resourceUrl, { method: 'HEAD' });
+  const linkHeader = headRes.headers.get('link') || '';
 
-    # Grant for Agent
-    <#grant>
-      a acl:Authorization;
-      acl:agent <${agentWebId}>;
-      acl:accessTo <${resourceUrl}>;
-      acl:default <${resourceUrl}>;
-      acl:mode ${modeString}.
-  `;
+  // Parse Link header to find rel="acl"
+  const aclMatch = linkHeader.match(/<([^>]+)>;\s*rel="acl"/);
+  let aclUrl: string;
 
-  const response = await ownerSession.fetch(aclUrl, {
-    method: 'PUT',
-    headers: { 'Content-Type': 'text/turtle' },
-    body: aclBody
-  });
+  if (aclMatch) {
+    aclUrl = aclMatch[1];
+    // If relative URL, resolve against resource URL
+    if (!aclUrl.startsWith('http')) {
+      const base = new URL(resourceUrl);
+      aclUrl = new URL(aclMatch[1], base).toString();
+    }
+  } else {
+    // Fallback to .acl suffix for WAC
+    aclUrl = `${resourceUrl}.acl`;
+  }
 
-  if (!response.ok) {
-    throw new Error(`Failed to grant access on ${aclUrl}: ${response.status} ${response.statusText}`);
+  console.log(`  ACL URL discovered: ${aclUrl}`);
+
+  // Check if this is ACP (.acr) or WAC (.acl)
+  const isACP = aclUrl.endsWith('.acr');
+
+  if (isACP) {
+    // ACP format - Access Control Policies
+    const acpBody = `
+      @prefix acl: <http://www.w3.org/ns/auth/acl#>.
+      @prefix acp: <http://www.w3.org/ns/solid/acp#>.
+
+      <#policy>
+        a acp:AccessControlResource;
+        acp:resource <${resourceUrl}>;
+        acp:accessControl <#ownerRule>, <#grantRule>.
+
+      <#ownerRule>
+        a acp:AccessControl;
+        acp:apply [
+          a acp:Policy;
+          acp:allow acl:Read, acl:Write, acl:Control;
+          acp:anyOf [
+            a acp:Matcher;
+            acp:agent <${ownerSession.info.webId}>
+          ]
+        ].
+
+      <#grantRule>
+        a acp:AccessControl;
+        acp:apply [
+          a acp:Policy;
+          acp:allow ${modes.map(m => `acl:${m}`).join(', ')};
+          acp:anyOf [
+            a acp:Matcher;
+            acp:agent <${agentWebId}>
+          ]
+        ].
+    `;
+
+    const response = await ownerSession.fetch(aclUrl, {
+      method: 'PUT',
+      headers: { 'Content-Type': 'text/turtle' },
+      body: acpBody
+    });
+
+    if (!response.ok) {
+      const text = await response.text().catch(() => '');
+      throw new Error(`Failed to grant access via ACP on ${aclUrl}: ${response.status} ${response.statusText} - ${text}`);
+    }
+  } else {
+    // WAC format - Web Access Control
+    const modeString = modes.map(m => `<http://www.w3.org/ns/auth/acl#${m}>`).join(', ');
+
+    const aclBody = `
+      @prefix acl: <http://www.w3.org/ns/auth/acl#>.
+
+      # Owner access (Keep owner access!)
+      <#owner>
+        a acl:Authorization;
+        acl:agent <${ownerSession.info.webId}>;
+        acl:accessTo <${resourceUrl}>;
+        acl:default <${resourceUrl}>;
+        acl:mode acl:Read, acl:Write, acl:Control.
+
+      # Grant for Agent
+      <#grant>
+        a acl:Authorization;
+        acl:agent <${agentWebId}>;
+        acl:accessTo <${resourceUrl}>;
+        acl:default <${resourceUrl}>;
+        acl:mode ${modeString}.
+    `;
+
+    const response = await ownerSession.fetch(aclUrl, {
+      method: 'PUT',
+      headers: { 'Content-Type': 'text/turtle' },
+      body: aclBody
+    });
+
+    if (!response.ok) {
+      throw new Error(`Failed to grant access via WAC on ${aclUrl}: ${response.status} ${response.statusText}`);
+    }
   }
 }
 

@@ -95,7 +95,7 @@ export class PodDialect {
     
     // 从session中获取webId和podUrl
     const webId = this.session.info.webId;
-    const clientId = (this.session.info as any).clientId || (this.session.info as any).client_id; // Try both camelCase and snake_case
+    const clientId = (this.session.info as any).clientId || (this.session.info as any).client_id || process.env.SOLID_CLIENT_ID; 
 
     if (!webId) {
       throw new Error('Session中未找到webId');
@@ -779,21 +779,22 @@ export class PodDialect {
         console.log(`[AutoDiscover] ✓ Found resource path from TypeIndex: ${resourcePath}`);
 
         // 动态注入到表配置中
-        (table as any).config.containerPath = containerPath;
-        (table as any).config.resourcePath = resourcePath;
-        if ((table as any)._) {
-          (table as any)._.config.containerPath = containerPath;
-          (table as any)._.config.resourcePath = resourcePath;
+        // 使用 setBase 更新内部状态和 config.base，确保 SubjectResolver 能获取到正确路径
+        if (typeof (table as any).setBase === 'function') {
+            (table as any).setBase(resourcePath);
+        } else {
+            // Fallback for minimal mock tables
+            (table as any).config.containerPath = containerPath;
+            (table as any).config.resourcePath = resourcePath;
+            (table as any).config.base = resourcePath;
         }
       } else {
-        console.warn(`[AutoDiscover] ⚠️  No TypeIndex entry found for ${rdfClass}, using default path /data/`);
-        // 使用默认路径
-        (table as any).config.containerPath = '/data/';
+        // Discovery failed - do NOT fallback to /data/
+        throw new Error(`[AutoDiscover] No data location found for type ${rdfClass}. Please ensure the data is registered in TypeIndex or SAI Registry.`);
       }
     } catch (error) {
-      console.warn('[AutoDiscover] Failed to discover resource path from TypeIndex:', error);
-      // 失败时使用默认路径
-      (table as any).config.containerPath = '/data/';
+      console.warn('[AutoDiscover] Discovery process failed:', error);
+      throw error; // Re-throw
     }
   }
 
@@ -1369,6 +1370,10 @@ export class PodDialect {
    * 注册表到 TypeIndex
    */
   async registerTable(table: PodTable): Promise<void> {
+    if (table.config.autoRegister === false) {
+      return;
+    }
+
     const tableKey = table.config.name ?? JSON.stringify(table.config);
     if (this.registeredTables.has(tableKey)) {
       return;

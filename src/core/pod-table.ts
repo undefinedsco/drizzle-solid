@@ -353,6 +353,8 @@ export interface PodTableOptions {
   subjectTemplate?: string;
   graph?: string;
   resourceMode?: 'ldp' | 'sparql';
+  autoRegister?: boolean;
+  containerPath?: string;
 }
 
 export interface PodColumnMapping {
@@ -496,44 +498,46 @@ export abstract class PodColumnBase<
 
   // 格式化单个值
   protected formatSingleValue(value: any): string {
-    // 处理引用类型
-    if (this.options.referenceTarget && typeof value === 'string') {
-      return `<${value}>`;
-    }
-
-    // 根据数据类型格式化
-    switch (this.dataType) {
-      case 'string':
-        return `"${String(value).replace(/"/g, '\\"')}"`;
-
-      case 'integer':
-        return `"${Number(value)}"^^<http://www.w3.org/2001/XMLSchema#integer>`;
-
-      case 'boolean':
-        return `"${value}"^^<http://www.w3.org/2001/XMLSchema#boolean>`;
-
-      case 'datetime': {
-        const date = value instanceof Date ? value : new Date(value);
-        return `"${date.toISOString()}"^^<http://www.w3.org/2001/XMLSchema#dateTime>`;
-      }
-
-      case 'json':
-      case 'object': {
-        const jsonString = JSON.stringify(value);
-        return `"${jsonString.replace(/"/g, '\\"')}"^^<http://www.w3.org/2001/XMLSchema#json>`;
-      }
-
-      case 'uri':
-        // URI 类型直接作为 NamedNode，不需要引号
-        if (typeof value !== 'string' || (!value.startsWith('http://') && !value.startsWith('https://'))) {
-          throw new Error(`URI column requires valid HTTP(S) URL, got: ${value}`);
+        // 处理引用类型
+        if (this.options.referenceTarget && typeof value === 'string') {
+          return `<${value}>`;
         }
-        return `<${value}>`;
-
-      default:
-        return `"${String(value).replace(/"/g, '\\"')}"`;
-    }
-  }
+    
+        // 根据数据类型格式化
+        switch (this.dataType) {
+          case 'string':
+            return `"${String(value).replace(/"/g, '\\"')}"`;
+    
+          case 'integer':
+            return `"${Number(value)}"^^<http://www.w3.org/2001/XMLSchema#integer>`;
+    
+          case 'boolean':
+            return `"${value}"^^<http://www.w3.org/2001/XMLSchema#boolean>`;
+    
+          case 'datetime': {
+            const date = value instanceof Date ? value : new Date(value);
+            return `"${date.toISOString()}"^^<http://www.w3.org/2001/XMLSchema#dateTime>`;
+          }
+    
+          case 'json':
+          case 'object': {
+            const jsonString = JSON.stringify(value);
+            return `"${jsonString.replace(/"/g, '\\"')}"^^<http://www.w3.org/2001/XMLSchema#json>`;
+          }
+    
+                case 'uri':
+                  // URI 类型直接作为 NamedNode，不需要引号
+                  // 简单的 URI 校验：必须包含 scheme (即包含冒号)
+                  // 这可以排除像 "xpod_123" 这样的普通字符串，同时支持 http, https, urn, mailto 等
+                  if (typeof value !== 'string' || !value.includes(':')) {
+                    throw new Error(`URI column requires valid IRI (must contain scheme), got: ${value}`);
+                  }
+                  return `<${value}>`;
+                    default:
+            return `"${String(value).replace(/"/g, '\\"')}"`;
+        }
+      }
+    
 }
 
 export type PodColumn = PodColumnBase<ColumnBuilderDataType>;
@@ -632,6 +636,7 @@ export class PodTable<TColumns extends Record<string, PodColumnBase<any, any, an
     graph?: string;
     containerPath?: string;
     resourcePath?: string;
+    autoRegister?: boolean;
   };
   public mapping: PodTableMapping;
   public relations?: Record<string, RelationDefinition>;
@@ -678,7 +683,7 @@ export class PodTable<TColumns extends Record<string, PodColumnBase<any, any, an
     if (typeIndexOption && !validTypeIndex) {
       console.warn(`Invalid typeIndex value "${typeIndexOption}", disabling TypeIndex registration.`);
     }
-    const baseConfig = this.resolveBase(options.base, name);
+    const baseConfig = this.resolveBase(options.base, name, options.containerPath);
     this.resourcePath = baseConfig.resourcePath;
     this.containerPath = baseConfig.containerPath;
     const subjectTemplateInfo = this.resolveSubjectTemplate(
@@ -690,8 +695,8 @@ export class PodTable<TColumns extends Record<string, PodColumnBase<any, any, an
     this.hasCustomSubjectTemplate = subjectTemplateInfo.isCustom;
     this.resourceMode = options.resourceMode ?? (options.sparqlEndpoint ? 'sparql' : undefined);
     this.sparqlEndpoint = options.sparqlEndpoint;
-    // TypeIndex 注册默认取决于是否提供 typeIndex
-    this.registerTypeIndexEnabled = validTypeIndex;
+    // TypeIndex 注册默认取决于是否提供 typeIndex，且 autoRegister 未显式禁用
+    this.registerTypeIndexEnabled = validTypeIndex && options.autoRegister !== false;
 
     this.config = {
       name,
@@ -700,7 +705,9 @@ export class PodTable<TColumns extends Record<string, PodColumnBase<any, any, an
       namespace: options.namespace,
       typeIndex: validTypeIndex ? typeIndexOption : undefined,
       subjectTemplate: this.subjectTemplate,
-      graph: options.graph
+      graph: options.graph,
+      autoRegister: options.autoRegister,
+      containerPath: baseConfig.containerPath
     };
     this.parentClasses = this.normalizeParents(options.subClassOf ?? []);
     if (this.parentClasses.length > 0) {
@@ -804,8 +811,15 @@ export class PodTable<TColumns extends Record<string, PodColumnBase<any, any, an
     return this.mapping;
   }
 
-  private resolveBase(base: string | undefined, tableName: string): { resourcePath: string; containerPath: string } {
+  private resolveBase(base: string | undefined, tableName: string, containerPathHint?: string): { resourcePath: string; containerPath: string } {
     if (!base || base.trim().length === 0) {
+      if (containerPathHint && containerPathHint.trim().length > 0) {
+        const normalizedContainerPath = this.ensureTrailingSlash(this.normalizeBaseInput(containerPathHint));
+        return {
+          resourcePath: `${normalizedContainerPath}${tableName}.ttl`,
+          containerPath: normalizedContainerPath
+        };
+      }
       return {
         resourcePath: '',
         containerPath: '/data/'
@@ -921,8 +935,11 @@ export class PodTable<TColumns extends Record<string, PodColumnBase<any, any, an
     this.resourcePath = resolved.resourcePath;
     this.containerPath = resolved.containerPath;
     this.config.base = resolved.resourcePath;
+    this.config.containerPath = resolved.containerPath; // Sync config.containerPath
+    
     if ((this as any)._?.config) {
       (this as any)._!.config.base = this.config.base;
+      (this as any)._!.config.containerPath = this.config.containerPath;
     }
     if (!this.hasCustomSubjectTemplate) {
       this.subjectTemplate = this.buildDefaultSubjectTemplate(this.config.base, this.config.name);

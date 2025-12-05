@@ -9,7 +9,8 @@ import { getSolidDataset, getThing, setUrl, setThing, saveSolidDatasetAt, create
 // SAI Tables (Scoped for Test)
 // We redefine them here to set specific container paths for the test
 const getTestTables = (podBase: string) => {
-  const registriesPath = `${podBase}registries/`;
+  // Use unique path to avoid conflict with other tests
+  const registriesPath = `${podBase}registries/sai-clean/`;
   const agentRegistryPath = `${registriesPath}agents/`;
   
   // Registry Set (separate file)
@@ -31,7 +32,7 @@ const getTestTables = (podBase: string) => {
     hasAccessGrant: uri('hasAccessGrant').predicate(INTEROP.hasAccessGrant),
   }, {
     type: INTEROP.ApplicationRegistration,
-    resourcePath: appRegResource
+    base: appRegResource
   });
 
   const accessGrant = podTable('grant', {
@@ -39,7 +40,7 @@ const getTestTables = (podBase: string) => {
     hasDataGrant: uri('hasDataGrant').array().predicate(INTEROP.hasDataGrant),
   }, {
     type: INTEROP.AccessGrant,
-    resourcePath: appRegResource
+    base: appRegResource
   });
 
   const dataGrant = podTable('data-grant', {
@@ -49,7 +50,7 @@ const getTestTables = (podBase: string) => {
     scopeOfGrant: uri('scopeOfGrant').predicate(INTEROP.scopeOfGrant),
   }, {
     type: INTEROP.DataGrant,
-    resourcePath: appRegResource
+    base: appRegResource
   });
 
   return { registrySet, applicationRegistration, accessGrant, dataGrant, agentRegistryPath, registriesPath, appRegResource };
@@ -60,8 +61,9 @@ const noteTable = podTable('note', {
   id: id(),
   content: string('content').predicate('http://schema.org/text'),
 }, {
-  type: 'http://schema.org/Note',
-  typeIndex: 'private' // Enable discovery (which includes InteropDiscovery)
+  type: 'http://schema.org/Note_SAI_Test',
+  typeIndex: 'private', // Enable discovery mechanism
+  autoRegister: false // Disable TypeIndex registration to force Interop Discovery
 });
 
 describe('SAI Interoperability (Dual User)', () => {
@@ -83,7 +85,19 @@ describe('SAI Interoperability (Dual User)', () => {
 
     alicePodBase = aliceSession.info.webId.split('profile')[0];
     bobPodBase = bobSession.info.webId.split('profile')[0];
-    appClientId = aliceSession.info.clientId;
+    
+    // Normalize Client ID to URL if necessary (for test environment)
+    // MUST be done BEFORE drizzle() is called so PodDialect gets the correct ID
+    let rawClientId = aliceSession.info.clientId || process.env.SOLID_CLIENT_ID || 'https://app.example/id';
+    if (!rawClientId.startsWith('http')) {
+        rawClientId = `https://app.example/${rawClientId}`;
+        // Patch session info so PodDialect picks up the URL version
+        if (aliceSession.info) (aliceSession.info as any).clientId = rawClientId;
+        if (bobSession.info) (bobSession.info as any).clientId = rawClientId;
+    }
+    appClientId = rawClientId;
+    
+    console.log('DEBUG: Using App Client ID:', appClientId);
 
     const aliceDb = drizzle(aliceSession);
     const bobDb = drizzle(bobSession);
@@ -106,7 +120,7 @@ describe('SAI Interoperability (Dual User)', () => {
     await aliceSession.fetch(shapeTreeUrl, {
       method: 'PUT',
       headers: { 'Content-Type': 'text/turtle' },
-      body: `<${shapeTreeUrl}> <http://www.w3.org/ns/shapetrees#expectsType> <http://schema.org/Note> .`
+      body: `<${shapeTreeUrl}> <http://www.w3.org/ns/shapetrees#expectsType> <http://schema.org/Note_SAI_Test> .`
     });
 
     // Define Alice's note table with explicit path for insertion
@@ -119,7 +133,7 @@ describe('SAI Interoperability (Dual User)', () => {
     const noteUrl = `${aliceDataContainer}note.ttl`;
     const noteBody = `
       @prefix schema: <http://schema.org/>.
-      <#note1> a schema:Note;
+      <#note1> a <http://schema.org/Note_SAI_Test>;
         schema:identifier "note1";
         schema:text "Hello from Alice".
     `;
@@ -155,7 +169,8 @@ describe('SAI Interoperability (Dual User)', () => {
     // 4.1 Create RegistrySet
     await ensureContainer(bobSession, 'registries/');
     
-    const setId = `set-${Date.now()}`;
+    // Use FIXED ID to prevent profile pollution
+    const setId = 'set-test-fixed';
     
     await bobDb.insert(bobTables.registrySet).values({
       id: setId,
@@ -191,9 +206,6 @@ describe('SAI Interoperability (Dual User)', () => {
     const verifyThing = getThing(verifyDs, bobWebId);
     const linkedRegistrySet = getUrl(verifyThing!, INTEROP.hasRegistrySet);
     console.log('Profile Registry Link:', linkedRegistrySet);
-    if (!linkedRegistrySet) {
-       throw new Error('Failed to link RegistrySet to Profile');
-    }
 
     // 4.2 Create Application Registration & Grants
     await ensureContainer(bobSession, 'registries/agents/');
@@ -207,10 +219,10 @@ describe('SAI Interoperability (Dual User)', () => {
       body: ''
     });
     
-    const ts = Date.now();
-    const appRegId = `app-reg-${ts}`;
-    const accessGrantId = `access-grant-${ts}`;
-    const dataGrantId = `data-grant-${ts}`;
+    // Use FIXED IDs
+    const appRegId = 'app-reg-fixed';
+    const accessGrantId = 'access-grant-fixed';
+    const dataGrantId = 'data-grant-fixed';
 
     // Insert Data Grant
     await bobDb.insert(bobTables.dataGrant).values({
@@ -236,43 +248,26 @@ describe('SAI Interoperability (Dual User)', () => {
       hasAccessGrant: accessGrantUri
     });
 
-    // Verify Agent Registry contents
-    const agentRegUrl = bobTables.agentRegistryPath;
-    const agentRegDs = await getSolidDataset(agentRegUrl, { fetch: bobSession.fetch });
-    const agentRegThing = getThing(agentRegDs, agentRegUrl);
-    const contains = getUrlAll(agentRegThing!, 'http://www.w3.org/ns/ldp#contains');
-    console.log('Agent Registry contains:', contains);
-
   }, 120000);
 
   it('Bob should discover Alice\'s notes via SAI (URL only, cross-base read deferred)', async () => {
     if (!bobSession) return;
 
     const db = drizzle(bobSession);
-    
-    // Manual Override to verify if Core supports cross-pod query
-    // If this works, the issue is purely in Discovery logic.
-    // If this fails, the issue is in PodDialect/Executor handling of absolute URLs.
-    // (noteTable as any).config.containerPath = 'http://localhost:3000/test/data/shared-notes/';
-    // We need to get aliceDataContainer from the closure, but it's defined in beforeAll.
-    // Let's just assume the discovery works and debug why it returns empty if manual works.
-    
-    // Actually, let's try to debug Discovery by printing what it returns inside the test?
-    // But we can't easily access the internal discovery instance from here.
-    
-    // Let's force the path to verify the "Base Field" hypothesis.
-  const alicePodBase = aliceSession.info.webId.split('profile')[0];
-  const aliceDataContainer = `${alicePodBase}data/shared-notes/`;
-  (noteTable as any).config.containerPath = aliceDataContainer;
-  
-  // Bob queries the generic noteTable (no path specified).
-  // We only assert that discovery yields the expected shared-notes container (content fetch across base is deferred).
-  const notes = await db.select().from(noteTable);
+    const alicePodBase = aliceSession.info.webId.split('profile')[0];
+    const aliceDataContainer = `${alicePodBase}data/shared-notes/`;
 
-  console.log('Bob found notes:', notes);
+    // Bob queries the generic noteTable (no path specified).
+    // Discovery should find the shared-notes container via the Data Grant in the Agent Registry.
+    const notes = await db.select().from(noteTable);
 
-  expect((noteTable as any).config.containerPath).toBe(aliceDataContainer);
-  // Allow empty result until cross-base fetch is supported.
-  expect(notes.length).toBeGreaterThanOrEqual(0);
+    console.log('Bob found notes:', notes);
+
+    // Verify that discovery worked and set the correct path
+    expect((noteTable as any).config.containerPath).toBe(aliceDataContainer);
+    
+    // Verify that Bob can actually read the data
+    expect(notes.length).toBeGreaterThan(0);
+    expect(notes[0].content).toBe("Hello from Alice");
   });
 });
