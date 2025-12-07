@@ -1384,8 +1384,13 @@ export class PodDialect {
 
       if (descriptor.mode === 'sparql') {
         // Probe endpoint with a lightweight ASK
-        const ask = 'ASK WHERE { ?s ?p ?o } LIMIT 1';
-        await this.sparqlExecutor.executeQueryWithSource({ type: 'ASK', query: ask, prefixes: {} }, descriptor.endpoint);
+        // 尝试不带 LIMIT 的标准 ASK 查询
+        const ask = 'ASK WHERE { ?s ?p ?o }';
+        try {
+          await this.sparqlExecutor.executeQueryWithSource({ type: 'ASK', query: ask, prefixes: {} }, descriptor.endpoint);
+        } catch (askError) {
+          throw new Error(`SPARQL endpoint probe failed for ${descriptor.endpoint}: ${askError instanceof Error ? askError.message : String(askError)}`);
+        }
       } else {
         await this.ensureContainerExists(descriptor.containerUrl);
 
