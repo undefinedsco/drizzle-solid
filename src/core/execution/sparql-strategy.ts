@@ -97,6 +97,38 @@ export class SparqlStrategy implements ExecutionStrategy {
   }
 
   /**
+   * Helper: Wrap SPARQL query with GRAPH/WITH clause if a named graph is targeted
+   */
+  private applyGraphScope(query: string, table: any): string {
+    const graphUri = table.config.graph || table.config.base;
+    // Only apply graph scope if we have a valid absolute URI
+    if (!graphUri || (!graphUri.startsWith('http') && !graphUri.includes(':'))) {
+      return query;
+    }
+
+    // Handle INSERT DATA (INSERT DATA does not support WITH)
+    if (/INSERT DATA\s*\{/i.test(query)) {
+      // Wrap triples in GRAPH block: INSERT DATA { GRAPH <g> { ... } }
+      // We replace "INSERT DATA {" with "INSERT DATA { GRAPH <g> {"
+      // and append a closing "}" at the end.
+      // Note: This simple string manipulation assumes the query ends with "}". 
+      // sparqljs generated queries typically do.
+      return query.replace(
+        /INSERT DATA\s*\{/i,
+        `INSERT DATA { GRAPH <${graphUri}> {`
+      ) + ' }';
+    }
+
+    // Handle other updates (DELETE WHERE, DELETE/INSERT ... WHERE)
+    // Use WITH clause which sets default graph for both pattern matching and updates
+    if (/(DELETE|INSERT)/i.test(query)) {
+      return `WITH <${graphUri}> ${query}`;
+    }
+
+    return query;
+  }
+
+  /**
    * Execute INSERT operation via SPARQL UPDATE
    */
   async executeInsert(
@@ -105,7 +137,11 @@ export class SparqlStrategy implements ExecutionStrategy {
     resourceUrl: string
   ): Promise<ExecutionResult[]> {
     const sparqlQuery = this.sparqlConverter.convertInsert(plan, plan.table);
-    return await this.executeSparqlUpdate(resourceUrl, sparqlQuery);
+    const scopedQuery = {
+        ...sparqlQuery,
+        query: this.applyGraphScope(sparqlQuery.query, plan.table)
+    };
+    return await this.executeSparqlUpdate(resourceUrl, scopedQuery);
   }
 
   /**
@@ -121,7 +157,11 @@ export class SparqlStrategy implements ExecutionStrategy {
       plan.where,
       plan.table
     );
-    return await this.executeSparqlUpdate(resourceUrl, sparqlQuery);
+    const scopedQuery = {
+        ...sparqlQuery,
+        query: this.applyGraphScope(sparqlQuery.query, plan.table)
+    };
+    return await this.executeSparqlUpdate(resourceUrl, scopedQuery);
   }
 
   /**
@@ -136,7 +176,11 @@ export class SparqlStrategy implements ExecutionStrategy {
       plan.where,
       plan.table
     );
-    return await this.executeSparqlUpdate(resourceUrl, sparqlQuery);
+    const scopedQuery = {
+        ...sparqlQuery,
+        query: this.applyGraphScope(sparqlQuery.query, plan.table)
+    };
+    return await this.executeSparqlUpdate(resourceUrl, scopedQuery);
   }
 
   /**
