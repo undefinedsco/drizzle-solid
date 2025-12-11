@@ -118,7 +118,7 @@ describe('TripleBuilder', () => {
           'not-a-valid-uri',
           tableWithUri
         );
-      }).toThrow('URI column requires valid HTTP(S) URL');
+      }).toThrow('URI column requires valid URI (must contain scheme)');
     });
   });
 

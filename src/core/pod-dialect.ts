@@ -320,20 +320,15 @@ export class PodDialect {
     return { mode: 'ldp', containerUrl, resourceUrl };
   }
 
+  /**
+   * Resolve LDP container/resource URLs for a table.
+   * 
+   * Always returns the physical LDP storage location, regardless of whether
+   * the table has a sparqlEndpoint configured. SPARQL strategy will resolve
+   * the endpoint URL separately via table.getSparqlEndpoint().
+   */
   private resolveTableUrls(table: PodTable): { containerUrl: string; resourceUrl: string } {
-    const descriptor = this.resolveTableResource(table);
-    if (descriptor.mode === 'ldp') {
-      return {
-        containerUrl: descriptor.containerUrl,
-        resourceUrl: descriptor.resourceUrl
-      };
-    }
-
-    // SPARQL mode: use endpoint as both container/resource placeholder
-    return {
-      containerUrl: descriptor.endpoint,
-      resourceUrl: descriptor.endpoint
-    };
+    return this.resolveLdpResource(table);
   }
 
   private resolveLdpResource(table: PodTable): { containerUrl: string; resourceUrl: string } {
@@ -808,14 +803,27 @@ export class PodDialect {
     await this.ensureTableResourcePath(operation.table);
 
     const descriptor = this.resolveTableResource(operation.table);
-    const strategy = this.getStrategy(operation.table);
+    
+    // 策略选择：
+    // - SELECT: 使用表配置的策略（可能是 SPARQL 或 LDP）
+    // - INSERT/UPDATE/DELETE: 强制使用 LDP 策略（SPARQL mode 仅用于查询增强）
+    const strategy = operation.type === 'select'
+      ? this.getStrategy(operation.table)
+      : this.strategyFactory.getLdpStrategy();
+    
+    // LDP container/resource URLs（物理存储位置）
     const { containerUrl, resourceUrl } = this.resolveTableUrls(operation.table);
     const normalizedResourceUrl = this.normalizeResourceUrl(resourceUrl);
+    
+    // SELECT 操作时，SPARQL 策略需要使用 endpoint URL
+    const selectResourceUrl = operation.type === 'select' && descriptor.mode === 'sparql'
+      ? descriptor.endpoint
+      : normalizedResourceUrl;
 
     try {
       switch (operation.type) {
         case 'select':
-          return await this.executeSelect(operation, strategy, containerUrl, normalizedResourceUrl);
+          return await this.executeSelect(operation, strategy, containerUrl, selectResourceUrl);
 
         case 'insert':
           return await this.executeInsert(operation, strategy, containerUrl, normalizedResourceUrl, descriptor);
@@ -1688,8 +1696,10 @@ export class PodDialect {
       }
     } catch (e) {
       console.warn('[listContainerResources] SPARQL query failed, falling back to GET:', e);
+    }
 
-      // Fallback: GET the container and parse the turtle
+    // If SPARQL returned nothing or errored, attempt a GET-based parse as a secondary path
+    if (resources.length === 0) {
       try {
         const response = await this.session.fetch(normalizedUrl, {
           method: 'GET',

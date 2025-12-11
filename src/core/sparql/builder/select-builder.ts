@@ -18,14 +18,23 @@ export class SelectBuilder {
     this.expressionBuilder = new ExpressionBuilder();
   }
 
-  convertSelect(ast: any, table: PodTable): SPARQLQuery {
+  convertSelect(ast: any, table: PodTable, targetGraph?: string, fromSources?: string[], allowGraphVariable = true): SPARQLQuery {
     const selectQuery: any = {
       queryType: 'SELECT',
       variables: this.buildSelectVariables(ast, table),
-      where: this.buildWherePatterns(ast, table),
+      where: this.buildWherePatterns(ast, table, targetGraph, fromSources, allowGraphVariable), // Pass fromSources here
       type: 'query',
       prefixes: this.prefixes
     };
+
+    // Add FROM clauses if fromSources are provided and no explicit targetGraph
+    // If targetGraph is defined, it will be handled in buildWherePatterns using GRAPH <targetGraph> { ... }
+    if (fromSources && fromSources.length > 0 && !targetGraph) {
+      selectQuery.from = {
+        default: fromSources.map(uri => ({ termType: 'NamedNode', value: uri })), // These will be treated as default graphs for the query
+        named: [] // We are not using NAMED for now, but could be extended
+      };
+    }
 
     if (typeof ast.limit === 'number') {
       selectQuery.limit = ast.limit;
@@ -53,7 +62,7 @@ export class SelectBuilder {
     };
   }
 
-  convertSelectPlan(plan: SelectQueryPlan): SPARQLQuery {
+  convertSelectPlan(plan: SelectQueryPlan, targetGraph?: string, fromSources?: string[], allowGraphVariable = true): SPARQLQuery {
     const orderByDescriptors = plan.orderBy
       ?.map((descriptor) => {
         const columnName = descriptor.reference?.column ?? descriptor.rawColumn;
@@ -77,7 +86,7 @@ export class SelectBuilder {
       distinct: plan.distinct
     };
 
-    return this.convertSelect(ast, plan.baseTable);
+    return this.convertSelect(ast, plan.baseTable, targetGraph, fromSources, allowGraphVariable);
   }
 
   // Migrated from PodDialect to handle simple object queries
@@ -88,134 +97,55 @@ export class SelectBuilder {
     offset?: number;
     orderBy?: Array<{ column: string; direction: 'asc' | 'desc' }>;
     distinct?: boolean;
-  }): SPARQLQuery {
+  }, targetGraph?: string, fromSources?: string[], allowGraphVariable = true): SPARQLQuery {
     const table = operation.table;
     const rdfClass = table.config.type || 'http://example.org/Entity';
-    const namespace = table.config.namespace || '';
 
-    const selectVars: string[] = ['?subject'];
-    const wherePatterns: string[] = [`?subject a <${rdfClass}> .`];
-    
-    // Use existing prefixes logic if possible, but for now replicate PodDialect manual build for safety
-    const prefixes = [
-      'PREFIX rdf: <http://www.w3.org/1999/02/22-rdf-syntax-ns#>',
-      'PREFIX foaf: <http://xmlns.com/foaf/0.1/>',
-      'PREFIX schema: <https://schema.org/>',
-      'PREFIX dc: <http://purl.org/dc/terms/>',
-      'PREFIX xsd: <http://www.w3.org/2001/XMLSchema#>'
-    ];
+    const selectQuery: any = {
+      queryType: 'SELECT',
+      variables: [{ termType: 'Variable', value: 'subject' }],
+      where: this.buildWherePatterns(operation, table, targetGraph, fromSources, allowGraphVariable),
+      type: 'query',
+      prefixes: this.prefixes
+    };
 
-    const columnPredicates = new Map<string, string>();
-    let filteredByIdentifier = false;
+    // Add FROM clauses if fromSources are provided and no explicit targetGraph
+    if (fromSources && fromSources.length > 0 && !targetGraph) {
+      selectQuery.from = {
+        default: fromSources.map(uri => ({ termType: 'NamedNode', value: uri })),
+        named: []
+      };
+    }
 
-    // 为每个列生成变量和模式
+    // Build select variables based on table columns
     Object.keys(table.columns).forEach(columnName => {
       const column = table.columns[columnName];
-      let predicate = getPredicateForColumn(column, table);
-
-      if (predicate) {
-        columnPredicates.set(columnName, predicate);
-      }
-
-      if (predicate) {
-        const varName = `?${columnName}`;
-        selectVars.push(varName);
-
-        const isRequired = (column as any).options?.required || false;
-        if (isRequired) {
-          wherePatterns.push(`?subject <${predicate}> ${varName} .`);
-        } else {
-          wherePatterns.push(`OPTIONAL { ?subject <${predicate}> ${varName} . }`);
-        }
+      const predicate = getPredicateForColumn(column, table);
+      if (predicate && predicate !== '@id') { // Skip @id as it's virtual
+        selectQuery.variables.push({ termType: 'Variable', value: columnName });
       }
     });
 
-    const isUriString = (value: string): boolean => value.startsWith('http://') || value.startsWith('https://');
-
-    if (operation.where) {
-      for (const [key, rawValue] of Object.entries(operation.where)) {
-        if (rawValue === undefined) continue;
-
-        const values = Array.isArray(rawValue) ? rawValue : [rawValue];
-
-        if (key === 'subject' || key === '@id') {
-          filteredByIdentifier = true;
-          const formatted = values
-            .map((value) => {
-              if (typeof value !== 'string') return null;
-              const trimmed = value.trim();
-              if (!trimmed) return null;
-              if (isUriString(trimmed)) return `<${trimmed}>`;
-              
-              const baseResource = (table as any).getResourcePath?.() || table.config.base || table.getContainerPath();
-              // Note: This part is simplified compared to SubjectResolver logic
-              return `<${trimmed}>`; 
-            })
-            .filter((value): value is string => Boolean(value));
-
-          if (formatted.length === 1) {
-            wherePatterns.push(`FILTER(?subject = ${formatted[0]})`);
-          } else if (formatted.length > 1) {
-            const valuesClause = formatted.join(' ');
-            wherePatterns.push(`VALUES ?subject { ${valuesClause} }`);
-          }
-          continue;
-        }
-
-        if (key === 'id') {
-          filteredByIdentifier = true;
-          const subjects = values.map(val => {
-             return subjectResolver.resolve(table, { id: val });
-          }).map(uri => `<${uri}>`);
-          
-          if (subjects.length === 1) {
-            wherePatterns.push(`FILTER(?subject = ${subjects[0]})`);
-          } else if (subjects.length > 0) {
-             wherePatterns.push(`VALUES ?subject { ${subjects.join(' ')} }`);
-          }
-          continue;
-        }
-
-        const predicate = columnPredicates.get(key);
-        if (!predicate) continue;
-
-        const formattedValues = values
-          .map((value) => formatValue(value)) // Use shared formatValue
-          .filter((value): value is string => Boolean(value));
-
-        if (formattedValues.length === 0) continue;
-
-        if (formattedValues.length === 1) {
-          wherePatterns.push(`?subject <${predicate}> ${formattedValues[0]} .`);
-        } else {
-          const tempVar = `?${key}_filter`;
-          wherePatterns.push(`?subject <${predicate}> ${tempVar} .`);
-          const filterValues = formattedValues.join(', ');
-          wherePatterns.push(`FILTER(${tempVar} IN (${filterValues}))`);
-        }
-      }
-    }
-
-    let query = `${prefixes.join('\n')}\nSELECT ${selectVars.join(' ')} WHERE {\n  ${wherePatterns.join('\n  ')}\n}`;
-
     if (operation.limit) {
-      query += `\nLIMIT ${operation.limit}`;
-    } else if (filteredByIdentifier) {
-      query += '\nLIMIT 1';
+      selectQuery.limit = operation.limit;
     }
     if (operation.offset) {
-      query += `\nOFFSET ${operation.offset}`;
+      selectQuery.offset = operation.offset;
     }
-    
+    if (operation.orderBy && operation.orderBy.length > 0) {
+      selectQuery.order = operation.orderBy.map(item => ({
+        expression: { termType: 'Variable', value: item.column },
+        descending: item.direction === 'desc'
+      }));
+    }
+    if (operation.distinct) {
+      selectQuery.distinct = true;
+    }
+
     return {
       type: 'SELECT',
-      query: query.trim(),
-      prefixes: {
-        'rdf': 'http://www.w3.org/1999/02/22-rdf-syntax-ns#',
-        'schema': 'https://schema.org/',
-        'foaf': 'http://xmlns.com/foaf/0.1/',
-        'dc': 'http://purl.org/dc/terms/'
-      }
+      query: this.generator.stringify(selectQuery),
+      prefixes: this.prefixes
     };
   }
 
@@ -295,7 +225,7 @@ export class SelectBuilder {
   }
 
   // 构建 WHERE 模式 - 使用 sparqljs 格式
-  private buildWherePatterns(ast: any, table: PodTable): any[] {
+  private buildWherePatterns(ast: any, table: PodTable, targetGraph?: string, fromSources?: string[], allowGraphVariable = true): any[] {
     const patterns: sparqljs.Pattern[] = [];
 
     // 添加类型约束
@@ -389,6 +319,25 @@ export class SelectBuilder {
       }
     }
 
+    // 如果指定了目标 Graph，则将所有模式包裹在 GRAPH 块中
+    if (targetGraph) {
+      return [{
+        type: 'graph',
+        name: { termType: 'NamedNode', value: targetGraph },
+        patterns: patterns
+      }];
+    }
+
+    // Only use GRAPH ?g if no explicit targetGraph AND no fromSources are provided.
+    // If fromSources are provided, FROM clauses at query level define the sources.
+    if (allowGraphVariable && subjectResolver.getResourceMode(table) === 'document' && (!fromSources || fromSources.length === 0)) {
+      return [{
+        type: 'graph',
+        name: { termType: 'Variable', value: 'g' },
+        patterns
+      }];
+    }
+    
     return patterns;
   }
 }

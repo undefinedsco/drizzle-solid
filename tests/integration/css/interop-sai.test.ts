@@ -159,9 +159,10 @@ describe('SAI Interoperability (Dual User)', () => {
     }
 
     // 3. Alice: Grant Access to Bob (Physical ACL)
-    // Grant Read to Data Container AND ShapeTree
+    // Grant Read to Data Container, ShapeTree, and the note resource itself
     await grantAccess(aliceSession, aliceDataContainer, bobSession.info.webId, ['Read']);
     await grantAccess(aliceSession, shapeTreeUrl, bobSession.info.webId, ['Read']);
+    await grantAccess(aliceSession, noteUrl, bobSession.info.webId, ['Read']);
 
 
     // 4. Bob: Setup SAI Structure using Drizzle

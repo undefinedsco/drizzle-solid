@@ -102,6 +102,11 @@ export class LdpExecutor {
         }
 
         await this.sparqlExecutor.invalidateHttpCache(docResourceUrl);
+        const lastSlash = docResourceUrl.lastIndexOf('/');
+        if (lastSlash > 0) {
+          const containerUrl = docResourceUrl.slice(0, lastSlash + 1);
+          await this.sparqlExecutor.invalidateHttpCache(containerUrl);
+        }
         results.push({ success: true, source: docResourceUrl, status: response.status, via: 'put' });
       }
       return results;

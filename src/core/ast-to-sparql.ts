@@ -32,16 +32,16 @@ export class ASTToSPARQLConverter {
     this.expressionBuilder = new ExpressionBuilder();
   }
 
-  convertSelect(ast: any, table: PodTable, _overrideBase?: string): SPARQLQuery {
-    return this.selectBuilder.convertSelect(ast, table);
+  convertSelect(ast: any, table: PodTable, targetGraph?: string, fromSources?: string[], allowGraphVariable = true): SPARQLQuery {
+    return this.selectBuilder.convertSelect(ast, table, targetGraph, fromSources, allowGraphVariable);
   }
 
   buildWhereClauseForCondition(whereAst: any, table: PodTable): string {
     return this.expressionBuilder.buildWhereClause(whereAst as QueryCondition, table);
   }
 
-  convertSelectPlan(plan: SelectQueryPlan, _overrideBase?: string): SPARQLQuery {
-    return this.selectBuilder.convertSelectPlan(plan);
+  convertSelectPlan(plan: SelectQueryPlan, targetGraph?: string, fromSources?: string[], allowGraphVariable = true): SPARQLQuery {
+    return this.selectBuilder.convertSelectPlan(plan, targetGraph, fromSources, allowGraphVariable);
   }
 
   convertSimpleSelect(operation: {
@@ -51,20 +51,20 @@ export class ASTToSPARQLConverter {
     offset?: number;
     orderBy?: Array<{ column: string; direction: 'asc' | 'desc' }>;
     distinct?: boolean;
-  }): SPARQLQuery {
-    return this.selectBuilder.convertSimpleSelect(operation);
+  }, targetGraph?: string, fromSources?: string[], allowGraphVariable = true): SPARQLQuery {
+    return this.selectBuilder.convertSimpleSelect(operation, targetGraph, fromSources, allowGraphVariable);
   }
 
-  convertInsert(valuesOrPlan: any[] | { table: PodTable; rows: any[] }, table?: PodTable): SPARQLQuery {
-    return this.updateBuilder.convertInsert(valuesOrPlan, table);
+  convertInsert(valuesOrPlan: any[] | { table: PodTable; rows: any[] }, table?: PodTable, targetGraph?: string): SPARQLQuery {
+    return this.updateBuilder.convertInsert(valuesOrPlan, table, targetGraph);
   }
 
-  convertUpdate(setData: any, whereConditions: any, table: PodTable): SPARQLQuery {
-    return this.updateBuilder.convertUpdate(setData, whereConditions, table);
+  convertUpdate(setData: any, whereConditions: any, table: PodTable, targetGraph?: string): SPARQLQuery {
+    return this.updateBuilder.convertUpdate(setData, whereConditions, table, targetGraph);
   }
 
-  convertDelete(whereConditions: any, table: PodTable): SPARQLQuery {
-    return this.updateBuilder.convertDelete(whereConditions, table);
+  convertDelete(whereConditions: any, table: PodTable, targetGraph?: string): SPARQLQuery {
+    return this.updateBuilder.convertDelete(whereConditions, table, targetGraph);
   }
 
   getPrefixes(): Record<string, string> {

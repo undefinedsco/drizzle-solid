@@ -10,6 +10,30 @@
 - 🔁 **智能回退**: SQL 查询自动转换为 SPARQL；当 CSS/Comunica 无法处理过滤器或聚合时由方言拉取数据并在内存中回放
 - 🔧 **灵活映射**: 自定义命名空间、谓词和列类型（字符串、数字、布尔、时间、JSON/Object）
 
+## 🔋 服务器支持
+
+### 原生 Community Solid Server (CSS)
+
+drizzle-solid 完全兼容原生 CSS，使用 **LDP 模式**进行操作：
+- ✅ 基本的 CRUD 操作
+- ✅ 通过 Comunica 进行客户端查询
+- ⚠️ 复杂查询需要客户端处理（性能较低）
+
+### xpod - 扩展的 CSS (推荐)
+
+**xpod** 是对 CSS 的增强实现，提供完整的 SPARQL 1.1 支持和智能混合存储：
+
+- ✅ **SPARQL 1.1 Query & Update**：服务器端查询和聚合
+- ✅ **混合存储**：RDF 数据自动转为 Quadstore，非 RDF 文件保留原始格式
+- ✅ **跨文件查询**：一次查询获取多个资源数据
+- ✅ **原子性更新**：SPARQL UPDATE 保证事务一致性
+- ✅ **高性能**：索引化四元组存储，避免多次 HTTP 请求
+- ✅ **向后兼容**：完全支持 LDP 协议，无缝迁移
+
+**xpod 仓库**：https://github.com/undefinedsco/xpod
+
+**详细对比**：请参阅 [xpod 特性文档](./docs/xpod-features.md)
+
 ## 🚀 快速开始
 
 ### 安装
@@ -70,17 +94,39 @@ await db.insert(profileTable).values({
   age: 30
 });
 
-// 直连 SPARQL 端点（跳过 LDP 容器）
+// 使用 SPARQL 端点（适用于 xpod）
 const sparqlTable = podTable('posts', {
   id: string('id').primaryKey(),
   title: string('title'),
 }, {
   type: 'https://schema.org/CreativeWork',
-  // 只要提供 sparqlEndpoint 即可，CRUD 会直接走端点，不再创建容器/资源
-  sparqlEndpoint: 'https://your-endpoint.example/sparql'
+  base: '/data/posts.ttl',                      // 资源路径
+  sparqlEndpoint: '/data/posts.ttl/-/sparql'    // xpod Sidecar 模式端点
+  // 💡 xpod 使用 Sidecar 模式：在资源路径后添加 /-/sparql 后缀
+  //    - 文件资源: /data/posts.ttl/-/sparql
+  //    - 容器: /data/users/-/sparql
 });
 await db.init([sparqlTable]); // 不会创建容器，直接使用端点执行 SPARQL UPDATE/SELECT
 await db.insert(sparqlTable).values({ id: 'post-1', title: 'Hello SPARQL' });
+
+### SPARQL Endpoint 模式兼容性说明 (重要!)
+
+当 `podTable` 配置 `sparqlEndpoint` 时，Drizzle Solid 会直接使用该端点执行所有 CRUD 操作。理解其行为模式对于数据一致性至关重要：
+
+1.  **Fragment Mode (聚合 Named Graph)**:
+    *   **定义**: 当表的 `base` 指向一个具体资源 URL (例如 `/data/posts.ttl`)，或者 `subjectTemplate` 使用片段 (例如 `'#{id}'`) 时，Drizzle Solid 会将所有数据操作集中在 `base` 对应的单一 Named Graph (`GRAPH <base_url>`) 中。
+    *   **行为**: 在此模式下，LDP 读写与 SPARQL 读写**完全兼容且互操作**。LDP 对 `base` 资源的 PATCH/GET 操作，与 SPARQL 对 `GRAPH <base_url>` 的 DML/SELECT 操作，都作用于相同的数据集，并能互相可见。**这是 SPARQL Endpoint 模式下的推荐用法**。
+    *   **示例**: `base: '/data/posts.ttl'`, `subjectTemplate: '#{id}'`。所有 posts 都存储在 `posts.ttl` 文件对应的 Named Graph 中。
+
+2.  **Document Mode (聚合视图，写操作不兼容)**:
+    *   **定义**: 当表的 `base` 指向一个容器 URL (例如 `/data/users/`)，且 `subjectTemplate` 生成文件路径 (例如 `'{id}.ttl'`) 时。
+    *   **读操作 (SELECT)**: SPARQL SELECT 查询指向容器的 `/sparql` 端点时，Community Solid Server (CSS) 会**聚合该容器内所有 LDP 子文件**的数据，形成一个统一的视图。因此，通过 LDP PUT 写入的子文件 (例如 `alice.ttl`)，**可以被 SPARQL SELECT 查询到**。
+    *   **写操作 (DML)**: SPARQL INSERT/UPDATE/DELETE 操作是针对**容器的聚合 Named Graph** (`GRAPH <container_url>`)。这些操作**不会**直接创建、修改或删除 LDP 子文件。
+        *   例如，通过 SPARQL INSERT 写入 `bob`，数据会存在容器 Graph 中，但**不会**创建 `bob.ttl` 文件 (LDP GET `/data/users/bob.ttl` 将返回 404)。
+        *   通过 SPARQL UPDATE `alice`，只会修改容器 Graph 中的 `alice` 数据（SPARQL 视图），而**不会**更新 `alice.ttl` 文件本身 (LDP GET `/data/users/alice.ttl` 将显示旧数据)。
+    *   **结论**: 在 Document Mode 下，SPARQL 读操作可以兼容 LDP 资源（因为聚合），但 **写操作与 LDP 资源的物理文件视图不兼容**。这意味着 LDP 客户端可能无法看到 SPARQL DML 操作的影响，反之亦然。**不建议混合使用 LDP Document Mode 和 SPARQL DML 操作**，除非您明确理解其数据存储的视图差异，并仅利用 SPARQL 作为聚合查询工具。
+
+
 ```
 
 ## 📚 示例教程

@@ -54,9 +54,16 @@ export class ExecutionStrategyFactoryImpl implements ExecutionStrategyFactory {
   }
 
   /**
+   * Get LDP strategy explicitly (used for write operations in SPARQL mode)
+   */
+  getLdpStrategy(): LdpStrategy {
+    return this.getLdpStrategyInternal();
+  }
+
+  /**
    * Get or create LDP strategy (singleton)
    */
-  private getLdpStrategy(): LdpStrategy {
+  private getLdpStrategyInternal(): LdpStrategy {
     if (!this.ldpStrategy) {
       const ldpDeps: LdpStrategyDependencies = {
         sparqlExecutor: this.deps.sparqlExecutor,

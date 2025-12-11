@@ -298,7 +298,8 @@ describe('ASTToSPARQLConverter', () => {
       
       expect(result).toBeDefined();
       expect(result.type).toBe('DELETE');
-      expect(result.query).toContain('DELETE WHERE');
+      expect(result.query).toContain('DELETE { GRAPH <https://example.com/users/index.ttl> { <https://example.com/users/index.ttl#1> ?p ?o. } }');
+      expect(result.query).toContain('WHERE { GRAPH <https://example.com/users/index.ttl> { <https://example.com/users/index.ttl#1> ?p ?o. } }');
     });
   });
 

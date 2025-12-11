@@ -1,11 +1,3 @@
-/**
- * SPARQL Execution Strategy
- *
- * Implements ExecutionStrategy for SPARQL mode.
- * - All operations use direct SPARQL queries to an endpoint
- * - Supports both same-origin (authenticated) and cross-origin (unauthenticated) endpoints
- */
-
 import type { ComunicaSPARQLExecutor } from '../sparql-executor';
 import type { ASTToSPARQLConverter, SPARQLQuery } from '../ast-to-sparql';
 import type { SelectQueryPlan } from '../select-plan';
@@ -17,6 +9,7 @@ import type {
   DeleteQueryPlan
 } from './types';
 import { isSameOrigin, getFetchForOrigin } from '../utils/origin-auth';
+import { subjectResolver } from '../subject';
 
 export interface SparqlStrategyDependencies {
   sparqlExecutor: ComunicaSPARQLExecutor;
@@ -41,6 +34,33 @@ export class SparqlStrategy implements ExecutionStrategy {
   }
 
   /**
+   * Resolve target graph based on resource mode
+   * - Document Mode SELECT: undefined (let CSS auto-query container and all sub-graphs)
+   * - Document Mode INSERT/UPDATE/DELETE: container path as graph
+   * - Fragment Mode: base file path
+   */
+  private resolveTargetGraph(table?: { config?: { base?: string; containerPath?: string }; getContainerPath?: () => string }, forSelect = false): string | undefined {
+    if (!table) return undefined;
+    
+    // Determine resource mode to choose correct graph
+    const isDocumentMode = subjectResolver.getResourceMode(table as any) === 'document';
+    
+    if (isDocumentMode) {
+      // Document Mode:
+      // - For SELECT: no graph specified (CSS will auto-query container and all sub-graphs)
+      // - For INSERT/UPDATE/DELETE: use container path as graph
+      if (forSelect) {
+        return undefined; // Let CSS use default behavior
+      }
+      return table.config?.containerPath ?? table.getContainerPath?.();
+    }
+    
+    // Fragment Mode: graph = base file
+    // e.g., /data/tags.ttl (all fragments in this file share the same graph)
+    return table.config?.base;
+  }
+
+  /**
    * Get the appropriate fetch function for a SPARQL endpoint
    */
   private getFetchForEndpoint(endpoint: string): typeof fetch {
@@ -55,6 +75,13 @@ export class SparqlStrategy implements ExecutionStrategy {
     _containerUrl: string,
     resourceUrl: string // In SPARQL mode, this is the endpoint URL
   ): Promise<any[]> {
+    const table = plan.baseTable;
+    
+    // Determine target graph based on resource mode
+    // - Document Mode: no graph (CSS will auto-query container and all sub-graphs)
+    // - Fragment Mode: graph = base file
+    const targetGraph = this.resolveTargetGraph(table, true /* forSelect */);
+
     // Convert plan to SPARQL - check for simple select options or SQL
     let sparqlQuery;
     const extendedPlan = plan as SelectQueryPlan & {
@@ -69,23 +96,22 @@ export class SparqlStrategy implements ExecutionStrategy {
       _sql?: any;
     };
 
+    // Pass `true` for `includeGraph` to ensure the graph is included if targetGraph is defined.
+    // The SparqlConverter will handle the specific syntax (FROM/GRAPH).
     if (extendedPlan._simpleSelectOptions) {
-      // Use convertSimpleSelect for simple operations
-      sparqlQuery = this.sparqlConverter.convertSimpleSelect(extendedPlan._simpleSelectOptions);
+      sparqlQuery = this.sparqlConverter.convertSimpleSelect(extendedPlan._simpleSelectOptions, targetGraph, undefined, true);
     } else if (extendedPlan._sql && plan.baseTable) {
-      // Use convertSelect for SQL-based operations
       const ast = this.sparqlConverter.parseDrizzleAST(extendedPlan._sql, plan.baseTable);
-      sparqlQuery = this.sparqlConverter.convertSelect(ast, plan.baseTable);
+      sparqlQuery = this.sparqlConverter.convertSelect(ast, plan.baseTable, targetGraph, undefined, true);
     } else {
-      // Use convertSelectPlan for full plans
-      sparqlQuery = this.sparqlConverter.convertSelectPlan(plan);
+      sparqlQuery = this.sparqlConverter.convertSelectPlan(plan, targetGraph, undefined, true);
     }
 
+    console.log('DEBUG: Generated SPARQL Query for SELECT:', sparqlQuery.query);
+
     if (isSameOrigin(resourceUrl, this.podUrl)) {
-      // Same origin: use authenticated executor
       return await this.sparqlExecutor.executeQueryWithSource(sparqlQuery, resourceUrl);
     } else {
-      // Cross-origin: create an unauthenticated executor
       const { ComunicaSPARQLExecutor } = await import('../sparql-executor');
       const unauthExecutor = new ComunicaSPARQLExecutor({
         sources: [resourceUrl],
@@ -97,90 +123,86 @@ export class SparqlStrategy implements ExecutionStrategy {
   }
 
   /**
-   * Helper: Wrap SPARQL query with GRAPH/WITH clause if a named graph is targeted
-   */
-  private applyGraphScope(query: string, table: any): string {
-    const graphUri = table.config.graph || table.config.base;
-    // Only apply graph scope if we have a valid absolute URI
-    if (!graphUri || (!graphUri.startsWith('http') && !graphUri.includes(':'))) {
-      return query;
-    }
-
-    // Handle INSERT DATA (INSERT DATA does not support WITH)
-    if (/INSERT DATA\s*\{/i.test(query)) {
-      // Wrap triples in GRAPH block: INSERT DATA { GRAPH <g> { ... } }
-      // We replace "INSERT DATA {" with "INSERT DATA { GRAPH <g> {"
-      // and append a closing "}" at the end.
-      // Note: This simple string manipulation assumes the query ends with "}". 
-      // sparqljs generated queries typically do.
-      return query.replace(
-        /INSERT DATA\s*\{/i,
-        `INSERT DATA { GRAPH <${graphUri}> {`
-      ) + ' }';
-    }
-
-    // Handle other updates (DELETE WHERE, DELETE/INSERT ... WHERE)
-    // Use WITH clause which sets default graph for both pattern matching and updates
-    if (/(DELETE|INSERT)/i.test(query)) {
-      return `WITH <${graphUri}> ${query}`;
-    }
-
-    return query;
-  }
-
-  /**
    * Execute INSERT operation via SPARQL UPDATE
+   * 
+   * @deprecated This method is not called in SPARQL-as-LDP-enhancement mode.
+   * All write operations are routed to LdpStrategy for Solid Notifications compatibility.
+   * Kept for potential future use (e.g., pure SPARQL mode).
+   * @see LdpStrategy.executeInsert for the active implementation
    */
   async executeInsert(
     plan: InsertQueryPlan,
     _containerUrl: string,
     resourceUrl: string
   ): Promise<ExecutionResult[]> {
-    const sparqlQuery = this.sparqlConverter.convertInsert(plan, plan.table);
-    const scopedQuery = {
-        ...sparqlQuery,
-        query: this.applyGraphScope(sparqlQuery.query, plan.table)
-    };
-    return await this.executeSparqlUpdate(resourceUrl, scopedQuery);
+    const table = plan.table;
+    const targetGraph = this.resolveTargetGraph(table);
+
+    // targetGraph is now resolved for both Document Mode (base container) and Fragment Mode (base file)
+    // Safety check: ensure targetGraph is resolved
+    if (!targetGraph) {
+        throw new Error('INSERT operation in SPARQL mode requires a target graph. Ensure table.config.base is set.');
+    }
+
+    const sparqlQuery = this.sparqlConverter.convertInsert(plan, table, targetGraph);
+    return await this.executeSparqlUpdate(resourceUrl, sparqlQuery, table.config.containerPath);
   }
 
   /**
    * Execute UPDATE operation via SPARQL UPDATE
+   * 
+   * @deprecated This method is not called in SPARQL-as-LDP-enhancement mode.
+   * All write operations are routed to LdpStrategy for Solid Notifications compatibility.
+   * Kept for potential future use (e.g., pure SPARQL mode).
+   * @see LdpStrategy.executeUpdate for the active implementation
    */
   async executeUpdate(
     plan: UpdateQueryPlan,
     _containerUrl: string,
     resourceUrl: string
   ): Promise<ExecutionResult[]> {
+    const table = plan.table;
+    const targetGraph = this.resolveTargetGraph(table);
+    
+    if (!targetGraph) {
+        throw new Error('UPDATE operation in SPARQL mode requires a target graph. Ensure table.config.base is set.');
+    }
+    
     const sparqlQuery = this.sparqlConverter.convertUpdate(
       plan.data,
       plan.where,
-      plan.table
+      table,
+      targetGraph
     );
-    const scopedQuery = {
-        ...sparqlQuery,
-        query: this.applyGraphScope(sparqlQuery.query, plan.table)
-    };
-    return await this.executeSparqlUpdate(resourceUrl, scopedQuery);
+    return await this.executeSparqlUpdate(resourceUrl, sparqlQuery, table.config.containerPath);
   }
 
   /**
    * Execute DELETE operation via SPARQL UPDATE
+   * 
+   * @deprecated This method is not called in SPARQL-as-LDP-enhancement mode.
+   * All write operations are routed to LdpStrategy for Solid Notifications compatibility.
+   * Kept for potential future use (e.g., pure SPARQL mode).
+   * @see LdpStrategy.executeDelete for the active implementation
    */
   async executeDelete(
     plan: DeleteQueryPlan,
     _containerUrl: string,
     resourceUrl: string
   ): Promise<ExecutionResult[]> {
+    const table = plan.table;
+    const targetGraph = this.resolveTargetGraph(table);
+    
+    if (!targetGraph) {
+        throw new Error('DELETE operation in SPARQL mode requires a target graph. Ensure table.config.base is set.');
+    }
+    
     const sparqlQuery = this.sparqlConverter.convertDelete(
       plan.where,
-      plan.table
+      table,
+      targetGraph
     );
-    const scopedQuery = {
-        ...sparqlQuery,
-        query: this.applyGraphScope(sparqlQuery.query, plan.table)
-    };
-    return await this.executeSparqlUpdate(resourceUrl, scopedQuery);
+    return await this.executeSparqlUpdate(resourceUrl, sparqlQuery, table.config.containerPath);
   }
 
   /**
@@ -188,9 +210,13 @@ export class SparqlStrategy implements ExecutionStrategy {
    */
   private async executeSparqlUpdate(
     endpoint: string,
-    sparqlQuery: SPARQLQuery
+    sparqlQuery: SPARQLQuery,
+    containerUri?: string
   ): Promise<ExecutionResult[]> {
     const fetchFn = this.getFetchForEndpoint(endpoint);
+
+    // DEBUG: 打印生成的 SPARQL
+    console.log('[SparqlStrategy] Executing Update:', sparqlQuery.query);
 
     const response = await fetchFn(endpoint, {
       method: 'POST',
@@ -208,6 +234,14 @@ export class SparqlStrategy implements ExecutionStrategy {
         error: `${response.status} ${response.statusText}${text ? ` - ${text}` : ''}`
       }];
     }
+
+    // 更新成功后使缓存失效，避免后续查询命中旧数据
+    await this.sparqlExecutor.invalidateHttpCache(endpoint).catch(() => undefined);
+    if (containerUri) {
+      console.log('DEBUG: Invalidating container cache for:', containerUri);
+      await this.sparqlExecutor.invalidateHttpCache(containerUri).catch(() => undefined);
+    }
+    await this.sparqlExecutor.invalidateHttpCache(undefined as any).catch(() => undefined); // Invalidate all caches as a fallback
 
     return [{
       success: true,

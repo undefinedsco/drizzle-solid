@@ -1,13 +1,14 @@
-feat: Enhance data integrity and developer experience
+feat(sparql): Implement and verify SPARQL endpoint support with Graph Scoping
 
-This commit introduces several key improvements:
+- Core Logic:
+  - Implement automatic Graph Scoping in `SparqlStrategy`: DML operations are now wrapped in `GRAPH <base>` or `WITH <base>`, ensuring data persistence in Named Graphs (Resource URIs).
+  - Remove `LIMIT 1` from SPARQL ASK probe in `PodDialect` to fix CSS 500 compatibility.
+  - Relax URI validation in `UriHandler` to support URN/UUID schemes.
 
-- **Automatic ID Generation**: The `id()` helper now defaults to generating short, URL-friendly NanoID-style identifiers when no ID is explicitly provided during insertion. This reduces boilerplate and prevents duplicate ID issues.
-- **Strict Table Validation**:
-    - `PodTable` constructor now enforces that each table must define *exactly one* primary key column. This ensures clear data identity and prevents ambiguity.
-    - All non-virtual columns in a `PodTable` must now have an explicit `predicate` or the table must define a `namespace`, ensuring proper RDF mapping.
-- **Pre-flight Duplicate Check for INSERT**: `INSERT` operations now perform a lightweight `ASK` query to check for existing subjects. If a subject with the same primary key already exists, an error is thrown, aligning behavior more closely with traditional RDBMS unique constraints and preventing unintended data merging.
-- **Enhanced SELECT Result Handling**: For columns declared as single-value (not arrays), if multiple values are retrieved from the Solid Pod, `drizzle-solid` will now log a warning and return only the first encountered value, ensuring type consistency.
-- **Test Suite Robustness**: All unit and integration tests have been updated to comply with the new strict table validation rules and to ensure test data uniqueness, particularly for the SAI integration test, guaranteeing a stable and reliable codebase.
+- Examples & Docs:
+  - Refactor `examples/` into `01-quick-start`, `02-relational-query`, `03-zero-config-discovery`.
+  - Update `README.md` and `examples/README.md`.
 
-These changes collectively make `drizzle-solid` more robust, predictable, and easier to use by enforcing clearer data modeling rules and preventing common pitfalls in Solid data management.
+- Integration Tests:
+  - Add `tests/integration/css/examples-verification.test.ts` to ensure all examples run correctly in CI.
+  - Add `tests/integration/css/sparql-endpoint.test.ts`: Verifies that SPARQL SELECT/INSERT/UPDATE work correctly with CSS `/-/sparql` endpoint (with known DELETE limitation logged).

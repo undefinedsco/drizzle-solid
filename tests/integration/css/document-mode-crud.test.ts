@@ -74,6 +74,18 @@ describe('CSS integration: Document Mode CRUD', () => {
     await db.insert(usersTable).values(alice);
 
     // Verify by SELECT
+    const containerUrl = `${session.info.webId!.split('profile')[0]}${usersPath}`.replace(/([^:]\/)\/+/g, '$1');
+    const containerTurtle = await session.fetch(containerUrl, {
+      method: 'GET',
+      headers: { Accept: 'text/turtle' }
+    }).then((res) => res.text()).catch(() => '');
+    const aliceUrl = `${containerUrl}alice-${timestamp}.ttl`;
+    const aliceTurtle = await session.fetch(aliceUrl, {
+      method: 'GET',
+      headers: { Accept: 'text/turtle' }
+    }).then((res) => res.text()).catch(() => '');
+    console.log('DEBUG container url:', containerUrl, 'turtle:', containerTurtle, 'alice:', aliceTurtle);
+
     const users = await db.select().from(usersTable);
     const found = users.find(u => u.name === 'Alice');
 

@@ -37,6 +37,7 @@ pids
 *.seed
 *.pid.lock
 .jest-solid-server-state.json
+.solid-server/
 
 # Coverage directory used by tools like istanbul
 coverage/

@@ -5,6 +5,16 @@ import { getPredicateForColumn, formatValue, generateSubjectUri } from '../helpe
 import { QueryCondition } from '../../query-conditions';
 import { tripleBuilder } from '../../triple/builder';
 
+// Helper to extract the base document URI from a resource URI
+// e.g., 'http://example.com/pod/data/alice.ttl#me' -> 'http://example.com/pod/data/alice.ttl'
+function getDocumentUriFromSubjectUri(subjectUri: string): string {
+  const hashIndex = subjectUri.indexOf('#');
+  if (hashIndex !== -1) {
+    return subjectUri.substring(0, hashIndex);
+  }
+  return subjectUri;
+}
+
 export class UpdateBuilder {
   private generator: any;
   private prefixes: Record<string, string>;
@@ -14,7 +24,7 @@ export class UpdateBuilder {
     this.prefixes = prefixes;
   }
 
-  convertInsert(valuesOrPlan: any[] | { table: PodTable; rows: any[] }, table?: PodTable): SPARQLQuery {
+  convertInsert(valuesOrPlan: any[] | { table: PodTable; rows: any[] }, table?: PodTable, targetGraph?: string): SPARQLQuery {
     if (!table && !valuesOrPlan) {
       throw new Error('INSERT operation requires a target table');
     }
@@ -48,16 +58,71 @@ export class UpdateBuilder {
       throw new Error(`Duplicate IDs found in insert data: ${duplicateIds.join(', ')}`);
     }
     
+    const allTriples = this.buildInsertTriples(rows, targetTable);
+    const updates: any[] = [];
+
+    if (targetGraph) {
+      // targetGraph is provided:
+      // - Fragment Mode: base file (e.g., /data/tags.ttl)
+      // - Document Mode: base container (e.g., /data/users/)
+      // All triples go into this graph.
+      const insertBlock: any = { type: 'bgp', triples: allTriples };
+      updates.push({
+        updateType: 'insert',
+        insert: [{
+          type: 'graph',
+          name: { termType: 'NamedNode', value: targetGraph },
+          patterns: [insertBlock]
+        }]
+      });
+    } else {
+      // Fallback: If no targetGraph, group triples by their document URI.
+      // Each document gets its own GRAPH block.
+      const triplesByDocumentUri: Record<string, any[]> = {};
+      for (const triple of allTriples) {
+        if (triple.subject && triple.subject.termType === 'NamedNode') {
+          const docUri = getDocumentUriFromSubjectUri(triple.subject.value);
+          if (!triplesByDocumentUri[docUri]) {
+            triplesByDocumentUri[docUri] = [];
+          }
+          triplesByDocumentUri[docUri].push(triple);
+        } else {
+          // Fallback for triples without a clear NamedNode subject (e.g. blank nodes not linked yet)
+          // Put them in a default bucket.
+          if (!triplesByDocumentUri['__default__']) {
+            triplesByDocumentUri['__default__'] = [];
+          }
+          triplesByDocumentUri['__default__'].push(triple);
+        }
+      }
+
+      for (const docUri in triplesByDocumentUri) {
+        const triplesForDoc = triplesByDocumentUri[docUri];
+        const insertBlock: any = { type: 'bgp', triples: triplesForDoc };
+
+        if (docUri === '__default__') {
+           updates.push({ updateType: 'insert', insert: [insertBlock] });
+        } else {
+          updates.push({
+            updateType: 'insert',
+            insert: [{
+              type: 'graph',
+              name: { termType: 'NamedNode', value: docUri },
+              patterns: [insertBlock]
+            }]
+          });
+        }
+      }
+    }
+
+    if (updates.length === 0) {
+      throw new Error('No valid insert statements generated');
+    }
+
     const insertQuery: any = {
       type: 'update',
       prefixes: this.prefixes,
-      updates: [{
-        updateType: 'insert',
-        insert: [{
-          type: 'bgp',
-          triples: this.buildInsertTriples(rows, targetTable)
-        }]
-      }]
+      updates
     };
 
     return {
@@ -137,7 +202,7 @@ export class UpdateBuilder {
     return triples;
   }
 
-  convertUpdate(setData: any, whereConditions: any, table: PodTable): SPARQLQuery {
+  convertUpdate(setData: any, whereConditions: any, table: PodTable, targetGraph?: string): SPARQLQuery {
     const targetRecords = this.extractSubjectRecords(whereConditions);
     if (targetRecords.length === 0) {
       throw new Error('UPDATE operation requires an id or @id condition to target a specific resource');
@@ -147,9 +212,31 @@ export class UpdateBuilder {
 
     for (const record of targetRecords) {
       const resourceUri = generateSubjectUri(record, table);
-      const updateBlock = this.buildUpdateBlockForRecord(resourceUri, setData, table);
-      if (updateBlock) {
-        updates.push(updateBlock);
+      const docGraph = targetGraph || getDocumentUriFromSubjectUri(resourceUri);
+      const graphTerm = { termType: 'NamedNode', value: docGraph };
+
+      const { deleteTriples, insertTriples, whereTriples } = this.buildUpdatePartsForRecord(resourceUri, setData, table);
+
+      const deleteBgp = { type: 'bgp', triples: deleteTriples };
+      const whereBgp = { type: 'bgp', triples: whereTriples.length > 0 ? whereTriples : deleteTriples };
+
+      // DELETE FROM GRAPH
+      if (deleteTriples.length > 0) {
+        updates.push({
+          updateType: 'insertdelete',
+          delete: [{ type: 'graph', name: graphTerm, patterns: [deleteBgp] }],
+          insert: [],
+          where: [{ type: 'graph', name: graphTerm, patterns: [whereBgp] }]
+        });
+      }
+
+      // INSERT INTO GRAPH
+      if (insertTriples.length > 0) {
+        const insertBlock: any = { type: 'bgp', triples: insertTriples };
+        updates.push({
+          updateType: 'insert',
+          insert: [{ type: 'graph', name: graphTerm, patterns: [insertBlock] }]
+        });
       }
     }
 
@@ -170,45 +257,74 @@ export class UpdateBuilder {
     };
   }
 
-  convertDelete(whereConditions: any, table: PodTable): SPARQLQuery {
+  convertDelete(whereConditions: any, table: PodTable, targetGraph?: string): SPARQLQuery {
     const updates: any[] = [];
+    let deletePatterns: any[] = [];
+    let wherePatterns: any[] = [];
 
-    if (!whereConditions) {
-      updates.push({
-        updateType: 'deletewhere',
-        delete: [{
-          type: 'bgp',
-          triples: [{
-            subject: { termType: 'Variable', value: 'subject' },
-            predicate: { termType: 'NamedNode', value: 'http://www.w3.org/1999/02/22-rdf-syntax-ns#type' },
-            object: { termType: 'NamedNode', value: table.config.type }
-          }, {
-            subject: { termType: 'Variable', value: 'subject' },
-            predicate: { termType: 'Variable', value: 'p' },
-            object: { termType: 'Variable', value: 'o' }
-          }]
-        }]
-      });
-    } else {
-      const targetRecords = this.extractSubjectRecords(whereConditions);
-      if (targetRecords.length === 0) {
-        throw new Error('DELETE operation requires an id or @id condition to target a specific resource');
+    const targetRecords = this.extractSubjectRecords(whereConditions);
+    if (targetRecords.length === 0) {
+      // If no specific records targeted by whereConditions,
+      // and targetGraph is provided (Fragment Mode), delete all of table.config.type in that graph.
+      if (targetGraph) {
+        const graphTerm = { termType: 'NamedNode', value: targetGraph };
+        deletePatterns.push({
+          subject: { termType: 'Variable', value: 's' },
+          predicate: { termType: 'Variable', value: 'p' },
+          object: { termType: 'Variable', value: 'o' }
+        });
+        wherePatterns.push({
+          subject: { termType: 'Variable', value: 's' },
+          predicate: { termType: 'NamedNode', value: 'http://www.w3.org/1999/02/22-rdf-syntax-ns#type' },
+          object: { termType: 'NamedNode', value: table.config.type }
+        });
+        const updateOp: any = {
+            updateType: 'insertdelete',
+            delete: [{ type: 'graph', name: graphTerm, patterns: [{ type: 'bgp', triples: deletePatterns }] }],
+            insert: [],
+            where: [{ type: 'graph', name: graphTerm, patterns: [{ type: 'bgp', triples: wherePatterns }] }]
+        };
+        updates.push(updateOp);
+
+      } else {
+          // If no target records AND no targetGraph (Document Mode, or generic delete),
+          // this is an ambiguous operation for Document Mode. Throw an error.
+          throw new Error('DELETE operation in Document Mode requires specific resource IDs or an explicit target graph.');
       }
-
+    } else {
       for (const record of targetRecords) {
         const resourceUri = generateSubjectUri(record, table);
-        updates.push({
-          updateType: 'deletewhere',
-          delete: [{
-            type: 'bgp',
-            triples: [{
-              subject: { termType: 'NamedNode', value: resourceUri },
-              predicate: { termType: 'Variable', value: 'p' },
-              object: { termType: 'Variable', value: 'o' }
-            }]
-          }]
-        });
+        const docGraph = targetGraph || getDocumentUriFromSubjectUri(resourceUri);
+        const graphTerm = { termType: 'NamedNode', value: docGraph };
+
+        // DELETE { GRAPH <resourceUri> { <resourceUri> ?p ?o } }
+        const delPats = [{
+          subject: { termType: 'NamedNode', value: resourceUri },
+          predicate: { termType: 'Variable', value: 'p' },
+          object: { termType: 'Variable', value: 'o' }
+        }];
+        // WHERE { GRAPH <resourceUri> { <resourceUri> ?p ?o } }
+        const wherePats = [{
+          subject: { termType: 'NamedNode', value: resourceUri },
+          predicate: { termType: 'Variable', value: 'p' },
+          object: { termType: 'Variable', value: 'o' }
+        }];
+
+        const deleteBlock: any = { type: 'bgp', triples: delPats };
+        const whereBlock: any = { type: 'bgp', triples: wherePats };
+
+        const updateOp: any = {
+            updateType: 'insertdelete',
+            delete: [{ type: 'graph', name: graphTerm, patterns: [deleteBlock] }],
+            insert: [],
+            where: [{ type: 'graph', name: graphTerm, patterns: [whereBlock] }]
+        };
+        updates.push(updateOp);
       }
+    }
+
+    if (updates.length === 0) {
+      throw new Error('No valid delete statements generated');
     }
 
     const deleteQuery: any = {
@@ -224,10 +340,14 @@ export class UpdateBuilder {
     };
   }
 
-  private buildUpdateBlockForRecord(resourceUri: string, setData: Record<string, any>, table: PodTable): any | null {
+  private buildUpdatePartsForRecord(resourceUri: string, setData: Record<string, any>, table: PodTable): {
+    deleteTriples: any[];
+    insertTriples: any[];
+    whereTriples: any[];
+  } {
     const deleteTriples: any[] = [];
     const insertTriples: any[] = [];
-    const wherePatterns: any[] = [];
+    const whereTriples: any[] = [];
 
     Object.entries(setData).forEach(([columnName, value], index) => {
       const column = table.columns[columnName];
@@ -245,27 +365,14 @@ export class UpdateBuilder {
       const varTerm = { termType: 'Variable', value: variableName };
 
       if (isInline) {
-        deleteTriples.push({ subject: subjectTerm, predicate: predicateTerm, object: varTerm });
-        deleteTriples.push({
-          subject: varTerm,
-          predicate: { termType: 'Variable', value: `p_${variableName}` },
-          object: { termType: 'Variable', value: `o_${variableName}` }
-        });
-        
-        wherePatterns.push({
-          type: 'optional',
-          patterns: [{
-            type: 'bgp',
-            triples: [
-              { subject: subjectTerm, predicate: predicateTerm, object: varTerm },
-              {
-                subject: varTerm,
-                predicate: { termType: 'Variable', value: `p_${variableName}` },
-                object: { termType: 'Variable', value: `o_${variableName}` }
-              }
-            ]
-          }]
-        });
+        const childVarPredicate = { termType: 'Variable', value: `p_${variableName}` };
+        const childVarObject = { termType: 'Variable', value: `o_${variableName}` };
+
+        const linkTriple = { subject: subjectTerm, predicate: predicateTerm, object: varTerm };
+        const childTriple = { subject: varTerm, predicate: childVarPredicate, object: childVarObject };
+
+        deleteTriples.push(linkTriple, childTriple);
+        whereTriples.push(linkTriple, childTriple);
 
         if (value !== null && value !== undefined) {
           const result = tripleBuilder.buildInsert(resourceUri, column, value, table);
@@ -275,45 +382,32 @@ export class UpdateBuilder {
       }
       
       if (column.options?.inverse) {
-         deleteTriples.push({ subject: varTerm, predicate: predicateTerm, object: subjectTerm });
-         wherePatterns.push({
-           type: 'optional',
-           patterns: [{ type: 'bgp', triples: [{ subject: varTerm, predicate: predicateTerm, object: subjectTerm }] }]
-         });
+        const inverseTriple = { subject: varTerm, predicate: predicateTerm, object: subjectTerm };
+        deleteTriples.push(inverseTriple);
+        whereTriples.push(inverseTriple);
 
-         if (value !== null && value !== undefined) {
-            const valStr = String(value).replace(/^<|>$/g, '');
-            insertTriples.push({
-              subject: { termType: 'NamedNode', value: valStr },
-              predicate: predicateTerm,
-              object: subjectTerm
-            });
-         }
+        if (value !== null && value !== undefined) {
+          const valStr = String(value).replace(/^<|>$/g, '');
+          insertTriples.push({
+            subject: { termType: 'NamedNode', value: valStr },
+            predicate: predicateTerm,
+            object: subjectTerm
+          });
+        }
       } else {
-         deleteTriples.push({ subject: subjectTerm, predicate: predicateTerm, object: varTerm });
-         wherePatterns.push({
-           type: 'optional',
-           patterns: [{ type: 'bgp', triples: [{ subject: subjectTerm, predicate: predicateTerm, object: varTerm }] }]
-         });
+        const deleteTriple = { subject: subjectTerm, predicate: predicateTerm, object: varTerm };
+        deleteTriples.push(deleteTriple);
+        whereTriples.push(deleteTriple);
 
-         if (value !== null && value !== undefined) {
-            const formatted = formatValue(value, column);
-            const objectTerm = this.parseTermString(formatted as string);
-            insertTriples.push({ subject: subjectTerm, predicate: predicateTerm, object: objectTerm });
-         }
+        if (value !== null && value !== undefined) {
+          const formatted = formatValue(value, column);
+          const objectTerm = this.parseTermString(formatted as string);
+          insertTriples.push({ subject: subjectTerm, predicate: predicateTerm, object: objectTerm });
+        }
       }
     });
 
-    if (deleteTriples.length === 0 && insertTriples.length === 0) return null;
-
-    // Use 'insertdelete' as the updateType key. 
-    // Note: sparqljs might require 'delete' and 'insert' keys to be present.
-    return {
-      updateType: 'insertdelete', 
-      delete: deleteTriples.length > 0 ? [{ type: 'bgp', triples: deleteTriples }] : [],
-      insert: insertTriples.length > 0 ? [{ type: 'bgp', triples: insertTriples }] : [],
-      where: wherePatterns
-    };
+    return { deleteTriples, insertTriples, whereTriples };
   }
 
   private toSparqlJsTriple = (triple: any): any => {

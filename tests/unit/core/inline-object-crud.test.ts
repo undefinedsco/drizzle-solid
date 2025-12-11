@@ -48,7 +48,7 @@ describe('inline object CRUD SPARQL generation', () => {
 
     expect(query.query).toContain('DELETE {');
     expect(query.query).toContain('<https://pod.example/threads.ttl#thread-1>');
-    expect(query.query).toContain('INSERT {');
+    expect(query.query).toContain('INSERT DATA {');
     expect(query.query).toContain('participants-1');
     expect(query.query).toContain('participants-2');
   });

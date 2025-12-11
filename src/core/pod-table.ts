@@ -344,14 +344,50 @@ export type InferUpdateData<TTable extends PodTable<Record<string, PodColumnBase
 // 表配置选项
 export interface PodTableOptions {
   base?: string; // 资源基础路径，支持绝对或相对
-  /** 可选：完整 SPARQL 1.1 端点 URL；提供时 CRUD 走 SPARQL 模式 */
+  /**
+   * Optional SPARQL 1.1 endpoint URL for SELECT query optimization.
+   * 
+   * Can be specified as:
+   * - Relative path from Pod root: `/data/users/-/sparql`
+   * - Full absolute URI: `https://pod.example.com/alice/data/users/-/sparql`
+   * 
+   * **Important**: This only affects SELECT queries. INSERT/UPDATE/DELETE 
+   * operations always use LDP protocol (PUT/PATCH) for:
+   * - Solid Notifications compatibility (SPARQL UPDATE doesn't trigger notifications)
+   * - ACL permission enforcement through CSS Handler chain
+   * 
+   * @example
+   * // Relative path (resolved against Pod URL at runtime)
+   * podTable('users', columns, {
+   *   base: '/data/users/',
+   *   sparqlEndpoint: '/data/users/-/sparql'
+   * })
+   * 
+   * @example
+   * // Full absolute URI
+   * podTable('users', columns, {
+   *   base: '/data/users/',
+   *   sparqlEndpoint: 'https://pod.example.com/alice/data/users/-/sparql'
+   * })
+   */
   sparqlEndpoint?: string;
   type: RdfTermInput;
   namespace?: NamespaceConfig;
   typeIndex?: 'private' | 'public';
   subClassOf?: RdfTermInput | RdfTermInput[];
   subjectTemplate?: string;
-  graph?: string;
+  /**
+   * Execution strategy mode (reserved for future use).
+   * 
+   * Currently not used - strategy is determined by `sparqlEndpoint`:
+   * - SELECT: uses SPARQL if `sparqlEndpoint` is configured, otherwise LDP
+   * - INSERT/UPDATE/DELETE: always uses LDP for Solid Notifications compatibility
+   * 
+   * Note: This is different from physical storage mode (fragment vs document),
+   * which is inferred from `subjectTemplate` by `subjectResolver.getResourceMode()`.
+   * 
+   * @future May be used for batch update optimization via SPARQL UPDATE
+   */
   resourceMode?: 'ldp' | 'sparql';
   autoRegister?: boolean;
   containerPath?: string;
@@ -371,7 +407,6 @@ export interface PodTableMapping {
   name: string;
   type: string;
   subjectTemplate: string;
-  graph?: string;
   namespace?: NamespaceConfig;
   subClassOf?: string[];
   columns: Record<string, PodColumnMapping>;
@@ -633,7 +668,6 @@ export class PodTable<TColumns extends Record<string, PodColumnBase<any, any, an
     typeIndex?: 'private' | 'public';
     subClassOf?: string[];
     subjectTemplate: string;
-    graph?: string;
     containerPath?: string;
     resourcePath?: string;
     autoRegister?: boolean;
@@ -705,7 +739,6 @@ export class PodTable<TColumns extends Record<string, PodColumnBase<any, any, an
       namespace: options.namespace,
       typeIndex: validTypeIndex ? typeIndexOption : undefined,
       subjectTemplate: this.subjectTemplate,
-      graph: options.graph,
       autoRegister: options.autoRegister,
       containerPath: baseConfig.containerPath
     };
@@ -1004,7 +1037,6 @@ export class PodTable<TColumns extends Record<string, PodColumnBase<any, any, an
       name: this.config.name,
       type: this.config.type,
       subjectTemplate: this.subjectTemplate,
-      graph: this.config.graph,
       namespace: this.config.namespace,
       subClassOf: this.parentClasses.length > 0 ? [...this.parentClasses] : undefined,
       columns: mappedColumns,

@@ -173,7 +173,7 @@ describe('Solid Chat App Integration (Alice & Bob)', () => {
     
     // 创建/更新 RegistrySet (Alice)
     await ensureContainer(aliceSession, 'registries/');
-    const setIdAlice = 'set-chat-alice-fixed';
+    const setIdAlice = `set-chat-alice-${Date.now()}`;
     await aliceDb.insert(saiAlice.registrySet).values({
         id: setIdAlice,
         hasAgentRegistry: [saiAlice.agentRegistryPath]
@@ -214,7 +214,7 @@ describe('Solid Chat App Integration (Alice & Bob)', () => {
     
     // 1. Bob RegistrySet
     await ensureContainer(bobSession, 'registries/');
-    const setIdBob = 'set-chat-bob-fixed';
+    const setIdBob = `set-chat-bob-${Date.now()}`;
     
     // 清理旧数据
     try {

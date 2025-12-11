@@ -9,8 +9,8 @@ let sharedSessionPromise: Promise<Session> | null = null;
 
 function bootstrapEnv(): void {
   if (envBootstrapped) return;
-  loadEnv({ path: '.env.local', override: false });
-  loadEnv();
+  loadEnv({ path: '.env.local', override: true });
+  loadEnv({ override: true });
   envBootstrapped = true;
 }
 
