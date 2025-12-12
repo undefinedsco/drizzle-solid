@@ -11,9 +11,12 @@ import {
 import { PodTable, type InferTableData, PodColumnBase, type RelationDefinition } from './pod-table';
 import { QueryCondition } from './query-conditions';
 import { inArray } from './query-conditions';
+import { NotificationsClient, type SubscribeOptions, type Subscription } from './notifications';
 
 export class PodDatabase<TSchema extends Record<string, unknown> = Record<string, never>> {
   static readonly [entityKind] = 'PodDatabase';
+
+  private notificationsClient: NotificationsClient | null = null;
 
   constructor(
     public dialect: PodDialect,
@@ -86,7 +89,69 @@ export class PodDatabase<TSchema extends Record<string, unknown> = Record<string
 
   // 断开连接
   async disconnect() {
+    // 取消所有订阅
+    if (this.notificationsClient) {
+      this.notificationsClient.unsubscribeAll();
+    }
     return await this.dialect.disconnect();
+  }
+
+  /**
+   * 订阅表/资源的变化通知
+   * 
+   * @param table - 要订阅的表（会订阅其容器或资源）
+   * @param options - 订阅选项
+   * @returns 订阅句柄，可用于取消订阅
+   * 
+   * @example
+   * ```typescript
+   * const subscription = await db.subscribe(users, {
+   *   channel: 'streaming-http', // 默认，可省略
+   *   features: ['state'],
+   *   onNotification: (event) => {
+   *     console.log(event.type, event.object);
+   *     // 刷新 UI 或 TanStack Query 缓存
+   *   }
+   * });
+   * 
+   * // 取消订阅
+   * subscription.unsubscribe();
+   * ```
+   */
+  async subscribe<TTable extends PodTable<any>>(
+    table: TTable,
+    options: SubscribeOptions
+  ): Promise<Subscription> {
+    // 懒初始化 NotificationsClient
+    if (!this.notificationsClient) {
+      const authenticatedFetch = this.dialect.getAuthenticatedFetch();
+      this.notificationsClient = new NotificationsClient(authenticatedFetch);
+    }
+
+    // 获取表的资源 URL（容器或文件）
+    const topic = this.resolveTableTopic(table);
+
+    return this.notificationsClient.subscribe(topic, options);
+  }
+
+  /**
+   * 解析表对应的订阅主题 URL
+   */
+  private resolveTableTopic<TTable extends PodTable<any>>(table: TTable): string {
+    const config = this.dialect.getConfig();
+    const podUrl = config.webId
+      ? new URL(config.webId).origin
+      : config.podUrl;
+    
+    const base = table.config.base || '';
+    
+    // 如果 base 已经是绝对 URL，直接使用
+    if (base.startsWith('http://') || base.startsWith('https://')) {
+      return base;
+    }
+    
+    // 否则拼接到 podUrl
+    return `${podUrl}${base.startsWith('/') ? '' : '/'}${base}`;
   }
 
   // 获取连接配置

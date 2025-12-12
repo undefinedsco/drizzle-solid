@@ -85,7 +85,6 @@ export class LdpStrategy implements ExecutionStrategy {
       conditionTree as QueryCondition | undefined,
       () => this.listContainerResources(containerUrl)
     );
-    console.log('[LdpStrategy] SELECT sources:', sources);
 
     // Convert plan to SPARQL - check for simple select options or SQL
     let sparqlQuery;
@@ -112,7 +111,6 @@ export class LdpStrategy implements ExecutionStrategy {
       // Use convertSelectPlan for full plans
       sparqlQuery = this.sparqlConverter.convertSelectPlan(plan, undefined, undefined, false);
     }
-    console.log('[LdpStrategy] SPARQL query:', sparqlQuery.query);
 
     // Execute on each source and collect results
     const allResults: any[] = [];

@@ -175,6 +175,7 @@ export class PodDialect {
   ): Promise<string[]> {
     const plan = this.buildSubjectLookupPlan(table, condition);
     const sparqlQuery = this.sparqlConverter.convertSelectPlan(plan);
+    
     const normalizedUrl = this.normalizeResourceUrl(resourceUrl);
     const rows = await this.executeOnResource(normalizedUrl, sparqlQuery);
 
@@ -726,8 +727,6 @@ export class PodDialect {
       (typeof (table as any).getResourcePath === 'function' && (table as any).getResourcePath()) ||
       (table as any).config?.resourcePath;
 
-    console.log(`[PodDialect] ensureTableResourcePath check: table=${table.config.name}, resourcePath=${configuredResourcePath}, typeIndex=${table.config.typeIndex}`);
-
     if (configuredResourcePath && configuredResourcePath.trim().length > 0) {
       // 已经有 resourcePath，无需 TypeIndex 检查，直接使用配置
       return;
@@ -919,6 +918,7 @@ export class PodDialect {
       }
 
       // Pre-flight check for duplicates (Strategy: INSERT means NEW)
+      // 如果资源不存在（404），清除缓存以避免后续查询被缓存的 404 影响
       for (const row of values) {
         try {
           const subject = this.sparqlConverter.generateSubjectUri(row, operation.table);
@@ -929,7 +929,8 @@ export class PodDialect {
           }
         } catch (e: any) {
           if (e.message && e.message.includes('Duplicate primary key')) throw e;
-          console.warn('[INSERT] Duplicate check warning:', e);
+          // 资源可能不存在，清除缓存以避免影响后续 INSERT 和 SELECT
+          await this.sparqlExecutor.invalidateHttpCache(resourceUrl);
         }
       }
     }
@@ -1005,7 +1006,6 @@ export class PodDialect {
     }
 
     const results = await strategy.executeUpdate(updatePlan, containerUrl, resourceUrl);
-    console.log(`UPDATE operation completed, ${results.length} records affected`);
     return results;
   }
 
@@ -1263,6 +1263,14 @@ export class PodDialect {
     };
   }
 
+  /**
+   * 获取认证的 fetch 函数
+   * 用于需要认证访问的操作（如 Notifications）
+   */
+  getAuthenticatedFetch(): typeof fetch {
+    return this.session.fetch;
+  }
+
   // 获取 SPARQL 转换器（用于调试）
   getSPARQLConverter(): ASTToSPARQLConverter {
     return this.sparqlConverter;
@@ -1404,12 +1412,13 @@ export class PodDialect {
 
         try {
           await this.ensureResourceExists(descriptor.resourceUrl, { createIfMissing: true });
+          this.markResourcePrepared(descriptor.resourceUrl);
         } catch (error: unknown) {
           console.warn(`[registerTable] ensureResourceExists failed for ${descriptor.resourceUrl}:`, error);
+          // 不标记为已准备，让后续 INSERT 有机会重试创建
         }
 
         this.markContainerPrepared(descriptor.containerUrl);
-        this.markResourcePrepared(descriptor.resourceUrl);
         // 将表的 base 固定为已解析的绝对资源路径，避免后续重复 TypeIndex 解析
         try {
           table.setBase?.(descriptor.resourceUrl);

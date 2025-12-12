@@ -221,3 +221,14 @@ export {
   type ConflictResolutionConfig,
   type ConflictResolutionResult
 } from './core/conflict-resolution';
+
+// Solid Notifications (实时订阅)
+export {
+  NotificationsClient,
+  type NotificationEvent,
+  type NotificationType,
+  type ChannelType,
+  type SubscribeOptions,
+  type Subscription,
+  type SubscriptionFeature
+} from './core/notifications';

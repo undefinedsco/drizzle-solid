@@ -71,7 +71,6 @@ export class LdpExecutor {
 
         // 从 subject URI 提取资源 URL (去掉 fragment 如果有)
         const docResourceUrl = subjectResolver.getResourceUrl(subject);
-        console.log(`[LdpExecutor] Document mode INSERT: subject=${subject}, resourceUrl=${docResourceUrl}`);
 
         // 收集该记录的三元组
         const recordTriples: string[] = [];
@@ -113,48 +112,54 @@ export class LdpExecutor {
     }
 
     // Fragment Mode: 所有记录写入同一个文件
-    const exists = await this.resourceExists(resourceUrl);
-    if (exists) {
-      return this.executeN3Patch(resourceUrl, [], insertTriples, []);
-    }
-
-    // 资源不存在时，使用 PUT 创建
-    const body = insertTriples.join('\n');
+    // 使用 SPARQL UPDATE (INSERT DATA) 进行插入
+    const sparql = `INSERT DATA {\n${insertTriples.join('\n')}\n}`;
+    
     let response = await this.fetchFn(resourceUrl, {
-      method: 'PUT',
-      headers: { 'Content-Type': 'text/turtle' },
-      body
+      method: 'PATCH',
+      headers: { 'Content-Type': 'application/sparql-update' },
+      body: sparql
     });
 
-    if (![200, 201, 202, 204, 205].includes(response.status)) {
-      // 尝试使用 SPARQL UPDATE (INSERT DATA) 作为降级
-      const sparql = `INSERT DATA {\n${insertTriples.join('\n')}\n}`;
-      try {
-        const patchRes = await this.fetchFn(resourceUrl, {
-          method: 'PATCH',
-          headers: { 'Content-Type': 'application/sparql-update' },
-          body: sparql
+    // 如果返回 201（创建）但实际可能没创建资源，验证一下
+    // 如果资源不存在 (404) 或创建后仍不可访问，先 PUT 创建再重试
+    if (response.status === 404 || response.status === 201) {
+      // 验证资源是否真的存在
+      const checkRes = await this.fetchFn(resourceUrl, { method: 'HEAD' });
+      if (!checkRes.ok && checkRes.status !== 405) {
+        // 资源不存在，先创建
+        const createRes = await this.fetchFn(resourceUrl, {
+          method: 'PUT',
+          headers: { 'Content-Type': 'text/turtle' },
+          body: ''
         });
-        if (patchRes.ok) {
-          await this.sparqlExecutor.invalidateHttpCache(resourceUrl);
-          return [{ success: true, source: resourceUrl, status: patchRes.status, via: 'sparql-update' }];
+        if (createRes.ok || createRes.status === 409 || createRes.status === 201) {
+          // 重试 SPARQL UPDATE
+          response = await this.fetchFn(resourceUrl, {
+            method: 'PATCH',
+            headers: { 'Content-Type': 'application/sparql-update' },
+            body: sparql
+          });
         }
-        response = patchRes;
-      } catch (fallbackError) {
-        const text = await response.text().catch(() => '');
-        const err: any = new Error(`PUT failed: ${response.status} ${response.statusText}${text ? ` - ${text}` : ''} (fallback error: ${String(fallbackError)})`);
-        err.status = response?.status;
-        throw err;
       }
+    }
 
+    if (!response.ok) {
       const text = await response.text().catch(() => '');
-      const err: any = new Error(`PUT failed: ${response.status} ${response.statusText}${text ? ` - ${text}` : ''}`);
+      const err: any = new Error(`SPARQL UPDATE INSERT failed: ${response.status} ${response.statusText}${text ? ` - ${text}` : ''}`);
       err.status = response.status;
       throw err;
     }
 
+    // 清理缓存：资源本身和容器
     await this.sparqlExecutor.invalidateHttpCache(resourceUrl);
-    return [{ success: true, source: resourceUrl, status: response.status, via: 'put' }];
+    const lastSlash = resourceUrl.lastIndexOf('/');
+    if (lastSlash > 0) {
+      const containerUrl = resourceUrl.slice(0, lastSlash + 1);
+      await this.sparqlExecutor.invalidateHttpCache(containerUrl);
+    }
+    
+    return [{ success: true, source: resourceUrl, status: response.status, via: 'sparql-update' }];
   }
 
   /**
@@ -375,6 +380,13 @@ export class LdpExecutor {
     return { deleteTriples, insertTriples };
   }
 
+  /**
+   * 执行更新操作
+   * 
+   * 优先尝试 SPARQL UPDATE (application/sparql-update)，
+   * xpod 内部使用 SPARQL，标准 CSS 也支持。
+   * 如果失败，回退到 N3 Patch。
+   */
   private async executeN3Patch(
     resourceUrl: string,
     deleteTriples: string[],
@@ -385,27 +397,89 @@ export class LdpExecutor {
       return [];
     }
 
-    // Skip SPARQL Update for now as it causes transaction issues in CSS
-    // const sparqlUpdate = this.buildDataUpdate(deleteTriples, insertTriples);
-    // if (sparqlUpdate) {
-    //   const ok = await this.trySparqlPatch(resourceUrl, sparqlUpdate);
-    //   if (ok) {
-    //     await this.sparqlExecutor.invalidateHttpCache(resourceUrl);
-    //     return [{ success: true, source: resourceUrl, status: 205, via: 'sparql-update' }];
-    //   }
-    // }
+    this.n3PatchCounter++;
+    
+    // 构建 SPARQL UPDATE 查询
+    const sparqlUpdate = this.buildSparqlUpdate(deleteTriples, insertTriples);
+    
+    let response;
+    let lastError;
 
-    // Use PUT fallback (Read-Modify-Write) for consistency
-    const putOk = await this.applyByPut(resourceUrl, deleteTriples, insertTriples);
-    if (putOk) {
-      await this.sparqlExecutor.invalidateHttpCache(resourceUrl);
-      return [{ success: true, source: resourceUrl, status: 200, via: 'put-rewrite' }];
+    // 首先尝试 SPARQL UPDATE
+    for (let i = 0; i < 3; i++) {
+      try {
+        response = await this.fetchFn(resourceUrl, {
+          method: 'PATCH',
+          headers: {
+            'Content-Type': 'application/sparql-update'
+          },
+          body: sparqlUpdate
+        });
+
+        if (response.ok) {
+          await this.sparqlExecutor.invalidateHttpCache(resourceUrl);
+          return [{ success: true, source: resourceUrl, status: response.status, via: 'sparql-update' }];
+        }
+        
+        // 如果 SPARQL UPDATE 不被支持 (415/405)，尝试 N3 Patch
+        // 如果 SPARQL UPDATE 不被支持 (415/405)，尝试 N3 Patch
+        if (response.status === 415 || response.status === 405) {
+          return await this.executeN3PatchInternal(resourceUrl, deleteTriples, insertTriples, wherePatterns);
+        }
+        
+        // 服务器错误，重试
+        if (response.status >= 500 || response.status === 409) {
+          await new Promise(r => setTimeout(r, 1000 * (i + 1)));
+          continue;
+        }
+        break;
+      } catch (e) {
+        lastError = e;
+        if (i < 2) await new Promise(r => setTimeout(r, 1000 * (i + 1)));
+      }
     }
 
-    // Fallback to N3 Patch if PUT logic fails (should unlikely happen if resource is accessible)
-    this.n3PatchCounter++;
-    const patch = this.tripleBuilder.buildN3Patch(deleteTriples, insertTriples, wherePatterns);
+    if (!response || !response.ok) {
+      const text = response ? await response.text().catch(() => '') : '';
+      const status = response ? response.status : 'Network Error';
+      const statusText = response ? response.statusText : (lastError instanceof Error ? (lastError as Error).message : String(lastError));
+      const error: any = new Error(`SPARQL UPDATE failed: ${status} ${statusText}${text ? ` - ${text}` : ''}`);
+      error.status = status;
+      throw error;
+    }
+
+    await this.sparqlExecutor.invalidateHttpCache(resourceUrl);
+    return [{ success: true, source: resourceUrl, status: response.status, via: 'sparql-update' }];
+  }
+
+  /**
+   * 构建 SPARQL UPDATE 查询
+   */
+  private buildSparqlUpdate(deleteTriples: string[], insertTriples: string[]): string {
+    const parts: string[] = [];
     
+    if (deleteTriples.length > 0) {
+      parts.push(`DELETE DATA {\n${deleteTriples.join('\n')}\n}`);
+    }
+    
+    if (insertTriples.length > 0) {
+      parts.push(`INSERT DATA {\n${insertTriples.join('\n')}\n}`);
+    }
+    
+    // 如果同时有删除和插入，用分号连接（CSS 支持多条语句）
+    return parts.join(';\n');
+  }
+
+  /**
+   * 内部 N3 Patch 实现（作为 SPARQL UPDATE 的回退）
+   */
+  private async executeN3PatchInternal(
+    resourceUrl: string,
+    deleteTriples: string[],
+    insertTriples: string[],
+    wherePatterns: string[] = []
+  ): Promise<any[]> {
+    const patch = this.tripleBuilder.buildN3Patch(deleteTriples, insertTriples, wherePatterns);
     let response;
     let lastError;
 
@@ -420,7 +494,6 @@ export class LdpExecutor {
         });
 
         if (response.status === 404) {
-          // 创建资源后重试
           const createRes = await this.fetchFn(resourceUrl, {
             method: 'PUT',
             headers: { 'Content-Type': 'text/turtle' },
@@ -439,13 +512,13 @@ export class LdpExecutor {
         if (response.ok) break;
         
         if (response.status >= 500 || response.status === 409) {
-          await new Promise(r => setTimeout(r, 1000));
+          await new Promise(r => setTimeout(r, 1000 * (i + 1)));
           continue;
         }
         break;
       } catch (e) {
         lastError = e;
-        if (i < 2) await new Promise(r => setTimeout(r, 1000));
+        if (i < 2) await new Promise(r => setTimeout(r, 1000 * (i + 1)));
       }
     }
 
@@ -459,25 +532,13 @@ export class LdpExecutor {
     }
 
     await this.sparqlExecutor.invalidateHttpCache(resourceUrl);
-
     return [{ success: true, source: resourceUrl, status: response.status, via: 'n3' }];
   }
 
-  private buildDataUpdate(deleteTriples: string[], insertTriples: string[]): string | null {
-    const normalize = (t: string): string =>
-      t.trim().endsWith('.') ? t.trim() : `${t.trim()} .`;
-
-    const deletes = deleteTriples.length > 0
-      ? `DELETE DATA {\n${deleteTriples.map(normalize).join('\n')}\n};\n`
-      : '';
-    const inserts = insertTriples.length > 0
-      ? `INSERT DATA {\n${insertTriples.map(normalize).join('\n')}\n};`
-      : '';
-
-    const payload = `${deletes}${inserts}`.trim();
-    return payload.length === 0 ? null : payload;
-  }
-
+  /**
+   * 尝试使用 SPARQL UPDATE 进行 Patch
+   * 保留此方法供将来 SPARQL endpoint 增强使用
+   */
   private async trySparqlPatch(resourceUrl: string, sparql: string): Promise<boolean> {
     try {
       const response = await this.fetchFn(resourceUrl, {
@@ -485,48 +546,6 @@ export class LdpExecutor {
         headers: { 'Content-Type': 'application/sparql-update' },
         body: sparql
       });
-      return response.ok;
-    } catch (error) {
-      return false;
-    }
-  }
-
-  private async applyByPut(resourceUrl: string, deleteTriples: string[], insertTriples: string[]): Promise<boolean> {
-    try {
-      // Ensure we have the latest version before reading for RMW
-      await this.sparqlExecutor.invalidateHttpCache(resourceUrl);
-
-      const bindings = await this.sparqlExecutor.queryBindings(
-        'SELECT ?s ?p ?o WHERE { ?s ?p ?o . }',
-        resourceUrl
-      );
-
-      // Simple normalization: just trim. Both deleteTriples and current are constructed with "s p o ." format.
-      const normalize = (t: string): string => t.trim();
-
-      const currentStrings = bindings
-        .map((binding) => {
-          const s = this.formatTerm(binding.get('s'));
-          const p = this.formatTerm(binding.get('p'));
-          const o = this.formatTerm(binding.get('o'));
-          if (!s || !p || !o) return null;
-          return `${s} ${p} ${o} .`;
-        })
-        .filter((v): v is string => !!v);
-        
-      const current = new Set(currentStrings);
-
-      deleteTriples.map(normalize).forEach((t) => current.delete(t));
-      insertTriples.map(normalize).forEach((t) => current.add(t));
-
-      const body = Array.from(current).join('\n');
-      
-      const response = await this.fetchFn(resourceUrl, {
-        method: 'PUT',
-        headers: { 'Content-Type': 'text/turtle' },
-        body
-      });
-
       return response.ok;
     } catch (error) {
       return false;
@@ -614,11 +633,12 @@ export class LdpExecutor {
   ): Promise<string[]> {
     const query = `SELECT ?o WHERE { <${subject}> <${predicate}> ?o . }`;
     const bindings = await this.sparqlExecutor.queryBindings(query, resourceUrl);
-    
-    // console.log(`[LdpExecutor] fetchExistingObjects: ${subject} ${predicate} -> ${bindings.length} results`);
 
     return bindings
-      .map((binding) => this.formatTerm(binding.get('o')))
+      .map((binding) => {
+        const o = binding.get('o');
+        return this.formatTerm(o);
+      })
       .filter((val): val is string => !!val);
   }
 

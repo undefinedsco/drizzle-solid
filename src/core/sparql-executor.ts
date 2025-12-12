@@ -474,10 +474,12 @@ export class ComunicaSPARQLExecutor {
   public async invalidateHttpCache(url: string): Promise<void> {
     if (this.engine) {
       await this.invalidateCache(this.engine, url);
+      // Also try clearing all cache as fallback
+      await this.invalidateCache(this.engine, undefined as any);
     }
   }
 
-  private async invalidateCache(engine: QueryEngine, source: string): Promise<void> {
+  private async invalidateCache(engine: QueryEngine, source: string | undefined): Promise<void> {
     const invalidate = (engine as unknown as { invalidateHttpCache?: (url?: string) => Promise<void> }).invalidateHttpCache;
     if (typeof invalidate === 'function') {
       try {
