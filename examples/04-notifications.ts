@@ -2,14 +2,13 @@
  * 04-notifications.ts
  *
  * 展示 Drizzle Solid 的实时通知功能：
- * 1. 订阅资源变化
- * 2. 接收实时通知
- * 3. 响应数据变更
+ * 1. 使用 db.subscribe() 订阅表变化
+ * 2. 按类型接收通知 (onCreate/onUpdate/onDelete)
+ * 3. 在回调中使用 drizzle API 查询最新数据
  */
 
 import { drizzle } from '../src/driver';
 import { podTable, string, datetime } from '../src/core/pod-table';
-import { NotificationsClient } from '../src/core/notifications';
 import { getAuthenticatedSession, getPodBaseUrl } from './utils/auth';
 import { v4 as uuid } from 'uuid';
 import { eq } from 'drizzle-orm';
@@ -34,40 +33,63 @@ async function run(providedSession?: Session) {
   });
 
   const db = drizzle(session);
-  const resourceUrl = `${podBase}data/posts.ttl`;
 
-  // 3. 创建 Notifications 客户端
-  const notifications = new NotificationsClient(session.fetch);
+  // 3. 初始化表
+  await db.init(posts);
 
-  // 4. 订阅资源变化
-  console.log(`Subscribing to: ${resourceUrl}`);
+  // 4. 订阅表变化
+  console.log(`\nSubscribing to posts table...`);
   
-  const subscription = await notifications.subscribe(resourceUrl, {
+  const subscription = await db.subscribe(posts, {
     // 可选：指定通道类型 ('streaming-http' 或 'websocket')
     // channel: 'websocket',
     
-    onNotification: (event) => {
-      console.log(`\n[Notification] ${event.type}: ${event.object}`);
-      console.log(`  Published: ${event.published}`);
-      console.log(`  Event ID: ${event.id}`);
+    onCreate: async (activity) => {
+      console.log(`\n[CREATE] ${activity.object}`);
+      console.log(`  Published: ${activity.published}`);
+      // 在回调中可以使用 drizzle API 查询最新数据
+      const latest = await db.select().from(posts);
+      console.log(`  Current posts count: ${latest.length}`);
+    },
+    
+    onUpdate: async (activity) => {
+      console.log(`\n[UPDATE] ${activity.object}`);
+      console.log(`  Published: ${activity.published}`);
+      const latest = await db.select().from(posts);
+      console.log(`  Current posts count: ${latest.length}`);
+    },
+    
+    onDelete: async (activity) => {
+      console.log(`\n[DELETE] ${activity.object}`);
+      console.log(`  Published: ${activity.published}`);
+      const latest = await db.select().from(posts);
+      console.log(`  Current posts count: ${latest.length}`);
+    },
+    
+    onAdd: (activity) => {
+      console.log(`\n[ADD] ${activity.object} -> ${activity.target}`);
+    },
+    
+    onRemove: (activity) => {
+      console.log(`\n[REMOVE] ${activity.object} <- ${activity.target}`);
     },
     
     onError: (error) => {
-      console.error('[Notification Error]', error.message);
+      console.error('[ERROR]', error.message);
     },
     
     onClose: () => {
-      console.log('[Notification] Connection closed');
+      console.log('[CLOSE] Subscription closed');
     }
   });
 
   console.log(`Subscribed via ${subscription.channel} channel`);
-  console.log('Waiting for notifications... (will auto-close in 30 seconds)\n');
+  console.log('Waiting for notifications...\n');
 
   // 5. 模拟数据变更以触发通知
   const testId = uuid();
   
-  // INSERT - 应该触发 Update 或 Create 通知
+  // INSERT - 应该触发 onCreate 或 onUpdate
   console.log('Inserting a new post...');
   await db.insert(posts).values({
     id: testId,
@@ -79,7 +101,7 @@ async function run(providedSession?: Session) {
   // 等待通知到达
   await sleep(2000);
 
-  // UPDATE - 应该触发 Update 通知
+  // UPDATE - 应该触发 onUpdate
   console.log('Updating the post...');
   await db.update(posts)
     .set({ title: 'Updated Title' })
@@ -87,7 +109,7 @@ async function run(providedSession?: Session) {
 
   await sleep(2000);
 
-  // DELETE - 应该触发 Update 通知
+  // DELETE - 应该触发 onUpdate 或 onDelete
   console.log('Deleting the post...');
   await db.delete(posts).where(eq(posts.id, testId));
 

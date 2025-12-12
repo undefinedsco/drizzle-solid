@@ -11,7 +11,14 @@ import {
 import { PodTable, type InferTableData, PodColumnBase, type RelationDefinition } from './pod-table';
 import { QueryCondition } from './query-conditions';
 import { inArray } from './query-conditions';
-import { NotificationsClient, type SubscribeOptions, type Subscription } from './notifications';
+import { 
+  NotificationsClient, 
+  type SubscribeOptions, 
+  type TableSubscribeOptions,
+  type Subscription,
+  type Activity,
+  type NotificationType
+} from './notifications';
 
 export class PodDatabase<TSchema extends Record<string, unknown> = Record<string, never>> {
   static readonly [entityKind] = 'PodDatabase';
@@ -100,17 +107,25 @@ export class PodDatabase<TSchema extends Record<string, unknown> = Record<string
    * 订阅表/资源的变化通知
    * 
    * @param table - 要订阅的表（会订阅其容器或资源）
-   * @param options - 订阅选项
+   * @param options - 订阅选项，支持按类型分开的回调
    * @returns 订阅句柄，可用于取消订阅
    * 
    * @example
    * ```typescript
-   * const subscription = await db.subscribe(users, {
-   *   channel: 'streaming-http', // 默认，可省略
-   *   features: ['state'],
-   *   onNotification: (event) => {
-   *     console.log(event.type, event.object);
-   *     // 刷新 UI 或 TanStack Query 缓存
+   * const subscription = await db.subscribe(posts, {
+   *   onCreate: async (activity) => {
+   *     console.log('Created:', activity.object);
+   *     const latest = await db.select().from(posts);
+   *   },
+   *   onUpdate: async (activity) => {
+   *     console.log('Updated:', activity.object);
+   *     const latest = await db.select().from(posts);
+   *   },
+   *   onDelete: (activity) => {
+   *     console.log('Deleted:', activity.object);
+   *   },
+   *   onError: (error) => {
+   *     console.error('Subscription error:', error);
    *   }
    * });
    * 
@@ -120,7 +135,7 @@ export class PodDatabase<TSchema extends Record<string, unknown> = Record<string
    */
   async subscribe<TTable extends PodTable<any>>(
     table: TTable,
-    options: SubscribeOptions
+    options: TableSubscribeOptions
   ): Promise<Subscription> {
     // 懒初始化 NotificationsClient
     if (!this.notificationsClient) {
@@ -131,7 +146,44 @@ export class PodDatabase<TSchema extends Record<string, unknown> = Record<string
     // 获取表的资源 URL（容器或文件）
     const topic = this.resolveTableTopic(table);
 
-    return this.notificationsClient.subscribe(topic, options);
+    // 将 TableSubscribeOptions 转换为底层 SubscribeOptions
+    const subscribeOptions: SubscribeOptions = {
+      channel: options.channel,
+      features: options.features,
+      onNotification: (event) => {
+        // 构造 Activity 对象
+        const activity: Activity = {
+          id: event.id,
+          type: event.type,
+          object: event.object,
+          published: event.published,
+          state: event.state,
+        };
+
+        // 根据类型分发到对应回调
+        switch (event.type) {
+          case 'Create':
+            options.onCreate?.(activity);
+            break;
+          case 'Update':
+            options.onUpdate?.(activity);
+            break;
+          case 'Delete':
+            options.onDelete?.(activity);
+            break;
+          case 'Add':
+            options.onAdd?.(activity);
+            break;
+          case 'Remove':
+            options.onRemove?.(activity);
+            break;
+        }
+      },
+      onError: options.onError,
+      onClose: options.onClose,
+    };
+
+    return this.notificationsClient.subscribe(topic, subscribeOptions);
   }
 
   /**

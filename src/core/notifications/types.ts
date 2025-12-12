@@ -14,7 +14,45 @@ export type NotificationType =
   | 'Remove';  // 从容器移除
 
 /**
- * 通知事件
+ * Activity Streams 2.0 Object
+ * 可以是简单的 URI 字符串，也可以是完整的对象（未来扩展）
+ * @see https://www.w3.org/TR/activitystreams-core/#object
+ */
+export type ActivityObject = string | {
+  /** 对象 URI */
+  id: string;
+  /** 对象类型 */
+  type?: string;
+  /** 新数据（未来扩展） */
+  new?: Record<string, unknown>;
+  /** 旧数据（未来扩展） */
+  old?: Record<string, unknown>;
+  /** 其他属性 */
+  [key: string]: unknown;
+};
+
+/**
+ * Activity Streams 2.0 Activity
+ * @see https://www.w3.org/TR/activitystreams-core/#activities
+ */
+export interface Activity {
+  /** Activity 唯一 ID */
+  id: string;
+  /** Activity 类型 */
+  type: NotificationType;
+  /** 变更的资源（URI 或对象） */
+  object: ActivityObject;
+  /** 目标容器（Add/Remove 时） */
+  target?: string;
+  /** 发布时间（ISO 8601） */
+  published: string;
+  /** 状态 token */
+  state?: string;
+}
+
+/**
+ * 通知事件（兼容旧接口）
+ * @deprecated 使用 Activity 代替
  */
 export interface NotificationEvent {
   /** 事件唯一 ID */
@@ -40,7 +78,7 @@ export type ChannelType = 'streaming-http' | 'websocket';
 export type SubscriptionFeature = 'state' | 'endAt' | 'rate';
 
 /**
- * 订阅选项
+ * 订阅选项（旧接口，兼容）
  */
 export interface SubscribeOptions {
   /** 通道类型，默认 'streaming-http' (SSE) */
@@ -49,6 +87,30 @@ export interface SubscribeOptions {
   features?: SubscriptionFeature[];
   /** 收到通知时的回调 */
   onNotification: (event: NotificationEvent) => void;
+  /** 发生错误时的回调 */
+  onError?: (error: Error) => void;
+  /** 连接关闭时的回调 */
+  onClose?: () => void;
+}
+
+/**
+ * 表订阅选项（新接口，按类型分开）
+ */
+export interface TableSubscribeOptions {
+  /** 通道类型，默认 'streaming-http' (SSE) */
+  channel?: ChannelType;
+  /** 订阅特性 */
+  features?: SubscriptionFeature[];
+  /** 资源创建时的回调 */
+  onCreate?: (activity: Activity) => void | Promise<void>;
+  /** 资源更新时的回调 */
+  onUpdate?: (activity: Activity) => void | Promise<void>;
+  /** 资源删除时的回调 */
+  onDelete?: (activity: Activity) => void | Promise<void>;
+  /** 添加到容器时的回调 */
+  onAdd?: (activity: Activity) => void | Promise<void>;
+  /** 从容器移除时的回调 */
+  onRemove?: (activity: Activity) => void | Promise<void>;
   /** 发生错误时的回调 */
   onError?: (error: Error) => void;
   /** 连接关闭时的回调 */
