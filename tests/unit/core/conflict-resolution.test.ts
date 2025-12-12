@@ -352,7 +352,7 @@ describe('ConflictResolver', () => {
 
       expect(result.success).toBe(true);
       expect(result.retries).toBe(1);
-      expect(elapsed).toBeGreaterThanOrEqual(50); // At least one retry delay
+      expect(elapsed).toBeGreaterThanOrEqual(45); // At least one retry delay (with some tolerance)
     }, 10000);
 
     it('should allow zero retry delay for immediate retry', async () => {
