@@ -221,13 +221,19 @@ describe('NotificationsClient', () => {
         ok: true
       });
 
-      // Mock well-known (fail)
+      // Mock well-known - return only websocket support (no SSE fallback)
       mockFetch.mockResolvedValueOnce({
-        ok: false,
-        status: 404
+        ok: true,
+        headers: {
+          get: () => 'text/turtle'
+        },
+        text: async () => `
+          <http://pod.example/> <http://www.w3.org/ns/solid/notifications#subscription> 
+            <http://pod.example/.notifications/WebSocketChannel2023/> .
+        `
       });
 
-      // Mock subscription creation failure
+      // Mock WebSocket subscription creation failure
       mockFetch.mockResolvedValueOnce({
         ok: false,
         status: 403,

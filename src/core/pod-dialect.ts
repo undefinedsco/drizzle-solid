@@ -29,9 +29,16 @@ export interface SolidAuthSession {
   logout?: () => Promise<void>;
 }
 
+import type { ChannelType } from './notifications';
+
 export interface PodDialectConfig {
   session: SolidAuthSession;
   typeIndex?: TypeIndexConfig;
+  /** 
+   * 通知通道偏好顺序，默认 ['streaming-http', 'websocket']
+   * 会根据服务器支持的通道自动选择第一个匹配的
+   */
+  preferredChannels?: ChannelType[];
 }
 
 // Pod 操作类型 - 现在包含 SQL AST 和 JOIN

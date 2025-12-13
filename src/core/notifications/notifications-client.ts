@@ -17,99 +17,127 @@ const CHANNEL_TYPE_URI: Record<ChannelType, string> = {
 };
 
 /**
- * 从 URI 反向映射到 ChannelType
+ * 通道名称映射
  */
-const URI_TO_CHANNEL_TYPE: Record<string, ChannelType> = {
-  'http://www.w3.org/ns/solid/notifications#StreamingHTTPChannel2023': 'streaming-http',
-  'http://www.w3.org/ns/solid/notifications#WebSocketChannel2023': 'websocket',
+const CHANNEL_NAMES: Record<ChannelType, string> = {
+  'streaming-http': 'StreamingHTTPChannel2023',
+  'websocket': 'WebSocketChannel2023',
 };
 
 interface DiscoveredService {
-  subscriptionEndpoint: string;
+  baseEndpoint: string;
   supportedChannels: ChannelType[];
+}
+
+export interface NotificationsClientConfig {
+  /** 通道偏好顺序，默认 ['streaming-http', 'websocket'] */
+  preferredChannels?: ChannelType[];
 }
 
 /**
  * Solid Notifications 客户端
  * 
- * 负责：
- * 1. 发现资源的 notifications 服务
- * 2. 创建订阅
- * 3. 管理通道连接
+ * 支持两种通道：
+ * - streaming-http (SSE): CSS 直接连接模式，无需订阅
+ * - websocket: 标准订阅模式，POST 获取 receiveFrom
  */
 export class NotificationsClient {
   private readonly fetch: typeof globalThis.fetch;
   private readonly subscriptions: Map<string, SubscriptionImpl> = new Map();
+  private readonly preferredChannels: ChannelType[];
 
-  constructor(authenticatedFetch: typeof globalThis.fetch) {
+  constructor(
+    authenticatedFetch: typeof globalThis.fetch,
+    config?: NotificationsClientConfig
+  ) {
     this.fetch = authenticatedFetch;
+    this.preferredChannels = config?.preferredChannels ?? ['streaming-http', 'websocket'];
   }
 
   /**
    * 订阅资源变化
-   * 
-   * @param topic - 要订阅的资源 URL（可以是文件或容器）
-   * @param options - 订阅选项
-   * @returns 订阅句柄
    */
   async subscribe(topic: string, options: SubscribeOptions): Promise<Subscription> {
     // 1. 发现 notifications 服务
     const discovery = await this.discoverNotificationService(topic);
     
-    // 2. 确定使用的通道类型
-    let channelType = options.channel || 'streaming-http';
+    // 2. 根据偏好和服务器支持选择通道
+    const channelOrder = options.channel 
+      ? [options.channel, ...this.preferredChannels.filter(c => c !== options.channel)]
+      : this.preferredChannels;
     
-    // 如果请求的通道不支持，尝试其他可用通道
-    if (!discovery.supportedChannels.includes(channelType)) {
-      if (discovery.supportedChannels.length > 0) {
-        channelType = discovery.supportedChannels[0];
-        console.log(`[Notifications] Requested channel "${options.channel}" not supported, using "${channelType}" instead`);
-      } else {
-        throw new Error(`No supported notification channels found for ${topic}`);
-      }
+    // 过滤出服务器支持的通道
+    const availableChannels = channelOrder.filter(c => discovery.supportedChannels.includes(c));
+    
+    if (availableChannels.length === 0) {
+      throw new Error(`No supported notification channels found for ${topic}. Server supports: ${discovery.supportedChannels.join(', ')}`);
     }
 
-    // 3. 尝试创建订阅，如果失败则回退到其他通道
-    const trySubscribe = async (channel: ChannelType): Promise<Subscription> => {
-      const endpoint = await this.getChannelEndpoint(discovery, channel, topic);
+    // 3. 尝试连接，按偏好顺序
+    let lastError: Error | null = null;
+    
+    for (const channelType of availableChannels) {
+      try {
+        return await this.connectChannel(channelType, topic, discovery, options);
+      } catch (error) {
+        console.log(`[Notifications] Channel "${channelType}" failed, trying next...`);
+        lastError = error as Error;
+      }
+    }
+    
+    throw lastError ?? new Error(`Failed to connect to any notification channel for ${topic}`);
+  }
+
+  /**
+   * 连接到指定通道
+   */
+  private async connectChannel(
+    channelType: ChannelType,
+    topic: string,
+    discovery: DiscoveredService,
+    options: SubscribeOptions
+  ): Promise<Subscription> {
+    let receiveFrom: string;
+    
+    if (channelType === 'streaming-http') {
+      // CSS 直接连接模式：URL 中编码 topic
+      receiveFrom = this.buildSSEDirectUrl(discovery.baseEndpoint, topic);
+      console.log(`[Notifications] SSE direct connect to: ${receiveFrom}`);
+    } else {
+      // WebSocket：标准订阅模式
+      const endpoint = `${discovery.baseEndpoint}${CHANNEL_NAMES[channelType]}/`;
       const subscriptionResponse = await this.createSubscription(
         endpoint,
         topic,
-        channel,
+        channelType,
         options.features
       );
-
-      const channelInstance = this.createChannel(channel, subscriptionResponse.receiveFrom, options);
-      await channelInstance.connect();
-
-      const subscription = new SubscriptionImpl(
-        topic,
-        channel,
-        channelInstance,
-        () => this.subscriptions.delete(topic)
-      );
-
-      this.subscriptions.set(topic, subscription);
-      return subscription;
-    };
-
-    // 尝试请求的通道
-    try {
-      return await trySubscribe(channelType);
-    } catch (error) {
-      // 如果失败，尝试回退到其他通道
-      const fallbackChannels = discovery.supportedChannels.filter(c => c !== channelType);
-      for (const fallbackChannel of fallbackChannels) {
-        try {
-          console.log(`[Notifications] Channel "${channelType}" failed, trying "${fallbackChannel}"`);
-          return await trySubscribe(fallbackChannel);
-        } catch (fallbackError) {
-          // 继续尝试下一个
-        }
-      }
-      // 所有通道都失败了
-      throw error;
+      receiveFrom = subscriptionResponse.receiveFrom;
+      console.log(`[Notifications] WebSocket subscription created, receiveFrom: ${receiveFrom}`);
     }
+
+    // 创建并连接通道
+    const channelInstance = this.createChannel(channelType, receiveFrom, options);
+    await channelInstance.connect();
+
+    const subscription = new SubscriptionImpl(
+      topic,
+      channelType,
+      channelInstance,
+      () => this.subscriptions.delete(topic)
+    );
+
+    this.subscriptions.set(topic, subscription);
+    return subscription;
+  }
+
+  /**
+   * 构建 SSE 直接连接 URL (CSS 模式)
+   * 格式: /.notifications/StreamingHTTPChannel2023/{encodeURIComponent(topic)}
+   */
+  private buildSSEDirectUrl(baseEndpoint: string, topic: string): string {
+    const base = baseEndpoint.endsWith('/') ? baseEndpoint : `${baseEndpoint}/`;
+    return `${base}StreamingHTTPChannel2023/${encodeURIComponent(topic)}`;
   }
 
   /**
@@ -126,10 +154,7 @@ export class NotificationsClient {
    * 发现资源的 notifications 服务
    */
   private async discoverNotificationService(resourceUrl: string): Promise<DiscoveredService> {
-    // 获取资源的存储根
     const storageRoot = await this.findStorageRoot(resourceUrl);
-    
-    // 获取 storage description
     const descriptionUrl = `${storageRoot}.well-known/solid`;
     
     try {
@@ -138,7 +163,7 @@ export class NotificationsClient {
       // 回退：使用默认的 notifications 路径
       const url = new URL(resourceUrl);
       return {
-        subscriptionEndpoint: `${url.origin}/.notifications/`,
+        baseEndpoint: `${url.origin}/.notifications/`,
         supportedChannels: ['websocket', 'streaming-http']
       };
     }
@@ -148,13 +173,11 @@ export class NotificationsClient {
    * 查找资源的存储根 URL
    */
   private async findStorageRoot(resourceUrl: string): Promise<string> {
-    // 尝试从 Link header 获取存储根
     try {
       const response = await this.fetch(resourceUrl, { method: 'HEAD' });
       const linkHeader = response.headers.get('Link');
       
       if (linkHeader) {
-        // 查找 storage 或 storageDescription 链接
         const storageMatch = linkHeader.match(/<([^>]+)>;\s*rel="?http:\/\/www\.w3\.org\/ns\/pim\/space#storage"?/);
         if (storageMatch) {
           return storageMatch[1];
@@ -164,11 +187,10 @@ export class NotificationsClient {
       // 忽略错误
     }
 
-    // 回退：从 URL 推断存储根（通常是用户 Pod 根）
+    // 回退：从 URL 推断存储根
     const url = new URL(resourceUrl);
     const pathParts = url.pathname.split('/').filter(Boolean);
     
-    // 假设第一个路径段是用户名/Pod 名
     if (pathParts.length > 0) {
       return `${url.origin}/${pathParts[0]}/`;
     }
@@ -193,84 +215,51 @@ export class NotificationsClient {
 
     const body = await response.text();
     const supportedChannels: ChannelType[] = [];
-    let defaultEndpoint = '';
 
-    // 解析 Turtle 格式的 storage description
-    // 示例：
-    // <http://localhost:3000/test/> <http://www.w3.org/ns/solid/notifications#subscription> 
-    //   <http://localhost:3000/.notifications/WebSocketChannel2023/> .
-    
-    // 查找所有 subscription 端点
-    const subscriptionRegex = /notify:subscription|notifications#subscription[>\s]+<([^>]+)>/g;
-    const altRegex = /<[^>]+>\s+<http:\/\/www\.w3\.org\/ns\/solid\/notifications#subscription>\s+<([^>]+)>/g;
+    // 从 storage description 中查找支持的通道
+    // 查找 subscription 端点
+    const subscriptionRegex = /<http:\/\/www\.w3\.org\/ns\/solid\/notifications#subscription>\s+<([^>]+)>/g;
+    const altRegex = /notify:subscription[>\s]+<([^>]+)>/g;
     
     let match;
     const endpoints: string[] = [];
     
-    // 尝试第一种格式
     while ((match = subscriptionRegex.exec(body)) !== null) {
       endpoints.push(match[1]);
     }
-    
-    // 尝试第二种格式
     while ((match = altRegex.exec(body)) !== null) {
       endpoints.push(match[1]);
     }
 
     // 从端点 URL 推断支持的通道类型
     for (const endpoint of endpoints) {
-      if (endpoint.includes('WebSocketChannel2023')) {
+      if (endpoint.includes('WebSocketChannel2023') && !supportedChannels.includes('websocket')) {
         supportedChannels.push('websocket');
-        if (!defaultEndpoint) defaultEndpoint = endpoint;
-      } else if (endpoint.includes('StreamingHTTPChannel2023')) {
+      }
+      if (endpoint.includes('StreamingHTTPChannel2023') && !supportedChannels.includes('streaming-http')) {
         supportedChannels.push('streaming-http');
-        if (!defaultEndpoint) defaultEndpoint = endpoint;
       }
     }
 
-    // 如果没找到具体端点，使用通用格式查找
-    if (endpoints.length === 0) {
-      // 查找 channelType 声明
+    // 如果没找到具体端点，检查 channelType 声明
+    if (supportedChannels.length === 0) {
       if (body.includes('WebSocketChannel2023')) {
         supportedChannels.push('websocket');
       }
       if (body.includes('StreamingHTTPChannel2023')) {
         supportedChannels.push('streaming-http');
       }
-      
-      // 使用默认路径
-      const url = new URL(storageRoot);
-      defaultEndpoint = `${url.origin}/.notifications/`;
     }
 
+    const url = new URL(storageRoot);
     return {
-      subscriptionEndpoint: defaultEndpoint || `${new URL(storageRoot).origin}/.notifications/`,
+      baseEndpoint: `${url.origin}/.notifications/`,
       supportedChannels: supportedChannels.length > 0 ? supportedChannels : ['websocket']
     };
   }
 
   /**
-   * 获取特定通道类型的订阅端点
-   */
-  private async getChannelEndpoint(
-    discovery: DiscoveredService,
-    channelType: ChannelType,
-    _topic: string
-  ): Promise<string> {
-    // 如果端点已经包含通道类型，直接使用
-    const channelName = channelType === 'websocket' ? 'WebSocketChannel2023' : 'StreamingHTTPChannel2023';
-    
-    if (discovery.subscriptionEndpoint.includes(channelName)) {
-      return discovery.subscriptionEndpoint;
-    }
-    
-    // 尝试构造特定通道的端点
-    const baseUrl = discovery.subscriptionEndpoint.replace(/\/$/, '');
-    return `${baseUrl}/${channelName}/`;
-  }
-
-  /**
-   * 创建订阅
+   * 创建 WebSocket 订阅（POST 请求）
    */
   private async createSubscription(
     endpoint: string,

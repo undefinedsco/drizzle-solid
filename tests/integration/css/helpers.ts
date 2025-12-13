@@ -152,38 +152,86 @@ export async function grantAccess(
   const isACP = aclUrl.endsWith('.acr');
 
   if (isACP) {
-    // ACP format - Access Control Policies
-    const acpBody = `
-      @prefix acl: <http://www.w3.org/ns/auth/acl#>.
-      @prefix acp: <http://www.w3.org/ns/solid/acp#>.
+    // ACP format - Access Control Policies (CSS 7.x format)
+    // For containers: use <./> and add memberAccessControl
+    // For files: use <./filename> (relative path to the file)
+    const isContainer = resourceUrl.endsWith('/');
+    
+    // Determine the resource reference
+    let resourceRef: string;
+    if (isContainer) {
+      resourceRef = '<./>';
+    } else {
+      // For files, extract filename from URL
+      const urlObj = new URL(resourceUrl);
+      const pathParts = urlObj.pathname.split('/');
+      const filename = pathParts[pathParts.length - 1];
+      resourceRef = `<./${filename}>`;
+    }
+    
+    // Build the ACR body - handle the trailing punctuation correctly
+    const acpBody = isContainer ? `
+@prefix acl: <http://www.w3.org/ns/auth/acl#>.
+@prefix acp: <http://www.w3.org/ns/solid/acp#>.
 
-      <#policy>
-        a acp:AccessControlResource;
-        acp:resource <${resourceUrl}>;
-        acp:accessControl <#ownerRule>, <#grantRule>.
+<#root>
+    a acp:AccessControlResource;
+    acp:resource ${resourceRef};
+    acp:accessControl <#ownerAccess>, <#grantAccess>;
+    acp:memberAccessControl <#ownerAccess>, <#grantAccess>.
 
-      <#ownerRule>
-        a acp:AccessControl;
-        acp:apply [
-          a acp:Policy;
-          acp:allow acl:Read, acl:Write, acl:Control;
-          acp:anyOf [
+<#ownerAccess>
+    a acp:AccessControl;
+    acp:apply [
+        a acp:Policy;
+        acp:allow acl:Read, acl:Write, acl:Control;
+        acp:anyOf [
             a acp:Matcher;
             acp:agent <${ownerSession.info.webId}>
-          ]
-        ].
+        ]
+    ].
 
-      <#grantRule>
-        a acp:AccessControl;
-        acp:apply [
-          a acp:Policy;
-          acp:allow ${modes.map(m => `acl:${m}`).join(', ')};
-          acp:anyOf [
+<#grantAccess>
+    a acp:AccessControl;
+    acp:apply [
+        a acp:Policy;
+        acp:allow ${modes.map(m => `acl:${m}`).join(', ')};
+        acp:anyOf [
             a acp:Matcher;
             acp:agent <${agentWebId}>
-          ]
-        ].
-    `;
+        ]
+    ].
+` : `
+@prefix acl: <http://www.w3.org/ns/auth/acl#>.
+@prefix acp: <http://www.w3.org/ns/solid/acp#>.
+
+<#root>
+    a acp:AccessControlResource;
+    acp:resource ${resourceRef};
+    acp:accessControl <#ownerAccess>, <#grantAccess>.
+
+<#ownerAccess>
+    a acp:AccessControl;
+    acp:apply [
+        a acp:Policy;
+        acp:allow acl:Read, acl:Write, acl:Control;
+        acp:anyOf [
+            a acp:Matcher;
+            acp:agent <${ownerSession.info.webId}>
+        ]
+    ].
+
+<#grantAccess>
+    a acp:AccessControl;
+    acp:apply [
+        a acp:Policy;
+        acp:allow ${modes.map(m => `acl:${m}`).join(', ')};
+        acp:anyOf [
+            a acp:Matcher;
+            acp:agent <${agentWebId}>
+        ]
+    ].
+`;
 
     const response = await ownerSession.fetch(aclUrl, {
       method: 'PUT',
@@ -266,7 +314,9 @@ export async function ensureContainer(session: Session, containerPath: string): 
 
   const headResponse = await headResource(fetchFn, containerUrl);
 
-  if (headResponse.status === 404 || headResponse.status >= 500) {
+  // Handle 401 as "container might not exist" - try to create it
+  // Also handle 404 and 5xx as before
+  if (headResponse.status === 404 || headResponse.status === 401 || headResponse.status >= 500) {
     let createResponse: Response | null = null;
     let lastError: unknown;
     
@@ -326,20 +376,68 @@ export async function ensureContainer(session: Session, containerPath: string): 
     throw new Error(`Failed to access container ${containerUrl}: ${headResponse.status} ${headResponse.statusText}`);
   }
 
-  // Always ensure ACL grants current webId control
-  const aclUrl = `${containerUrl}.acl`;
-  const aclBody = `<#owner>
+  // Discover ACL URL from Link header to determine if ACP or WAC
+  const checkHead = await headResource(fetchFn, containerUrl);
+  const linkHeader = checkHead.headers.get('link') || '';
+  const aclMatch = linkHeader.match(/<([^>]+)>;\s*rel="acl"/);
+  
+  let aclUrl: string;
+  let isACP = false;
+  
+  if (aclMatch) {
+    aclUrl = aclMatch[1];
+    if (!aclUrl.startsWith('http')) {
+      aclUrl = new URL(aclMatch[1], containerUrl).toString();
+    }
+    isACP = aclUrl.endsWith('.acr');
+  } else {
+    aclUrl = `${containerUrl}.acl`;
+  }
+
+  // Ensure ACL grants current webId control
+  if (isACP) {
+    // ACP format
+    const acpBody = `
+@prefix acl: <http://www.w3.org/ns/auth/acl#>.
+@prefix acp: <http://www.w3.org/ns/solid/acp#>.
+
+<#root>
+    a acp:AccessControlResource;
+    acp:resource <./>;
+    acp:accessControl <#ownerAccess>;
+    acp:memberAccessControl <#ownerAccess>.
+
+<#ownerAccess>
+    a acp:AccessControl;
+    acp:apply [
+        a acp:Policy;
+        acp:allow acl:Read, acl:Write, acl:Control;
+        acp:anyOf [
+            a acp:Matcher;
+            acp:agent <${webId}>
+        ]
+    ].
+`;
+    await fetchFn(aclUrl, {
+      method: 'PUT',
+      headers: { 'Content-Type': 'text/turtle' },
+      body: acpBody
+    });
+  } else {
+    // WAC format
+    const aclBody = `<#owner>
     a <http://www.w3.org/ns/auth/acl#Authorization>;
     <http://www.w3.org/ns/auth/acl#agent> <${webId}>;
     <http://www.w3.org/ns/auth/acl#accessTo> <${containerUrl}>;
     <http://www.w3.org/ns/auth/acl#default> <${containerUrl}>;
     <http://www.w3.org/ns/auth/acl#mode> <http://www.w3.org/ns/auth/acl#Read>, <http://www.w3.org/ns/auth/acl#Write>, <http://www.w3.org/ns/auth/acl#Control>, <http://www.w3.org/ns/auth/acl#Append>.`;
 
-  await fetchFn(aclUrl, {
-    method: 'PUT',
-    headers: { 'Content-Type': 'text/turtle' },
-    body: aclBody
-  });
+    await fetchFn(aclUrl, {
+      method: 'PUT',
+      headers: { 'Content-Type': 'text/turtle' },
+      body: aclBody
+    });
+  }
 
   return containerUrl;
 }

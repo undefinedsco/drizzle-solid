@@ -17,7 +17,8 @@ import {
   type TableSubscribeOptions,
   type Subscription,
   type Activity,
-  type NotificationType
+  type NotificationType,
+  type NotificationsClientConfig
 } from './notifications';
 
 export class PodDatabase<TSchema extends Record<string, unknown> = Record<string, never>> {
@@ -140,7 +141,10 @@ export class PodDatabase<TSchema extends Record<string, unknown> = Record<string
     // 懒初始化 NotificationsClient
     if (!this.notificationsClient) {
       const authenticatedFetch = this.dialect.getAuthenticatedFetch();
-      this.notificationsClient = new NotificationsClient(authenticatedFetch);
+      const config: NotificationsClientConfig = {
+        preferredChannels: this.dialect.config.preferredChannels ?? ['streaming-http', 'websocket'],
+      };
+      this.notificationsClient = new NotificationsClient(authenticatedFetch, config);
     }
 
     // 获取表的资源 URL（容器或文件）

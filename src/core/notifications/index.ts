@@ -1,4 +1,4 @@
-export { NotificationsClient } from './notifications-client';
+export { NotificationsClient, type NotificationsClientConfig } from './notifications-client';
 export type {
   Activity,
   ActivityObject,
