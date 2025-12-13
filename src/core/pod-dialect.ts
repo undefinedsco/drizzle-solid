@@ -1292,6 +1292,17 @@ export class PodDialect {
     return this.podUrl;
   }
 
+  /**
+   * 发现特定 RDF 类型的数据位置
+   * 通过 TypeIndex 和 Interop 发现
+   * 
+   * @param rdfClass RDF 类型 URI
+   * @returns 数据位置列表
+   */
+  async discoverDataLocations(rdfClass: string): Promise<import('./discovery').DataLocation[]> {
+    return this.discovery.discover(rdfClass);
+  }
+
   // 添加数据源进行联邦查询（高级用法）
   // 注意：正常情况下不需要手动添加数据源，表定义中的 containerPath 会自动使用
   addSource(source: string): void {

@@ -1,7 +1,20 @@
-import { PodTable, PodColumnBase } from '../pod-table';
+import { PodTable, PodColumnBase, podTable, string, integer, boolean, date, uri, json, object } from '../pod-table';
 import { Shape, ShapeProperty, ShapeManager, ValidationResult, XSD, SHACL } from './types';
 import { getPredicateForColumn } from '../sparql/helpers';
 import { z } from 'zod';
+import { parseSHACL, xsdToDrizzleType, nodeKindToDrizzleType } from './shacl-parser';
+
+/**
+ * 从 Shape 生成的表定义
+ */
+export interface GeneratedTable {
+  /** 表名 */
+  name: string;
+  /** 表定义 */
+  table: PodTable;
+  /** 来源 Shape */
+  shape: Shape;
+}
 
 export class DrizzleShapeManager implements ShapeManager {
   private podUrl: string;
@@ -171,10 +184,176 @@ export class DrizzleShapeManager implements ShapeManager {
   }
 
   async loadShape(uri: string, fetchFn: typeof fetch = globalThis.fetch): Promise<Shape | null> {
-    // This is a complex task requiring an RDF parser and SHACL parsing logic.
-    // For now, return null as it's outside the current scope.
-    console.warn(`[ShapeManager] loadShape is not implemented yet. URI: ${uri}`);
-    return null;
+    try {
+      // 获取 Shape 资源
+      const response = await fetchFn(uri, {
+        headers: {
+          'Accept': 'text/turtle, application/ld+json'
+        }
+      });
+
+      if (!response.ok) {
+        console.warn(`[ShapeManager] Failed to fetch Shape from ${uri}: ${response.status}`);
+        return null;
+      }
+
+      const turtle = await response.text();
+      
+      // 解析 SHACL
+      const shapes = await parseSHACL(turtle, uri);
+      
+      if (shapes.length === 0) {
+        console.warn(`[ShapeManager] No shapes found in ${uri}`);
+        return null;
+      }
+
+      // 返回第一个 Shape，或者匹配 URI 的 Shape
+      const exactMatch = shapes.find(s => s.uri === uri || uri.includes(s.uri));
+      return exactMatch || shapes[0];
+    } catch (error) {
+      console.error(`[ShapeManager] Error loading Shape from ${uri}:`, error);
+      return null;
+    }
+  }
+
+  /**
+   * 从 Shape 生成 PodTable 定义
+   * 
+   * @param shape Shape 定义
+   * @param containerPath 容器路径（可选）
+   * @returns 生成的表定义
+   */
+  shapeToTable(shape: Shape, containerPath?: string): GeneratedTable {
+    // 从 targetClass 提取表名
+    const tableName = this.extractTableName(shape);
+    
+    // 构建列定义
+    const columns: Record<string, any> = {
+      // 始终包含 id 列
+      id: string('id').primaryKey()
+    };
+
+    for (const prop of shape.properties) {
+      const columnName = prop.name || this.extractNameFromPath(prop.path);
+      const column = this.propertyToColumn(prop, columnName);
+      if (column) {
+        columns[columnName] = column;
+      }
+    }
+
+    // 创建 PodTable
+    const table = podTable(tableName, columns, {
+      type: shape.targetClass,
+      containerPath: containerPath
+    });
+
+    return {
+      name: tableName,
+      table,
+      shape
+    };
+  }
+
+  /**
+   * 从 Shape URI 或 targetClass 提取表名
+   */
+  private extractTableName(shape: Shape): string {
+    // 优先使用 shape.name
+    if (shape.name) {
+      return shape.name.replace(/\s+/g, '_').replace(/Shape$/i, '').toLowerCase();
+    }
+
+    // 从 targetClass 提取
+    return this.extractNameFromPath(shape.targetClass).toLowerCase();
+  }
+
+  /**
+   * 从 URI 路径提取名称
+   */
+  private extractNameFromPath(path: string): string {
+    const hashIndex = path.lastIndexOf('#');
+    if (hashIndex >= 0) {
+      return path.substring(hashIndex + 1);
+    }
+    
+    const slashIndex = path.lastIndexOf('/');
+    if (slashIndex >= 0) {
+      return path.substring(slashIndex + 1);
+    }
+    
+    return path;
+  }
+
+  /**
+   * 将 ShapeProperty 转换为 PodTable 列定义
+   */
+  private propertyToColumn(prop: ShapeProperty, columnName: string): any {
+    // 确定数据类型
+    let drizzleType = 'string';
+    
+    if (prop.nodeKind) {
+      const fromNodeKind = nodeKindToDrizzleType(prop.nodeKind);
+      if (fromNodeKind) {
+        drizzleType = fromNodeKind;
+      }
+    }
+    
+    if (prop.datatype) {
+      drizzleType = xsdToDrizzleType(prop.datatype);
+    }
+
+    // 如果有 class 约束，说明是引用类型
+    if (prop.class) {
+      drizzleType = 'uri';
+    }
+
+    // 判断是否数组
+    const isArray = prop.maxCount === undefined || prop.maxCount > 1;
+    const isRequired = prop.minCount !== undefined && prop.minCount > 0;
+
+    // 创建列 - 使用列名作为标识符，设置 predicate 为 path URI
+    let column: any;
+    
+    switch (drizzleType) {
+      case 'string':
+        column = string(columnName).predicate(prop.path);
+        break;
+      case 'integer':
+        column = integer(columnName).predicate(prop.path);
+        break;
+      case 'boolean':
+        column = boolean(columnName).predicate(prop.path);
+        break;
+      case 'datetime':
+        column = date(columnName).predicate(prop.path);
+        break;
+      case 'uri':
+        column = uri(columnName).predicate(prop.path);
+        if (prop.class) {
+          column = column.references(prop.class);
+        }
+        break;
+      case 'object':
+        column = object(columnName).predicate(prop.path);
+        break;
+      default:
+        column = string(columnName).predicate(prop.path);
+    }
+
+    // 应用约束
+    if (isRequired) {
+      column = column.notNull();
+    }
+
+    if (isArray) {
+      column = column.array();
+    }
+
+    if (prop.inverse) {
+      column = column.inverse();
+    }
+
+    return column;
   }
 
   validate(data: Record<string, unknown>, shape: Shape): ValidationResult {

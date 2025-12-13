@@ -121,6 +121,13 @@ export interface ShapeManager {
   loadShape(uri: string, fetchFn?: typeof fetch): Promise<Shape | null>;
 
   /**
+   * 从 Shape 生成 PodTable 定义
+   * @param shape Shape 定义
+   * @param containerPath 容器路径（可选）
+   */
+  shapeToTable(shape: Shape, containerPath?: string): { name: string; table: PodTable; shape: Shape };
+
+  /**
    * 验证数据是否符合 Shape
    * @param data 数据记录
    * @param shape Shape 定义

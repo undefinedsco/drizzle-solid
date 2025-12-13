@@ -215,6 +215,103 @@ export class PodDatabase<TSchema extends Record<string, unknown> = Record<string
     return this.dialect.getConfig();
   }
 
+  /**
+   * 通过 RDF 类型自动发现并生成表定义
+   * 
+   * 流程：
+   * 1. 通过 TypeIndex/Interop 发现数据位置
+   * 2. 如果有 ShapeTree/Shape，加载并解析
+   * 3. 从 Shape 生成 PodTable 定义
+   * 
+   * @param rdfClass RDF 类型 URI (如 'http://schema.org/Person')
+   * @returns 生成的 PodTable，如果未发现则返回 null
+   * 
+   * @example
+   * ```typescript
+   * // 自动发现 Person 类型的表
+   * const persons = await db.discoverTable('http://schema.org/Person');
+   * if (persons) {
+   *   const data = await db.select().from(persons);
+   * }
+   * ```
+   */
+  async discoverTable(rdfClass: string): Promise<PodTable | null> {
+    // 1. 发现数据位置
+    const locations = await this.dialect.discoverDataLocations(rdfClass);
+    
+    if (locations.length === 0) {
+      console.log(`[discoverTable] No data locations found for ${rdfClass}`);
+      return null;
+    }
+
+    const location = locations[0]; // 使用第一个发现的位置
+    console.log(`[discoverTable] Found location: ${location.container}, shape: ${location.shape || 'none'}`);
+
+    // 2. 如果有 Shape，加载并生成表
+    if (location.shape) {
+      const shapeManager = this.dialect.getShapeManager();
+      const shape = await shapeManager.loadShape(location.shape, this.dialect.getAuthenticatedFetch());
+      
+      if (shape) {
+        console.log(`[discoverTable] Loaded shape with ${shape.properties.length} properties`);
+        const generated = shapeManager.shapeToTable(shape, location.container);
+        
+        // 初始化表
+        await this.init(generated.table);
+        
+        return generated.table;
+      }
+    }
+
+    // 3. 没有 Shape，使用基础表定义（仅 id 列）
+    console.log(`[discoverTable] No shape available, creating basic table`);
+    const { podTable, string } = await import('./pod-table');
+    
+    const tableName = this.extractClassName(rdfClass);
+    const table = podTable(tableName, {
+      id: string('id').primaryKey()
+    }, {
+      type: rdfClass,
+      containerPath: location.container
+    });
+
+    await this.init(table);
+    return table;
+  }
+
+  /**
+   * 发现多个类型的表
+   */
+  async discoverTables(rdfClasses: string[]): Promise<PodTable[]> {
+    const tables: PodTable[] = [];
+    
+    for (const rdfClass of rdfClasses) {
+      const table = await this.discoverTable(rdfClass);
+      if (table) {
+        tables.push(table);
+      }
+    }
+    
+    return tables;
+  }
+
+  /**
+   * 从 RDF 类型 URI 提取类名
+   */
+  private extractClassName(rdfClass: string): string {
+    const hashIndex = rdfClass.lastIndexOf('#');
+    if (hashIndex >= 0) {
+      return rdfClass.substring(hashIndex + 1).toLowerCase();
+    }
+    
+    const slashIndex = rdfClass.lastIndexOf('/');
+    if (slashIndex >= 0) {
+      return rdfClass.substring(slashIndex + 1).toLowerCase();
+    }
+    
+    return rdfClass.toLowerCase();
+  }
+
   // 数据源管理方法
   addSource(source: string): void {
     this.dialect.addSource(source);

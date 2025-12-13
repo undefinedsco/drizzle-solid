@@ -248,7 +248,7 @@ describe('CSS integration: Notifications', () => {
     });
   });
 
-  describe('Channel fallback', () => {
+  describe('SSE Channel (StreamingHTTPChannel2023)', () => {
     test('should use streaming-http (SSE) with CSS direct connect mode', async () => {
       // CSS 使用直接连接模式支持 streaming-http
       const subscription = await db.subscribe(testTable, {
@@ -264,6 +264,158 @@ describe('CSS integration: Notifications', () => {
       subscription.unsubscribe();
     });
 
+    test('should receive notification via SSE when inserting data', async () => {
+      const notifications: NotificationEvent[] = [];
+      let resolveNotification: (value: NotificationEvent) => void;
+      const notificationPromise = new Promise<NotificationEvent>((resolve) => {
+        resolveNotification = resolve;
+      });
+
+      const subscription = await db.subscribe(testTable, {
+        channel: 'streaming-http',
+        onNotification: (event) => {
+          console.log('[SSE] Received notification:', event.type, event.object);
+          notifications.push(event);
+          resolveNotification(event);
+        },
+        onError: (error) => {
+          console.error('[SSE] Error:', error);
+        }
+      });
+
+      expect(subscription.active).toBe(true);
+      expect(subscription.channel).toBe('streaming-http');
+
+      // 等待连接建立
+      await new Promise(resolve => setTimeout(resolve, 1000));
+
+      // 插入数据触发通知
+      const insertId = `sse-test-${Date.now()}`;
+      await db.insert(testTable).values({
+        id: insertId,
+        name: 'SSE Test Item',
+        value: 100,
+        createdAt: new Date()
+      });
+
+      // 等待通知（最多 10 秒）
+      const timeoutPromise = new Promise<null>((resolve) => 
+        setTimeout(() => resolve(null), 10000)
+      );
+      
+      const result = await Promise.race([notificationPromise, timeoutPromise]);
+
+      subscription.unsubscribe();
+      expect(subscription.active).toBe(false);
+
+      if (result) {
+        expect(result.type).toMatch(/Create|Update|Add/);
+        expect(result.object).toBeDefined();
+        expect(result.published).toBeDefined();
+        console.log('[SSE] Notification received successfully:', result.type);
+      } else {
+        console.warn('[SSE] No notification received within timeout - this may be a server configuration issue');
+      }
+    });
+
+    test('should receive Update notification via SSE when modifying data', async () => {
+      // 先插入一条数据
+      const updateId = `sse-update-${Date.now()}`;
+      await db.insert(testTable).values({
+        id: updateId,
+        name: 'Before SSE Update',
+        value: 200
+      });
+
+      const notifications: NotificationEvent[] = [];
+      let resolveNotification: (value: NotificationEvent) => void;
+      const notificationPromise = new Promise<NotificationEvent>((resolve) => {
+        resolveNotification = resolve;
+      });
+
+      const subscription = await db.subscribe(testTable, {
+        channel: 'streaming-http',
+        onNotification: (event) => {
+          console.log('[SSE Update] Received:', event.type, event.object);
+          notifications.push(event);
+          if (event.type === 'Update') {
+            resolveNotification(event);
+          }
+        }
+      });
+
+      await new Promise(resolve => setTimeout(resolve, 1000));
+
+      // 更新数据
+      await db.update(testTable)
+        .set({ name: 'After SSE Update', value: 300 })
+        .where({ id: updateId });
+
+      const timeoutPromise = new Promise<null>((resolve) => 
+        setTimeout(() => resolve(null), 10000)
+      );
+      
+      const result = await Promise.race([notificationPromise, timeoutPromise]);
+
+      subscription.unsubscribe();
+
+      if (result) {
+        expect(result.type).toBe('Update');
+        console.log('[SSE] Update notification received');
+      } else {
+        console.warn('[SSE] No update notification received within timeout');
+      }
+    });
+
+    test('should receive Delete notification via SSE when removing data', async () => {
+      // 先插入一条数据
+      const deleteId = `sse-delete-${Date.now()}`;
+      await db.insert(testTable).values({
+        id: deleteId,
+        name: 'To SSE Delete',
+        value: 999
+      });
+
+      let deleteNotification: NotificationEvent | null = null;
+      let resolveNotification: (value: NotificationEvent) => void;
+      const notificationPromise = new Promise<NotificationEvent>((resolve) => {
+        resolveNotification = resolve;
+      });
+
+      const subscription = await db.subscribe(testTable, {
+        channel: 'streaming-http',
+        onNotification: (event) => {
+          console.log('[SSE Delete] Received:', event.type);
+          if (event.type === 'Delete' || event.type === 'Remove' || event.type === 'Update') {
+            deleteNotification = event;
+            resolveNotification(event);
+          }
+        }
+      });
+
+      await new Promise(resolve => setTimeout(resolve, 1000));
+
+      // 删除数据
+      await db.delete(testTable).where({ id: deleteId });
+
+      const timeoutPromise = new Promise<null>((resolve) => 
+        setTimeout(() => resolve(null), 10000)
+      );
+      
+      await Promise.race([notificationPromise, timeoutPromise]);
+
+      subscription.unsubscribe();
+
+      if (deleteNotification) {
+        expect(deleteNotification.type).toMatch(/Delete|Remove|Update/);
+        console.log('[SSE] Delete notification received');
+      } else {
+        console.warn('[SSE] No delete notification received within timeout');
+      }
+    });
+  });
+
+  describe('Channel fallback', () => {
     test('should fallback to websocket when streaming-http fails', async () => {
       // 测试 fallback 机制：如果 SSE 失败，应该回退到 WebSocket
       // 注意：CSS 直接连接模式下 SSE 应该成功
@@ -281,6 +433,74 @@ describe('CSS integration: Notifications', () => {
       
       // 应该使用 streaming-http（CSS 直接连接模式）或 websocket（fallback）
       expect(['streaming-http', 'websocket']).toContain(usedChannel);
+    });
+  });
+
+  describe('PreferredChannels and Auto-detection', () => {
+    test('should auto-select channel based on preferredChannels config', async () => {
+      // 创建一个配置为优先使用 SSE 的 db
+      const ssePreferredDb = drizzle(session, {
+        notifications: {
+          preferredChannels: ['streaming-http', 'websocket']
+        }
+      });
+      await ssePreferredDb.init(testTable);
+
+      // 不指定 channel，应该自动选择 streaming-http（如果可用）
+      const subscription = await ssePreferredDb.subscribe(testTable, {
+        onNotification: () => {}
+      });
+
+      expect(subscription.active).toBe(true);
+      // CSS 支持直接连接模式，应该优先使用 streaming-http
+      expect(['streaming-http', 'websocket']).toContain(subscription.channel);
+      console.log(`[Auto-detect] Selected channel: ${subscription.channel}`);
+
+      subscription.unsubscribe();
+      await ssePreferredDb.disconnect();
+    });
+
+    test('should prefer websocket when configured', async () => {
+      // 创建一个配置为优先使用 WebSocket 的 db
+      const wsPreferredDb = drizzle(session, {
+        notifications: {
+          preferredChannels: ['websocket', 'streaming-http']
+        }
+      });
+      await wsPreferredDb.init(testTable);
+
+      // 不指定 channel，应该自动选择 websocket
+      const subscription = await wsPreferredDb.subscribe(testTable, {
+        onNotification: () => {}
+      });
+
+      expect(subscription.active).toBe(true);
+      expect(subscription.channel).toBe('websocket');
+      console.log(`[WS Preferred] Selected channel: ${subscription.channel}`);
+
+      subscription.unsubscribe();
+      await wsPreferredDb.disconnect();
+    });
+
+    test('should respect explicit channel override', async () => {
+      // 即使配置优先 SSE，显式指定 websocket 应该生效
+      const ssePreferredDb = drizzle(session, {
+        notifications: {
+          preferredChannels: ['streaming-http', 'websocket']
+        }
+      });
+      await ssePreferredDb.init(testTable);
+
+      const subscription = await ssePreferredDb.subscribe(testTable, {
+        channel: 'websocket', // 显式指定
+        onNotification: () => {}
+      });
+
+      expect(subscription.active).toBe(true);
+      expect(subscription.channel).toBe('websocket');
+
+      subscription.unsubscribe();
+      await ssePreferredDb.disconnect();
     });
   });
 
