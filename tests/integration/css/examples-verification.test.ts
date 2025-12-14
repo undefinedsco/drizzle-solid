@@ -3,6 +3,7 @@ import { createTestSession, createSecondSessionInstance, ensureContainer, grantA
 import { run as runQuickStart } from '../../../examples/01-quick-start';
 import { run as runRelational } from '../../../examples/02-relational-query';
 import { runBobViewer } from '../../../examples/03-zero-config-discovery';
+import { run as runDataDiscovery, basicDiscovery, listAllRegistrations } from '../../../examples/05-data-discovery';
 import { setupSaiForExample } from '../../../examples/utils/sai-helpers';
 import { drizzle } from '../../../src/driver';
 import { podTable, string, datetime, uri, id } from '../../../src/core/pod-table';
@@ -116,5 +117,29 @@ describe('Examples Verification Suite', () => {
     expect(messages).toBeDefined();
     expect(messages.length).toBeGreaterThan(0);
     expect(messages[0].content).toContain('Alice');
+  }, 120000);
+
+  it('05-data-discovery.ts should run successfully', async () => {
+    // Setup SAI data for discovery
+    const aliceSession = session;
+    const alicePodBase = aliceSession.info.webId.split('profile')[0];
+    const personContainer = `${alicePodBase}data/persons-discovery-test/`;
+    
+    // Ensure container exists
+    await ensureContainer(aliceSession, personContainer);
+    
+    // Setup SAI registration for the container
+    const clientId = aliceSession.info.clientId || 'https://example.app/id';
+    await setupSaiForExample(aliceSession, clientId, personContainer);
+    
+    // Test basic discovery function
+    const locations = await basicDiscovery(aliceSession);
+    expect(locations).toBeDefined();
+    expect(Array.isArray(locations)).toBe(true);
+    
+    // Test list all registrations
+    const registrations = await listAllRegistrations(aliceSession);
+    expect(registrations).toBeDefined();
+    expect(Array.isArray(registrations)).toBe(true);
   }, 120000);
 });

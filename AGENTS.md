@@ -40,7 +40,8 @@ Keep this managed block so 'openspec update' can refresh the instructions.
 - New coverage must hit real Community Solid Server flows—no network mocks for CRUD, TypeIndex, or SPARQL behaviors.
 - Place fast logic tests in `tests/unit`; write Pod-facing journeys in `tests/integration/css` and gate them with the existing CSS manager (`jest.global-setup.js`).
 - Populate `SOLID_CLIENT_ID`, `SOLID_CLIENT_SECRET`, and `SOLID_OIDC_ISSUER` in `.env.local` (never commit secrets); document extra envs in PRs.
-- Install the isolated CSS runtime with `yarn css:install` whenever dependencies change so Comunica v2 (CSS) stays separate from the library’s v4 stack.
+- Install the isolated CSS runtime with `yarn css:install` whenever dependencies change so Comunica v2 (CSS) stays separate from the library's v4 stack.
+- **Examples must be tested**: All example code in `examples/` must compile successfully and be verified to work. When adding or modifying examples, ensure they pass compilation checks and test their functionality against real CSS flows when possible.
 
 ## Commit & Pull Request Guidelines
 - Follow the sequence: implement feature → add CSS-backed integration + targeted unit tests → refresh docs/examples → verify with `yarn quality` (or capture why integration tests were skipped).
