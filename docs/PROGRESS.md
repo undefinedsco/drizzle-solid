@@ -4,7 +4,43 @@
 
 我们已经成功创建了一个完整的文档和示例体系，从认证开始逐步介绍 Drizzle Solid 的用法和 Solid 概念。
 
-## 📅 最新更新 (2025-12-02)
+## 📅 最新更新 (2025-12-14)
+
+### 1. 🔍 数据发现重构（Container 为中心）
+
+**核心变更**：将 `DataLocation` 从 Shape 为中心重构为 Container 为中心
+
+- **问题**：之前以 Shape 为主键，同一个 Container 被多个 app 注册时会产生多条记录，写入时不知道该写到哪里
+- **解决**：`DataLocation.shapes: ShapeInfo[]` - 一个 Container 可以有多个 Shape（来自不同 app 的注册）
+- **新增 `ShapeInfo` 接口**：包含 url, shapeTree, registeredBy, source
+- **Shape 选择机制**：`locationToTable(location, { appId | shape })` 支持按 appId 或直接指定 Shape
+
+### 2. ✨ PodDatabase 新增便捷 API
+
+```typescript
+// 发现某类型的数据位置
+const locations = await db.discover('https://schema.org/Person');
+
+// 获取所有数据注册
+const all = await db.discoverAll();
+
+// 按应用发现
+const acmeData = await db.discoverByApp('https://acme.com/app#id');
+
+// 位置转表（支持 Shape 选择）
+const table = await db.locationToTable(location, { appId: 'https://acme.com/app#id' });
+
+// 一步发现并转表
+const tables = await db.discoverTablesFor('https://schema.org/Person');
+```
+
+### 3. 📚 新增文档
+
+- [数据发现与 SAI 互操作](./guides/data-discovery.md) - 完整的数据发现指南
+
+---
+
+## 📅 更新历史 (2025-12-02)
 
 我们完成了重大的架构重构和功能增强 (v0.2.0)：
 

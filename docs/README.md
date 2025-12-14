@@ -24,6 +24,14 @@
 
 ## 🔧 功能指南
 
+### 数据发现与 SAI
+
+- [数据发现与 SAI 互操作](./guides/data-discovery.md) - 动态发现 Pod 中的数据位置
+  - TypeIndex vs SAI 对比
+  - DataLocation 结构（Container 为中心）
+  - Shape 选择机制
+  - 跨 Pod 数据访问
+
 ### SPARQL 模式
 
 - [SPARQL 模式设计](./guides/sparql-mode-design.md) ⭐ **最完整的 SPARQL 模式文档**

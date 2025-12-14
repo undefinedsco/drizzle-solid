@@ -1,16 +1,19 @@
 # Drizzle-Solid Architecture Design & Implementation Record
 
-> Version: 0.2.0 (Implemented)
-> Date: 2025-11-30
-> Status: Phase 1 Completed / Phase 2 Planned
+> Version: 0.3.0 (Updated)
+> Date: 2025-12-14
+> Status: Phase 1 & Phase 2 Completed
 
-## 1. Implementation Summary (v0.2.0)
+## 1. Implementation Summary (v0.3.0)
 
 ### 1.1 Key Achievements
 1.  ✅ **Separation of Concerns**: Split `PodDialect` into modular components: `SubjectResolver`, `TripleBuilder`, `DataDiscovery`, and `LdpExecutor`.
 2.  ✅ **Unified Handling**: Centralized handlers for special column types (`inline`, `inverse`, `array`, `uri`).
 3.  ✅ **Robust Execution**: Implemented a stable Read-Modify-Write strategy for LDP operations to handle CSS concurrency issues.
-4.  ✅ **Extensibility**: `DataDiscovery` interface prepares the ground for future Interop Spec support.
+4.  ✅ **Data Discovery**: Implemented `CompositeDiscovery` with `TypeIndexDiscovery` and `InteropDiscovery` strategies.
+5.  ✅ **SAI Support**: Full Solid Application Interoperability (SAI) support including ShapeTree resolution and AccessGrant discovery.
+6.  ✅ **Shape Management**: `ShapeManager` for SHACL Shape generation and parsing, dynamic table generation from Shape.
+7.  ✅ **Container-Centric DataLocation**: Refactored `DataLocation` to be container-centric with multiple shapes support.
 
 ### 1.2 Core Architecture Diagram
 
@@ -28,21 +31,28 @@
 └───────────────┘      └─────────────────┘      └─────────────────┘
         │                        │                        │
         ▼                        ▼                        ▼
-┌───────────────┐      ┌─────────────────┐      ┌─────────────────┐
-│ TypeIndex     │      │ TemplateResolver│      │ ColumnHandlers  │
-│ (Implemented) │      │ (Implemented)   │      │ (Implemented)   │
-├───────────────┤      └─────────────────┘      ├─────────────────┤
-│ InteropSpec   │                               │ - InlineHandler │
-│ (Planned)     │                               │ - InverseHandler│
-└───────────────┘                               │ - ArrayHandler  │
-                                                │ - UriHandler    │
-                                                └─────────────────┘
+┌───────────────────┐  ┌─────────────────┐      ┌─────────────────┐
+│ CompositeDiscovery│  │ TemplateResolver│      │ ColumnHandlers  │
+│ (Strategy Pattern)│  │ (Implemented)   │      │ (Implemented)   │
+├───────────────────┤  └─────────────────┘      ├─────────────────┤
+│ TypeIndexDiscovery│                           │ - InlineHandler │
+│ (✅ Implemented)  │                           │ - InverseHandler│
+├───────────────────┤                           │ - ArrayHandler  │
+│ InteropDiscovery  │                           │ - UriHandler    │
+│ (✅ Implemented)  │                           └─────────────────┘
+│ - ShapeTree       │
+│ - AccessGrant     │
+│ - DataRegistration│
+└───────────────────┘
         │
         ▼
-┌───────────────┐
-│ LdpExecutor   │
-│ (Execution)   │
-└───────────────┘
+┌───────────────────┐      ┌─────────────────┐
+│ LdpExecutor       │      │ ShapeManager    │
+│ (Execution)       │      │ (SHACL Support) │
+└───────────────────┘      │ - generateShape │
+                           │ - loadShape     │
+                           │ - shapeToTable  │
+                           └─────────────────┘
 ```
 
 ## 2. Implementation Decision Records (ADR)
@@ -57,20 +67,33 @@ To minimize ambiguity between client and server, `TripleBuilder` and `LdpExecuto
 ### 2.3 Decision: Cache Invalidation
 `Comunica` caching was aggressive, leading to stale reads after writes. We added explicit `invalidateHttpCache` calls in `LdpExecutor` before Read-Modify-Write cycles and after successful writes.
 
-## 3. Future Roadmap
+## 3. Completed Milestones
 
-### 3.1 Phase 1.4: ShapeManager (Planned)
+### 3.1 Phase 1.4: ShapeManager (✅ Completed)
 - Goal: Generate SHACL Shape files from `PodTable` definitions.
-- Status: Design exists, implementation pending.
+- Status: Implemented with `generateShape`, `loadShape`, `saveShape`, `shapeToTable`.
 
-### 3.2 Phase 2: Interop Spec (Planned)
+### 3.2 Phase 2: Interop Spec (✅ Completed)
 - Goal: Support Solid Application Interoperability specification.
-- Path: Implement `InteropDiscovery` implementing `DataDiscovery` interface.
+- Status: Implemented `InteropDiscovery` with:
+  - DataRegistration discovery
+  - AccessGrant discovery for shared data
+  - ShapeTree → Shape URL resolution
+  - Container-centric DataLocation structure
 
-### 3.3 Cleanup: Deprecate Hardcoded Default Predicates
-- **Issue**: `ASTToSPARQLConverter` currently maintains a hardcoded list of `defaultPredicates` (e.g., mapping 'name' to `foaf:name`). This is an anti-pattern.
-- **Goal**: Remove `defaultPredicates` and force explicit predicate definition or use a standard `vocab` library.
-- **Action**: Deprecate current usage, warn users, and eventually remove in v0.3.0.
+### 3.3 Cleanup: Hardcoded Default Predicates (✅ Completed)
+- Removed `defaultPredicates` from `ASTToSPARQLConverter`.
+- Users must now explicitly define predicates or use vocab libraries.
+
+## 4. Future Roadmap
+
+### 4.1 Data Migration
+- Goal: Support schema migration when Shape changes.
+- Status: Planned.
+
+### 4.2 Cross-Pod Federation
+- Goal: Query across multiple Pods with unified interface.
+- Status: Basic support via `addSource()`, advanced federation planned.
 
 ---
 
