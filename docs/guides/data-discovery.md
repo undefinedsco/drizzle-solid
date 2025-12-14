@@ -311,6 +311,8 @@ interface LocationToTableOptions {
 
 ## 相关资源
 
+- [示例代码: 05-data-discovery.ts](../../examples/05-data-discovery.ts) - 完整的数据发现示例
+- [示例代码: 03-zero-config-discovery.ts](../../examples/03-zero-config-discovery.ts) - 零配置访问示例
 - [Solid Application Interoperability Spec](https://solid.github.io/data-interoperability-panel/specification/)
 - [TypeIndex Spec](https://solid.github.io/type-indexes/)
 - [ShapeTree Spec](https://shapetrees.org/TR/specification/)
