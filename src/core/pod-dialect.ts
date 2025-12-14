@@ -136,7 +136,7 @@ export class PodDialect {
     // 使用组合策略，优先使用 TypeIndex
     this.discovery = new CompositeDiscovery([typeIndexDiscovery, interopDiscovery]);
     
-    this.shapeManager = new DrizzleShapeManager(this.podUrl);
+    this.shapeManager = new DrizzleShapeManager(this.podUrl, this.session.fetch);
 
     // Initialize ResourceResolver factory
     this.resolverFactory = new ResourceResolverFactoryImpl(this.podUrl);

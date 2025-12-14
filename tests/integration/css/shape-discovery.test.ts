@@ -71,7 +71,7 @@ describe('CSS integration: Shape Discovery and Table Generation', () => {
       expect(putResponse.ok).toBe(true);
 
       // Load the shape using ShapeManager
-      const shape = await shapeManager.loadShape(shapeUrl, session.fetch.bind(session));
+      const shape = await shapeManager.loadShape(shapeUrl);
       
       expect(shape).not.toBeNull();
       expect(shape!.targetClass).toBe('http://schema.org/Person');
@@ -179,7 +179,7 @@ describe('CSS integration: Shape Discovery and Table Generation', () => {
       expect(putResponse.ok).toBe(true);
 
       // Load and verify the extended shape
-      const shape = await shapeManager.loadShape(shapeUrl, session.fetch.bind(session));
+      const shape = await shapeManager.loadShape(shapeUrl);
       
       expect(shape).not.toBeNull();
       expect(shape!.targetClass).toBe('http://schema.org/Person');
@@ -349,7 +349,7 @@ describe('CSS integration: Shape Discovery and Table Generation', () => {
       
       // 4. Test ShapeManager.shapeToTable produces usable table
       const shapeManager = db.getDialect().getShapeManager();
-      const shape = await shapeManager.loadShape(shapeUrl, session.fetch.bind(session));
+      const shape = await shapeManager.loadShape(shapeUrl);
       
       expect(shape).not.toBeNull();
       

@@ -21,6 +21,18 @@ import {
   type NotificationsClientConfig
 } from './notifications';
 
+/**
+ * 初始化表选项
+ */
+export interface InitOptions {
+  /** 是否生成 Shape 定义 */
+  generateShape?: boolean;
+  /** 是否保存 Shape 到 Pod（需要 generateShape 为 true） */
+  saveShape?: boolean;
+  /** Shape 保存位置（容器路径或完整 URL），默认为 Pod 根目录下的 /shapes/ */
+  shapeLocation?: string;
+}
+
 export class PodDatabase<TSchema extends Record<string, unknown> = Record<string, never>> {
   static readonly [entityKind] = 'PodDatabase';
 
@@ -329,9 +341,29 @@ export class PodDatabase<TSchema extends Record<string, unknown> = Record<string
     return await this.dialect.addSourcesFromTypeIndex();
   }
 
-  async init<TTable extends PodTable<any>>(...tables: Array<TTable | TTable[]>): Promise<void> {
+  async init<TTable extends PodTable<any>>(
+    tables: TTable | TTable[],
+    options?: InitOptions
+  ): Promise<void>;
+  async init<TTable extends PodTable<any>>(...tables: Array<TTable | TTable[]>): Promise<void>;
+  async init<TTable extends PodTable<any>>(
+    ...args: Array<TTable | TTable[] | InitOptions>
+  ): Promise<void> {
+    // 解析参数：最后一个参数可能是 options
+    let options: InitOptions | undefined;
+    let tableArgs: Array<TTable | TTable[]>;
+    
+    const lastArg = args[args.length - 1];
+    if (lastArg && typeof lastArg === 'object' && !Array.isArray(lastArg) && !('columns' in lastArg)) {
+      // 最后一个参数是 options
+      options = lastArg as InitOptions;
+      tableArgs = args.slice(0, -1) as Array<TTable | TTable[]>;
+    } else {
+      tableArgs = args as Array<TTable | TTable[]>;
+    }
+
     const flattened: PodTable<any>[] = [];
-    for (const entry of tables) {
+    for (const entry of tableArgs) {
       if (!entry) continue;
       if (Array.isArray(entry)) {
         for (const table of entry) {
@@ -349,6 +381,40 @@ export class PodDatabase<TSchema extends Record<string, unknown> = Record<string
         await table.init(this.dialect);
       } else {
         await this.dialect.registerTable(table);
+      }
+
+      // 如果需要生成 Shape
+      if (options?.generateShape || options?.saveShape) {
+        const shapeManager = this.dialect.getShapeManager();
+        const shape = shapeManager.generateShape(table);
+        
+        // 如果需要保存 Shape
+        if (options?.saveShape) {
+          const podUrl = this.dialect.getPodUrl();
+          let shapeLocation = options.shapeLocation;
+          
+          if (!shapeLocation) {
+            // 默认保存到 /shapes/ 目录
+            shapeLocation = `${podUrl}shapes/`;
+          } else if (!shapeLocation.startsWith('http')) {
+            // 相对路径转绝对路径
+            shapeLocation = `${podUrl}${shapeLocation.replace(/^\//, '')}`;
+          }
+          
+          // 确保以 / 结尾（容器）
+          if (!shapeLocation.endsWith('/')) {
+            shapeLocation += '/';
+          }
+          
+          const shapeUrl = `${shapeLocation}${table.config.name}Shape.ttl`;
+          
+          try {
+            await shapeManager.saveShape(shape, shapeUrl);
+            console.log(`[init] Shape saved to: ${shapeUrl}`);
+          } catch (error) {
+            console.warn(`[init] Failed to save Shape to ${shapeUrl}:`, error);
+          }
+        }
       }
     }
   }

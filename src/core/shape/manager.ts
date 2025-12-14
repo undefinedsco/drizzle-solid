@@ -18,9 +18,11 @@ export interface GeneratedTable {
 
 export class DrizzleShapeManager implements ShapeManager {
   private podUrl: string;
+  private authenticatedFetch: typeof fetch;
 
-  constructor(podUrl: string) {
+  constructor(podUrl: string, authenticatedFetch?: typeof fetch) {
     this.podUrl = podUrl.endsWith('/') ? podUrl : `${podUrl}/`;
+    this.authenticatedFetch = authenticatedFetch ?? globalThis.fetch;
   }
 
   generateShape(table: PodTable): Shape {
@@ -167,9 +169,10 @@ export class DrizzleShapeManager implements ShapeManager {
     return lines.join('\n');
   }
 
-  async saveShape(shape: Shape, location: string, fetchFn: typeof fetch = globalThis.fetch): Promise<void> {
+  async saveShape(shape: Shape, location: string, fetchFn?: typeof fetch): Promise<void> {
+    const effectiveFetch = fetchFn ?? this.authenticatedFetch;
     const shaclContent = this.toSHACL(shape);
-    const response = await fetchFn(location, {
+    const response = await effectiveFetch(location, {
       method: 'PUT',
       headers: {
         'Content-Type': 'text/turtle'
@@ -183,10 +186,11 @@ export class DrizzleShapeManager implements ShapeManager {
     }
   }
 
-  async loadShape(uri: string, fetchFn: typeof fetch = globalThis.fetch): Promise<Shape | null> {
+  async loadShape(uri: string, fetchFn?: typeof fetch): Promise<Shape | null> {
+    const effectiveFetch = fetchFn ?? this.authenticatedFetch;
     try {
       // 获取 Shape 资源
-      const response = await fetchFn(uri, {
+      const response = await effectiveFetch(uri, {
         headers: {
           'Accept': 'text/turtle, application/ld+json'
         }
