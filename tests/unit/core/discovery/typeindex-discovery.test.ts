@@ -115,6 +115,7 @@ describe('TypeIndexDiscovery', () => {
       expect(locations).toHaveLength(1);
       expect(locations[0]).toEqual({
         container: 'https://pod.example/data/users/',
+        shapes: [],
         source: 'typeindex',
       });
     });

@@ -257,12 +257,13 @@ export class PodDatabase<TSchema extends Record<string, unknown> = Record<string
     }
 
     const location = locations[0]; // 使用第一个发现的位置
-    console.log(`[discoverTable] Found location: ${location.container}, shape: ${location.shape || 'none'}`);
+    const shapeUrl = location.shapes[0]?.url;
+    console.log(`[discoverTable] Found location: ${location.container}, shape: ${shapeUrl || 'none'}`);
 
     // 2. 如果有 Shape，加载并生成表
-    if (location.shape) {
+    if (shapeUrl) {
       const shapeManager = this.dialect.getShapeManager();
-      const shape = await shapeManager.loadShape(location.shape, this.dialect.getAuthenticatedFetch());
+      const shape = await shapeManager.loadShape(shapeUrl, this.dialect.getAuthenticatedFetch());
       
       if (shape) {
         console.log(`[discoverTable] Loaded shape with ${shape.properties.length} properties`);
@@ -305,6 +306,221 @@ export class PodDatabase<TSchema extends Record<string, unknown> = Record<string
     }
     
     return tables;
+  }
+
+  /**
+   * 发现某类型数据的所有位置
+   * @param rdfClass RDF 类型 URI
+   * @param options 可选的过滤选项
+   * @returns 数据位置列表
+   * 
+   * @example
+   * ```typescript
+   * // 发现所有 Person 类型的数据位置
+   * const locations = await db.discover('https://schema.org/Person');
+   * 
+   * // 按 appId 过滤
+   * const acmeLocations = await db.discover('https://schema.org/Person', { 
+   *   appId: 'https://acme.com/app#id' 
+   * });
+   * ```
+   */
+  async discover(rdfClass: string, options?: import('./discovery').DiscoverOptions): Promise<import('./discovery').DataLocation[]> {
+    return this.dialect.discoverDataLocations(rdfClass, options);
+  }
+
+  /**
+   * 获取所有数据注册信息
+   * @returns 所有注册的数据信息列表
+   * 
+   * @example
+   * ```typescript
+   * const allRegistrations = await db.discoverAll();
+   * for (const reg of allRegistrations) {
+   *   console.log(`${reg.rdfClass} at ${reg.container}`);
+   *   console.log(`  Shape: ${reg.shape}`);
+   *   console.log(`  Registered by: ${reg.registeredBy}`);
+   * }
+   * ```
+   */
+  async discoverAll(): Promise<import('./discovery').DataRegistrationInfo[]> {
+    return this.dialect.discoverAll();
+  }
+
+  /**
+   * 按应用 ID 发现数据位置
+   * @param appId 应用标识符
+   * @returns 该应用注册的数据位置列表
+   * 
+   * @example
+   * ```typescript
+   * const acmeData = await db.discoverByApp('https://acme.com/app#id');
+   * ```
+   */
+  async discoverByApp(appId: string): Promise<import('./discovery').DataLocation[]> {
+    return this.dialect.discoverByApp(appId);
+  }
+
+  /**
+   * 从 DataLocation 创建 PodTable
+   * 如果 location 有 shape，会加载 Shape 并生成完整的表定义
+   * 
+   * @param location 数据位置信息
+   * @param options 转换选项，可指定使用哪个 Shape
+   * @returns PodTable 实例
+   * 
+   * @example
+   * ```typescript
+   * // 使用第一个可用的 Shape
+   * const table = await db.locationToTable(location);
+   * 
+   * // 指定使用某个 app 注册的 Shape
+   * const table = await db.locationToTable(location, { 
+   *   appId: 'https://acme.com/app#id' 
+   * });
+   * 
+   * // 直接传入 ShapeInfo 对象
+   * const table = await db.locationToTable(location, { 
+   *   shape: location.shapes[0] 
+   * });
+   * 
+   * // 或者传入 Shape URL
+   * const table = await db.locationToTable(location, { 
+   *   shape: 'https://shapes.example/Person.shacl' 
+   * });
+   * ```
+   */
+  async locationToTable(
+    location: import('./discovery').DataLocation, 
+    options?: import('./discovery').LocationToTableOptions
+  ): Promise<PodTable> {
+    const opts = options ?? {};
+
+    // 1. 选择 Shape（按优先级：shape > appId > 默认第一个）
+    let selectedShape: import('./discovery').ShapeInfo | undefined;
+    
+    if (opts.shape) {
+      // 直接指定 Shape
+      if (typeof opts.shape === 'string') {
+        // Shape URL
+        selectedShape = location.shapes.find(s => s.url === opts.shape);
+        if (!selectedShape) {
+          // URL 不在 shapes 列表中，创建临时 ShapeInfo
+          selectedShape = { url: opts.shape, source: 'config' };
+        }
+      } else {
+        // ShapeInfo 对象
+        selectedShape = opts.shape;
+      }
+    } else if (opts.appId) {
+      // 按 appId 选择
+      selectedShape = location.shapes.find(s => s.registeredBy === opts.appId);
+      if (!selectedShape) {
+        throw new Error(`[locationToTable] No shape found for appId: ${opts.appId}`);
+      }
+    } else {
+      // 默认使用第一个
+      selectedShape = location.shapes[0];
+    }
+
+    // 2. 如果有 Shape，加载并生成表
+    if (selectedShape?.url) {
+      const shapeManager = this.dialect.getShapeManager();
+      const shape = await shapeManager.loadShape(selectedShape.url, this.dialect.getAuthenticatedFetch());
+      
+      if (shape) {
+        console.log(`[locationToTable] Loaded shape: ${selectedShape.url} (${shape.properties.length} properties)`);
+        if (selectedShape.registeredBy) {
+          console.log(`[locationToTable] -> registeredBy: ${selectedShape.registeredBy}`);
+        }
+        const generated = shapeManager.shapeToTable(shape, location.container);
+        
+        // 初始化表
+        await this.init(generated.table);
+        return generated.table;
+      }
+    }
+
+    // 3. 没有 Shape，返回仅含 id 的基础表
+    console.log(`[locationToTable] No shape available, creating basic table for container: ${location.container}`);
+    const { podTable, string } = await import('./pod-table');
+    
+    const tableName = this.extractContainerName(location.container);
+    
+    const table = podTable(tableName, {
+      id: string('id').primaryKey()
+    }, {
+      type: 'http://www.w3.org/2000/01/rdf-schema#Resource',
+      containerPath: location.container
+    });
+
+    await this.init(table);
+    return table;
+  }
+
+  /**
+   * 从容器 URL 提取表名
+   */
+  private extractContainerName(containerUrl: string): string {
+    // 去掉末尾斜杠
+    const url = containerUrl.replace(/\/$/, '');
+    const lastSlash = url.lastIndexOf('/');
+    if (lastSlash >= 0) {
+      return url.substring(lastSlash + 1).toLowerCase() || 'data';
+    }
+    return 'data';
+  }
+
+  /**
+   * 发现并转换为表 - 支持按 appId 过滤
+   * 
+   * @param rdfClass RDF 类型 URI
+   * @param options 发现选项
+   * @param tableOptions 转表选项（指定使用哪个 Shape）
+   * 
+   * @example
+   * ```typescript
+   * // 发现所有 Person 表
+   * const allPersonTables = await db.discoverTablesFor('schema:Person');
+   * 
+   * // 只要 Acme app 的 Person 表，并使用 Acme 的 Shape
+   * const acmePersonTable = await db.discoverTablesFor('schema:Person', 
+   *   { appId: 'https://acme.com/app#id' },
+   *   { appId: 'https://acme.com/app#id' }
+   * );
+   * ```
+   */
+  async discoverTablesFor(
+    rdfClass: string, 
+    options?: import('./discovery').DiscoverOptions,
+    tableOptions?: import('./discovery').LocationToTableOptions
+  ): Promise<PodTable[]> {
+    const locations = await this.discover(rdfClass, options);
+    const tables: PodTable[] = [];
+    
+    for (const location of locations) {
+      const table = await this.locationToTable(location, tableOptions);
+      tables.push(table);
+    }
+    
+    return tables;
+  }
+
+  /**
+   * 从 predicate URI 提取列名
+   */
+  private predicateToColumnName(predicate: string): string {
+    const hashIndex = predicate.lastIndexOf('#');
+    if (hashIndex >= 0) {
+      return predicate.substring(hashIndex + 1);
+    }
+    
+    const slashIndex = predicate.lastIndexOf('/');
+    if (slashIndex >= 0) {
+      return predicate.substring(slashIndex + 1);
+    }
+    
+    return predicate;
   }
 
   /**

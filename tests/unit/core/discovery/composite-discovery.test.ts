@@ -10,7 +10,7 @@ describe('CompositeDiscovery', () => {
       isRegistered: vi.fn().mockResolvedValue(false)
     };
     const strategy2: DataDiscovery = {
-      discover: vi.fn().mockResolvedValue([{ container: 'https://example.com/data', source: 'interop' }]),
+      discover: vi.fn().mockResolvedValue([{ container: 'https://example.com/data', shapes: [], source: 'interop' }]),
       register: vi.fn(),
       isRegistered: vi.fn().mockResolvedValue(true)
     };
@@ -31,7 +31,7 @@ describe('CompositeDiscovery', () => {
       isRegistered: vi.fn()
     };
     const strategy2: DataDiscovery = {
-      discover: vi.fn().mockResolvedValue([{ container: 'https://example.com/data', source: 'typeindex' }]),
+      discover: vi.fn().mockResolvedValue([{ container: 'https://example.com/data', shapes: [], source: 'typeindex' }]),
       register: vi.fn(),
       isRegistered: vi.fn()
     };

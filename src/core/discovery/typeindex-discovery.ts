@@ -1,6 +1,6 @@
 import { PodTable } from '../pod-table';
 import { TypeIndexManager, TypeIndexEntry } from '../typeindex-manager';
-import { DataDiscovery, DataLocation } from './types';
+import { DataDiscovery, DataLocation, DiscoverOptions, RegisterOptions } from './types';
 import { subjectResolver } from '../subject';
 
 /**
@@ -18,7 +18,7 @@ export class TypeIndexDiscovery implements DataDiscovery {
   /**
    * 注册表的类型到 TypeIndex
    */
-  async register(table: PodTable): Promise<void> {
+  async register(table: PodTable, _options?: RegisterOptions): Promise<void> {
     const skipTypeIndex = !table.shouldRegisterTypeIndex?.();
     if (skipTypeIndex) {
       console.log(`Table ${table.config.name} has autoRegister disabled, skipping TypeIndex registration`);
@@ -84,7 +84,7 @@ export class TypeIndexDiscovery implements DataDiscovery {
   /**
    * 发现某类型数据的位置
    */
-  async discover(rdfClass: string): Promise<DataLocation[]> {
+  async discover(rdfClass: string, _options?: DiscoverOptions): Promise<DataLocation[]> {
     const locations: DataLocation[] = [];
     
     // 查找 public 和 private
@@ -93,6 +93,7 @@ export class TypeIndexDiscovery implements DataDiscovery {
     for (const entry of entries) {
       locations.push({
         container: entry.instanceContainer ?? entry.containerPath,
+        shapes: [],  // TypeIndex 不提供 Shape 信息
         source: 'typeindex'
       });
     }

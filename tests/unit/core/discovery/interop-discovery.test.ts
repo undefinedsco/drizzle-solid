@@ -48,32 +48,43 @@ describe('InteropDiscovery', () => {
     const dataRegistryUrl = 'https://alice.example/data/registry';
     const registrationUrl = 'https://alice.example/data/registration1';
     const shapeTreeUrl = 'https://shapes.example/PersonTree';
+    const shapeUrl = 'https://shapes.example/Person.shacl';
     const targetClass = 'https://schema.org/Person';
+    const registeredBy = 'https://app.example/id';
 
     // 1. Profile -> RegistrySet
     vi.mocked(solidClient.getSolidDataset).mockResolvedValueOnce({} as any);
     vi.mocked(solidClient.getThing).mockReturnValueOnce({} as any);
     vi.mocked(solidClient.getUrlAll).mockReturnValueOnce([registrySetUrl]);
 
-    // 2. RegistrySet -> DataRegistry
+    // 2. RegistrySet -> DataRegistry (discoverDataRegistrations)
     vi.mocked(solidClient.getSolidDataset).mockResolvedValueOnce({} as any);
     vi.mocked(solidClient.getThing).mockReturnValueOnce({} as any);
-    vi.mocked(solidClient.getUrlAll).mockReturnValueOnce([dataRegistryUrl]);
+    vi.mocked(solidClient.getUrlAll).mockReturnValueOnce([dataRegistryUrl]); // hasDataRegistry
 
     // 3. DataRegistry -> DataRegistration
     vi.mocked(solidClient.getSolidDataset).mockResolvedValueOnce({} as any);
     vi.mocked(solidClient.getThing).mockReturnValueOnce({} as any);
-    vi.mocked(solidClient.getUrlAll).mockReturnValueOnce([registrationUrl]);
+    vi.mocked(solidClient.getUrlAll).mockReturnValueOnce([registrationUrl]); // hasDataRegistration
 
-    // 4. DataRegistration -> ShapeTree
+    // 4. DataRegistration -> ShapeTree + registeredBy
     vi.mocked(solidClient.getSolidDataset).mockResolvedValueOnce({} as any);
     vi.mocked(solidClient.getThing).mockReturnValueOnce({} as any);
-    vi.mocked(solidClient.getUrl).mockReturnValueOnce(shapeTreeUrl); // registeredShapeTree
+    vi.mocked(solidClient.getUrl)
+      .mockReturnValueOnce(shapeTreeUrl)    // registeredShapeTree
+      .mockReturnValueOnce(registeredBy);   // registeredBy
 
-    // 5. ShapeTree -> expectsType
+    // 5. ShapeTree -> expectsType + shape (resolveShapeTree)
     vi.mocked(solidClient.getSolidDataset).mockResolvedValueOnce({} as any);
     vi.mocked(solidClient.getThing).mockReturnValueOnce({} as any);
-    vi.mocked(solidClient.getUrl).mockReturnValueOnce(targetClass); // expectsType
+    vi.mocked(solidClient.getUrl)
+      .mockReturnValueOnce(targetClass)     // expectsType
+      .mockReturnValueOnce(shapeUrl);       // shape
+
+    // 6. discoverAccessGrants needs RegistrySet again for AgentRegistry
+    vi.mocked(solidClient.getSolidDataset).mockResolvedValueOnce({} as any);
+    vi.mocked(solidClient.getThing).mockReturnValueOnce({} as any);
+    vi.mocked(solidClient.getUrlAll).mockReturnValueOnce([]); // hasAgentRegistry - empty
 
     const result = await discovery.discover(targetClass);
 
@@ -81,7 +92,12 @@ describe('InteropDiscovery', () => {
     expect(result[0]).toEqual({
       container: registrationUrl,
       source: 'interop',
-      shape: shapeTreeUrl
+      shapes: [{
+        url: shapeUrl,
+        shapeTree: shapeTreeUrl,
+        registeredBy: registeredBy,
+        source: 'interop'
+      }]
     });
   });
 });

@@ -1299,8 +1299,28 @@ export class PodDialect {
    * @param rdfClass RDF 类型 URI
    * @returns 数据位置列表
    */
-  async discoverDataLocations(rdfClass: string): Promise<import('./discovery').DataLocation[]> {
-    return this.discovery.discover(rdfClass);
+  async discoverDataLocations(rdfClass: string, options?: import('./discovery').DiscoverOptions): Promise<import('./discovery').DataLocation[]> {
+    return this.discovery.discover(rdfClass, options);
+  }
+
+  /**
+   * 获取所有数据注册信息
+   */
+  async discoverAll(): Promise<import('./discovery').DataRegistrationInfo[]> {
+    if (this.discovery.discoverAll) {
+      return this.discovery.discoverAll();
+    }
+    return [];
+  }
+
+  /**
+   * 按应用 ID 发现数据位置
+   */
+  async discoverByApp(appId: string): Promise<import('./discovery').DataLocation[]> {
+    if (this.discovery.discoverByApp) {
+      return this.discovery.discoverByApp(appId);
+    }
+    return [];
   }
 
   // 添加数据源进行联邦查询（高级用法）
