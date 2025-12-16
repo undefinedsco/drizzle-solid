@@ -21,6 +21,35 @@ const XSD = 'http://www.w3.org/2001/XMLSchema#';
  * 三元组构建器实现
  */
 export class TripleBuilderImpl implements TripleBuilder {
+  /** 表注册表：rdfClass -> tables[]（同一 class 可能对应多个表） */
+  private tableRegistry?: Map<string, PodTable[]>;
+
+  /** 表名注册表：tableName -> table（用于明确指定表名时查找） */
+  private tableNameRegistry?: Map<string, PodTable>;
+
+  /** 基础 URI */
+  private baseUri?: string;
+
+  /**
+   * 设置表注册表（用于 URI 引用自动补全）
+   * @param classRegistry rdfClass -> tables[] 的映射
+   * @param nameRegistry tableName -> table 的映射
+   */
+  setTableRegistry(
+    classRegistry: Map<string, PodTable[]>,
+    nameRegistry: Map<string, PodTable>
+  ): void {
+    this.tableRegistry = classRegistry;
+    this.tableNameRegistry = nameRegistry;
+  }
+
+  /**
+   * 设置基础 URI
+   */
+  setBaseUri(uri: string): void {
+    this.baseUri = uri;
+  }
+
   /**
    * 构建上下文
    */
@@ -28,6 +57,9 @@ export class TripleBuilderImpl implements TripleBuilder {
     return {
       resolveInlineChildUri: this.resolveInlineChildUri.bind(this),
       getNamespaceUri: this.getNamespaceUri.bind(this),
+      baseUri: this.baseUri,
+      tableRegistry: this.tableRegistry,
+      tableNameRegistry: this.tableNameRegistry,
     };
   }
 

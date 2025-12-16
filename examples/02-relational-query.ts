@@ -1,7 +1,7 @@
-import { drizzle } from '../src/driver';
-import { podTable, string, uri } from '../src/core/pod-table';
+import { drizzle, podTable, string, uri } from 'drizzle-solid';
 import { relations } from 'drizzle-orm';
 import { getAuthenticatedSession, getPodBaseUrl } from './utils/auth';
+import type { Session } from '@inrupt/solid-client-authn-node';
 
 async function run(providedSession?: Session) {
   const session = providedSession || await getAuthenticatedSession();
@@ -20,7 +20,9 @@ async function run(providedSession?: Session) {
     id: string('id').primaryKey(),
     title: string('title').predicate('http://schema.org/headline'),
     // 定义外键关联：authorId 存储用户的 URI
-    authorId: uri('author').predicate('http://schema.org/author')
+    authorId: uri('author')
+      .predicate('http://schema.org/author')
+      .reference(users) // 支持传相对 ID 自动补全为用户 IRI
   }, {
     base: `${podBase}data/posts.ttl`,
     type: 'http://schema.org/CreativeWork'
@@ -48,7 +50,8 @@ async function run(providedSession?: Session) {
   } catch {}
 
   await db.insert(users).values({ id: 'alice', name: 'Alice' });
-  await db.insert(posts).values({ id: 'post-1', title: 'Alice\'s Post', authorId: `${podBase}data/users.ttl#alice` });
+  // 可以直接传相对 ID：会根据 users 表的 base/subjectTemplate 自动补全为完整 IRI
+  await db.insert(posts).values({ id: 'post-1', title: 'Alice\'s Post', authorId: 'alice' });
 
   // --- 核心展示：Query API ---
   

@@ -31,7 +31,7 @@ export class InlineObjectHandler implements ColumnHandler {
     return false;
   }
 
-  formatValue(value: unknown, _column: PodColumnBase): RdfTerm {
+  formatValue(value: unknown, _column: PodColumnBase, _context?: BuildContext): RdfTerm {
     // 内联对象的值是子对象 URI (NamedNode)
     // 实际的 URI 在 buildTriples 中通过 context 生成
     if (typeof value === 'string') {

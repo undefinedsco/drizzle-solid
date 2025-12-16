@@ -157,6 +157,9 @@ const users = podTable('users', {
 }, {
   type: 'http://schema.org/Person',
   base: '/data/users/',
+  // document 模式下 fragment 是“可选的”，完全由 subjectTemplate 决定：
+  // - '{id}.ttl'      -> /data/users/alice.ttl
+  // - '{id}.ttl#it'   -> /data/users/alice.ttl#it（区分“文档”与“文档描述的对象”）
   subjectTemplate: '{id}.ttl',
   sparqlEndpoint: '/data/users/-/sparql'
 });

@@ -17,6 +17,14 @@
 
 ## 📝 详细变更
 
+## 📅 日期：2025-12-16
+
+### 🎯 主题 URI 与引用补全（LDP）
+- 默认 `subjectTemplate` 推断：Document 模式默认 `'{id}.ttl'`（不强制 `#it`），Fragment 模式默认 `'#\{id\}'`；如需 `#it/#me` 由 `subjectTemplate` 显式控制。
+- `reference(...)` 支持三种输入：表对象 / 表名 / class URI，并在同 class 多表时提示歧义。
+- `uri()`/引用字段支持相对 ID 自动补全为完整 IRI（依赖 `drizzle(session, { schema })` 提供 schema）。
+- 文档与 examples：补充 `subjectTemplate` 与 `reference` 说明；examples 改为从 `drizzle-solid` 包入口导入，避免本地 `src/` 依赖。
+
 ### 1. 核心架构变更 (778 additions, 466 deletions)
 
 #### 1.1 `src/core/execution/sparql-strategy.ts` (+159/-159)

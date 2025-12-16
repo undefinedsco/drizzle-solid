@@ -39,7 +39,9 @@ export interface PodColumnOptions {
   required?: boolean;
   defaultValue?: unknown;
   predicate?: string; // 可选的自定义 predicate
-  referenceTarget?: string; // 引用的目标 RDF 类
+  referenceTarget?: string; // 引用的目标 RDF 类（class URI）
+  referenceTableName?: string; // 引用的目标表名（用于解决同一 class 多表的歧义）
+  referenceTable?: PodTable; // 引用的目标表对象（直接引用，优先级最高）
   notNull?: boolean;
   // Array support
   baseType?: ColumnBuilderDataType; // 数组元素的基础类型
@@ -250,13 +252,38 @@ export class ColumnBuilder<
     return this as unknown as ColumnBuilder<TType, TElement, TNotNull, THasDefault>;
   }
 
-  reference(rdfClassUri: string): ColumnBuilder<TType, TElement, TNotNull, THasDefault> {
-    // 验证是否是有效的 RDF Class URI
-    if (!rdfClassUri.startsWith('http://') && !rdfClassUri.startsWith('https://')) {
-      throw new Error(`Invalid RDF Class URI: ${rdfClassUri}. Must be a full HTTP(S) URL.`);
+  /**
+   * 设置引用目标
+   * 
+   * 支持三种输入格式：
+   * 1. class URI 字符串 (https://...) - 从 tableRegistry 按 class 查找
+   * 2. 表名字符串 (非 URL 格式) - 从 tableNameRegistry 按表名查找
+   * 3. PodTable 对象 - 直接使用，优先级最高
+   * 
+   * @example
+   * // 使用 class URI（自动推导表）
+   * author: uri('author').reference('https://schema.org/Person')
+   * 
+   * // 使用表名（解决同 class 多表歧义）
+   * author: uri('author').reference('users_public')
+   * 
+   * // 使用表对象（类型安全，但注意循环依赖）
+   * author: uri('author').reference(usersTable)
+   */
+  reference(target: string | PodTable): ColumnBuilder<TType, TElement, TNotNull, THasDefault> {
+    if (typeof target === 'string') {
+      // 字符串：根据格式判断是 class URI 还是表名
+      if (target.startsWith('http://') || target.startsWith('https://')) {
+        // class URI
+        this.options = { ...this.options, referenceTarget: target };
+      } else {
+        // 表名
+        this.options = { ...this.options, referenceTableName: target };
+      }
+    } else {
+      // PodTable 对象
+      this.options = { ...this.options, referenceTable: target };
     }
-    
-    this.options = { ...this.options, referenceTarget: rdfClassUri };
     return this as unknown as ColumnBuilder<TType, TElement, TNotNull, THasDefault>;
   }
 
@@ -466,12 +493,22 @@ export abstract class PodColumnBase<
 
   // 检查是否是引用类型
   isReference(): boolean {
-    return !!this.options.referenceTarget;
+    return !!(this.options.referenceTarget || this.options.referenceTableName || this.options.referenceTable);
   }
 
-  // 获取引用目标
+  // 获取引用目标 class URI
   getReferenceTarget(): string | undefined {
     return this.options.referenceTarget;
+  }
+
+  // 获取引用的目标表名
+  getReferenceTableName(): string | undefined {
+    return this.options.referenceTableName;
+  }
+
+  // 获取引用的目标表对象
+  getReferenceTable(): PodTable | undefined {
+    return this.options.referenceTable;
   }
 
   // 链式方法 - 简化版本，直接返回 this
@@ -499,8 +536,24 @@ export abstract class PodColumnBase<
     return this;
   }
 
-  reference(targetClass: string): this {
-    this.options.referenceTarget = targetClass;
+  /**
+   * 设置引用目标
+   * 
+   * 支持三种输入格式：
+   * 1. class URI 字符串 (https://...) - 从 tableRegistry 按 class 查找
+   * 2. 表名字符串 (非 URL 格式) - 从 tableNameRegistry 按表名查找
+   * 3. PodTable 对象 - 直接使用，优先级最高
+   */
+  reference(target: string | PodTable): this {
+    if (typeof target === 'string') {
+      if (target.startsWith('http://') || target.startsWith('https://')) {
+        this.options.referenceTarget = target;
+      } else {
+        this.options.referenceTableName = target;
+      }
+    } else {
+      this.options.referenceTable = target;
+    }
     return this;
   }
 
@@ -723,6 +776,7 @@ export class PodTable<TColumns extends Record<string, PodColumnBase<any, any, an
     const subjectTemplateInfo = this.resolveSubjectTemplate(
       options.subjectTemplate,
       baseConfig.resourcePath,
+      baseConfig.containerPath,
       name
     );
     this.subjectTemplate = subjectTemplateInfo.template;
@@ -975,7 +1029,7 @@ export class PodTable<TColumns extends Record<string, PodColumnBase<any, any, an
       (this as any)._!.config.containerPath = this.config.containerPath;
     }
     if (!this.hasCustomSubjectTemplate) {
-      this.subjectTemplate = this.buildDefaultSubjectTemplate(this.config.base, this.config.name);
+      this.subjectTemplate = this.buildDefaultSubjectTemplate(this.config.base, this.config.containerPath, this.config.name);
       this.config.subjectTemplate = this.subjectTemplate;
       if ((this as any)._?.config) {
         (this as any)._!.config.subjectTemplate = this.subjectTemplate;
@@ -1004,27 +1058,35 @@ export class PodTable<TColumns extends Record<string, PodColumnBase<any, any, an
   private resolveSubjectTemplate(
     template: string | undefined,
     resourcePath: string,
+    containerPath: string,
     tableName: string
   ): { template: string; isCustom: boolean } {
     if (template && template.trim().length > 0) {
       return { template: template.trim(), isCustom: true };
     }
     return {
-      template: this.buildDefaultSubjectTemplate(resourcePath, tableName),
+      template: this.buildDefaultSubjectTemplate(resourcePath, containerPath, tableName),
       isCustom: false
     };
   }
 
-  private buildDefaultSubjectTemplate(resourcePath: string, tableName = 'resource'): string {
-    const basePath =
-      resourcePath && resourcePath.length > 0
-        ? resourcePath
-        : `/${tableName}.ttl`;
-    const trimmed = basePath.endsWith('#') ? basePath.slice(0, -1) : basePath;
-    if (trimmed.includes('{')) {
-      return trimmed;
+  private buildDefaultSubjectTemplate(resourcePath: string, containerPath: string, tableName = 'resource'): string {
+    const normalizedContainer = this.ensureTrailingSlash(containerPath || '');
+
+    // If the table base is a container (document mode), containerPath should end with `${tableName}/`.
+    // Otherwise, assume fragment mode.
+    const isDocumentMode = normalizedContainer.endsWith(`${tableName}/`);
+
+    if (isDocumentMode) {
+      return '{id}.ttl';
     }
-    return `${trimmed}#{id}`;
+
+    // Fragment mode: all rows in one resource, distinguished by fragment.
+    // resourcePath is expected to be the concrete document path (e.g. `/data/tags.ttl`).
+    if (resourcePath && resourcePath.includes('{')) {
+      return resourcePath;
+    }
+    return '#{id}';
   }
 
   private buildTableMapping(): PodTableMapping {

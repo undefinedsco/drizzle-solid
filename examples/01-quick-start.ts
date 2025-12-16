@@ -7,8 +7,7 @@
  * 3. 执行 SQL 风格的 CRUD
  */
 
-import { drizzle } from '../src/driver';
-import { podTable, string, datetime } from '../src/core/pod-table';
+import { drizzle, podTable, string, datetime } from 'drizzle-solid';
 import { getAuthenticatedSession, getPodBaseUrl } from './utils/auth';
 import { v4 as uuid } from 'uuid';
 
@@ -29,12 +28,16 @@ async function run(providedSession?: Session) {
     content: string('content').predicate('http://schema.org/text'),
     createdAt: datetime('createdAt').predicate('http://schema.org/dateCreated')
   }, {
-    // 数据将存储在 /data/posts.ttl 文件中 (Fragment 模式)
-    base: `${podBase}data/posts.ttl`, 
+    // 数据将存储在 /data/posts/ 目录下（Document 模式：每条记录一个文件）
+    // - 默认不带 fragment：{id}.ttl -> .../posts/<id>.ttl
+    // - 也可以显式带 fragment：{id}.ttl#it -> .../posts/<id>.ttl#it
+    base: `${podBase}data/posts/`,
+    subjectTemplate: '{id}.ttl',
     type: 'http://schema.org/CreativeWork'
   });
 
   const db = drizzle(session);
+  await db.init([posts]);
 
   // 3. 写入数据 (INSERT)
   const newId = uuid();

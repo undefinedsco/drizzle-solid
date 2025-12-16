@@ -98,3 +98,7 @@ jspm_packages/
 .cursor
 openspec
 .npm-cache
+
+# Local convenience scripts (do not commit)
+codebuddy.sh
+codex.sh

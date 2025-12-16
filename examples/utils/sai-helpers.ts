@@ -1,8 +1,7 @@
-import { podTable, id, uri } from '../../src/core/pod-table';
-import { INTEROP } from '../../src/core/discovery/interop-types';
+import { podTable, id, uri, INTEROP } from 'drizzle-solid';
 import { Session } from '@inrupt/solid-client-authn-node';
 import { getSolidDataset, getThing, setUrl, setThing, saveSolidDatasetAt } from '@inrupt/solid-client';
-import { drizzle } from '../../src/driver';
+import { drizzle } from 'drizzle-solid';
 
 // SAI Table Definitions (Internal Helper)
 export const getSaiTables = (podBase: string) => {

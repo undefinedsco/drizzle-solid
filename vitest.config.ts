@@ -46,6 +46,7 @@ export default defineConfig({
   resolve: {
     alias: {
       '@src': path.resolve(__dirname, './src'),
+      'drizzle-solid': path.resolve(__dirname, './src/index.ts'),
     },
   },
 });

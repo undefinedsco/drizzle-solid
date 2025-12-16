@@ -9,9 +9,7 @@
  * - 支持按 appId 或 Shape URL 选择使用哪个 Shape
  */
 
-import { drizzle } from '../src/driver';
-import { InteropDiscovery } from '../src/core/discovery';
-import type { DataLocation, ShapeInfo } from '../src/core/discovery/types';
+import { drizzle, InteropDiscovery, type DataLocation, type ShapeInfo } from 'drizzle-solid';
 import { Session } from '@inrupt/solid-client-authn-node';
 
 // ============================================================

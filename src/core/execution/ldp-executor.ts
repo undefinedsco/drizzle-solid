@@ -6,14 +6,14 @@
 
 import type { PodTable } from '../pod-table';
 import type { ComunicaSPARQLExecutor } from '../sparql-executor';
-import { tripleBuilder } from '../triple/builder';
+import { TripleBuilderImpl } from '../triple/builder';
 import type { TripleBuilder } from '../triple/types';
 import { subjectResolver } from '../subject';
 
 export class LdpExecutor {
   private sparqlExecutor: ComunicaSPARQLExecutor;
   private fetchFn: typeof fetch;
-  private tripleBuilder: TripleBuilder;
+  private tripleBuilder: TripleBuilderImpl;
   
   // 用于跟踪 N3 Patch 请求数
   private n3PatchCounter = 0;
@@ -21,7 +21,26 @@ export class LdpExecutor {
   constructor(sparqlExecutor: ComunicaSPARQLExecutor, fetchFn: typeof fetch) {
     this.sparqlExecutor = sparqlExecutor;
     this.fetchFn = fetchFn;
-    this.tripleBuilder = tripleBuilder;
+    this.tripleBuilder = new TripleBuilderImpl();
+  }
+
+  /**
+   * 设置表注册表（用于 URI 引用自动补全）
+   * @param classRegistry rdfClass -> tables[] 的映射
+   * @param nameRegistry tableName -> table 的映射
+   */
+  setTableRegistry(
+    classRegistry: Map<string, PodTable[]>,
+    nameRegistry: Map<string, PodTable>
+  ): void {
+    this.tripleBuilder.setTableRegistry(classRegistry, nameRegistry);
+  }
+
+  /**
+   * 设置基础 URI
+   */
+  setBaseUri(uri: string): void {
+    this.tripleBuilder.setBaseUri(uri);
   }
 
   /**
@@ -198,8 +217,14 @@ export class LdpExecutor {
       // 额外的内联对象清理逻辑
       const entries = Object.entries(data).filter(([_, value]) => value !== undefined);
       for (const [key, rawValue] of entries) {
+        // 跳过系统字段
+        if (key === '@id' || key === 'subject') continue;
+        
         const col = (table as any).columns?.[key] as any;
         if (!col) continue;
+        
+        // 跳过虚拟 ID 列
+        if ((col as any)._virtualId || col.options?.predicate === '@id') continue;
         
         // 检查是否是内联对象列
         const isInline = col.dataType === 'object' || col.dataType === 'json' || 
@@ -320,8 +345,14 @@ export class LdpExecutor {
     for (const [key, rawValue] of Object.entries(data)) {
       if (rawValue === undefined) continue;
       
+      // 跳过 @id 和 subject 等系统字段（不允许修改主键）
+      if (key === '@id' || key === 'subject') continue;
+      
       const col = (table as any).columns?.[key] as any;
       if (!col) continue;
+      
+      // 跳过虚拟 ID 列（predicate 是 @id，不是有效的 RDF URI）
+      if ((col as any)._virtualId || col.options?.predicate === '@id') continue;
       
       // 内联对象特殊处理在 executeUpdate 主循环中做
       const isInline = col.dataType === 'object' || col.dataType === 'json' || 

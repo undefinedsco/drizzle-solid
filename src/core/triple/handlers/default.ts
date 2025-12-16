@@ -22,7 +22,7 @@ export class DefaultHandler implements ColumnHandler {
     return type === 'string' || type === 'integer' || type === 'boolean' || type === 'datetime';
   }
 
-  formatValue(value: unknown, column: PodColumnBase): RdfTerm {
+  formatValue(value: unknown, column: PodColumnBase, _context?: BuildContext): RdfTerm {
     switch (column.dataType) {
       case 'string':
         return {

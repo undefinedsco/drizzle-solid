@@ -8,8 +8,7 @@
  * 一切都通过 SAI (Solid Application Interoperability) 自动发现。
  */
 
-import { drizzle } from '../src/driver';
-import { podTable, string, datetime, uri, id } from '../src/core/pod-table';
+import { drizzle, podTable, string, datetime, uri, id } from 'drizzle-solid';
 import { Session } from '@inrupt/solid-client-authn-node';
 
 // 1. 定义 Schema

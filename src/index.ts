@@ -93,8 +93,12 @@ export type {
 // DataDiscovery 数据发现
 export {
   TypeIndexDiscovery,
+  InteropDiscovery,
+  INTEROP,
+  SHAPETREES,
   type DataDiscovery,
   type DataLocation,
+  type ShapeInfo,
   type DiscoverOptions,
 } from './core/discovery';
 

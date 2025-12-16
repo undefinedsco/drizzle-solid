@@ -8,6 +8,7 @@ import {
   date,
   uri,
   iri,
+  id,
   and,
   gte,
   inArray,
@@ -855,6 +856,152 @@ SELECT ?post ?author WHERE {
     } finally {
       await contactSession.fetch(resource, { method: 'DELETE' }).catch(() => undefined);
       await contactSession.fetch(probeContainer, { method: 'DELETE' }).catch(() => undefined);
+    }
+  });
+
+  test('supports inverse columns in Document Mode (subjectTemplate)', async () => {
+    const timestamp = Date.now();
+    const messagesPath = `/inverse-doc-${timestamp}/messages/`;
+
+    // Document Mode 表（有 subjectTemplate）
+    const messagesTable = podTable('messages_doc', {
+      id: id('id'),
+      content: string('content').predicate('https://schema.org/text'),
+      threadId: uri('threadId')
+        .predicate('https://www.w3.org/ns/sioc#has_member')
+        .inverse()
+    }, {
+      base: messagesPath,
+      type: 'https://schema.org/Message',
+      subjectTemplate: '{id}.ttl',  // Document Mode
+      namespace: schemaNamespace,
+      autoRegister: false
+    });
+
+    const docSession = await createTestSession({ skipTypeIndex: true });
+    const messagesContainer = await ensureContainer(docSession, messagesPath);
+    const docDb = drizzle(docSession, { schema: { messages: messagesTable } });
+
+    try {
+      await docDb.init([messagesTable]);
+
+      const msgId = `msg-${timestamp}`;
+      const threadUri = `https://example.org/threads/thread-${timestamp}`;
+
+      // INSERT with inverse column in Document Mode
+      await docDb.insert(messagesTable).values({
+        id: msgId,
+        content: 'Test inverse in Document Mode',
+        threadId: threadUri
+      });
+
+      // Query to verify
+      const results = await docDb.select().from(messagesTable);
+      
+      expect(results).toHaveLength(1);
+      expect(results[0]?.content).toBe('Test inverse in Document Mode');
+      // inverse 字段应该能正确读取
+      expect(results[0]?.threadId).toBe(threadUri);
+
+    } finally {
+      // Cleanup: delete the message file and container
+      const messageFile = `${messagesContainer}msg-${timestamp}.ttl`;
+      await docSession.fetch(messageFile, { method: 'DELETE' }).catch(() => undefined);
+      await docSession.fetch(messagesContainer, { method: 'DELETE' }).catch(() => undefined);
+    }
+  });
+
+  test('UPDATE with URI auto-completion via reference()', async () => {
+    const timestamp = Date.now();
+    const userId1 = `user-${timestamp}-1`;
+    const userId2 = `user-${timestamp}-2`;
+    const postId = `post-${timestamp}`;
+    
+    // 先创建 session 来获取正确的 Pod URL
+    const testSession = await createTestSession({ skipTypeIndex: true });
+    
+    // 使用相对路径创建容器
+    const usersRelPath = `/integration/${timestamp}/uri-update-users/`;
+    const postsRelPath = `/integration/${timestamp}/uri-update-posts/`;
+    
+    const usersContainer = await ensureContainer(testSession, usersRelPath);
+    const postsContainer = await ensureContainer(testSession, postsRelPath);
+    
+    // 定义用户表 - 使用完整的容器 URL
+    const usersTable = podTable('update_test_users', {
+      id: id('id'),
+      name: string('name').predicate('https://schema.org/name'),
+    }, {
+      base: usersContainer,
+      type: 'https://schema.org/Person',
+      subjectTemplate: '{id}.ttl',
+      namespace: schemaNamespace,
+      autoRegister: false
+    });
+
+    // 定义帖子表，author 字段引用用户表 - 使用完整的容器 URL
+    const postsTable = podTable('update_test_posts', {
+      id: id('id'),
+      title: string('title').predicate('https://schema.org/headline'),
+      author: uri('author')
+        .predicate('https://schema.org/author')
+        .reference('update_test_users'), // 使用表名引用
+    }, {
+      base: postsContainer,
+      type: 'https://schema.org/BlogPosting',
+      subjectTemplate: '{id}.ttl',
+      namespace: schemaNamespace,
+      autoRegister: false
+    });
+    
+    // 注册 schema 以启用 tableNameRegistry
+    const testDb = drizzle(testSession, { 
+      schema: { 
+        update_test_users: usersTable, 
+        update_test_posts: postsTable 
+      } 
+    });
+
+    try {
+      await testDb.init([usersTable, postsTable]);
+
+      // 创建两个用户
+      await testDb.insert(usersTable).values([
+        { id: userId1, name: 'Alice' },
+        { id: userId2, name: 'Bob' }
+      ]);
+
+      // 创建帖子，使用相对 ID 作为 author (INSERT 时自动补全)
+      await testDb.insert(postsTable).values({
+        id: postId,
+        title: 'Test Post',
+        author: userId1  // 相对 ID，应该自动补全
+      });
+
+      // 验证 INSERT 自动补全成功
+      let posts = await testDb.select().from(postsTable);
+      expect(posts).toHaveLength(1);
+      expect(posts[0]?.author).toContain(usersContainer);
+      expect(posts[0]?.author).toContain(userId1);
+
+      // UPDATE 时也使用相对 ID (核心测试点)
+      await testDb.update(postsTable).set({
+        author: userId2  // 相对 ID，UPDATE 时也应该自动补全
+      }).where({ id: postId });
+
+      // 验证 UPDATE 自动补全成功
+      posts = await testDb.select().from(postsTable);
+      expect(posts).toHaveLength(1);
+      expect(posts[0]?.author).toContain(usersContainer);
+      expect(posts[0]?.author).toContain(userId2);
+
+    } finally {
+      // Cleanup
+      await testSession.fetch(`${usersContainer}${userId1}.ttl`, { method: 'DELETE' }).catch(() => undefined);
+      await testSession.fetch(`${usersContainer}${userId2}.ttl`, { method: 'DELETE' }).catch(() => undefined);
+      await testSession.fetch(`${postsContainer}${postId}.ttl`, { method: 'DELETE' }).catch(() => undefined);
+      await testSession.fetch(usersContainer, { method: 'DELETE' }).catch(() => undefined);
+      await testSession.fetch(postsContainer, { method: 'DELETE' }).catch(() => undefined);
     }
   });
 

@@ -25,6 +25,7 @@ export interface LdpStrategyDependencies {
   sparqlExecutor: ComunicaSPARQLExecutor;
   sparqlConverter: ASTToSPARQLConverter;
   fetchFn: typeof fetch;
+  ldpExecutor: LdpExecutor;
   getResolver: (table: PodTable) => ResourceResolver;
   listContainerResources: (containerUrl: string) => Promise<string[]>;
   findSubjectsForCondition: (
@@ -53,12 +54,10 @@ export class LdpStrategy implements ExecutionStrategy {
     this.sparqlExecutor = deps.sparqlExecutor;
     this.sparqlConverter = deps.sparqlConverter;
     this.fetchFn = deps.fetchFn;
+    this.ldpExecutor = deps.ldpExecutor;
     this.getResolver = deps.getResolver;
     this.listContainerResources = deps.listContainerResources;
     this.findSubjectsForCondition = deps.findSubjectsForCondition;
-
-    // LdpExecutor handles the actual write operations
-    this.ldpExecutor = new LdpExecutor(this.sparqlExecutor, this.fetchFn);
   }
 
   /**

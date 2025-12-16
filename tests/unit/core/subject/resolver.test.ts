@@ -42,6 +42,32 @@ describe('SubjectResolver', () => {
       expect(resolver.getResourceMode(table)).toBe('fragment');
     });
 
+    it('should set default subjectTemplate for document mode tables', () => {
+      const table = podTable('users', {
+        id: id(),
+        name: string('name').predicate('https://schema.org/name'),
+      }, {
+        base: '/data/users/',
+        type: 'https://schema.org/Person',
+        namespace: ns,
+      });
+
+      expect(table.getSubjectTemplate()).toBe('{id}.ttl');
+    });
+
+    it('should set default subjectTemplate for fragment mode tables', () => {
+      const table = podTable('tags', {
+        id: id(),
+        name: string('name').predicate('https://schema.org/name'),
+      }, {
+        base: '/data/tags.ttl',
+        type: 'https://schema.org/Tag',
+        namespace: ns,
+      });
+
+      expect(table.getSubjectTemplate()).toBe('#{id}');
+    });
+
     it('should respect explicit pattern starting with #', () => {
       const table = podTable('users', {
         id: id(),
@@ -294,6 +320,50 @@ describe('SubjectResolver', () => {
       expect(result!.fragment).toBe('tag-1');
       expect(result!.id).toBe('tag-1');
       expect(result!.mode).toBe('fragment');
+    });
+
+    it('should parse document URI with #it fragment (document mode)', () => {
+      // {id}.ttl#it 模式: 每个用户一个文件，但主体 URI 带 #it fragment
+      const table = podTable('users', {
+        id: id(),
+      }, {
+        base: '/data/users/',
+        subjectTemplate: '{id}.ttl#it',
+        type: 'https://schema.org/Person',
+        namespace: ns,
+      });
+
+      const result = resolver.parse('https://pod.example/data/users/alice.ttl#it', table);
+
+      expect(result).not.toBeNull();
+      expect(result!.uri).toBe('https://pod.example/data/users/alice.ttl#it');
+      expect(result!.resourceUrl).toBe('https://pod.example/data/users/alice.ttl');
+      expect(result!.fragment).toBe('it');
+      // 关键: id 应该是 alice，不是 it
+      expect(result!.id).toBe('alice');
+      expect(result!.mode).toBe('document');
+    });
+
+    it('should parse document URI with #me fragment (document mode)', () => {
+      // {id}.ttl#me 模式: 每个用户一个文件，主体 URI 带 #me fragment
+      const table = podTable('profiles', {
+        id: id(),
+      }, {
+        base: '/data/profiles/',
+        subjectTemplate: '{id}.ttl#me',
+        type: 'https://schema.org/Person',
+        namespace: ns,
+      });
+
+      const result = resolver.parse('https://pod.example/data/profiles/bob.ttl#me', table);
+
+      expect(result).not.toBeNull();
+      expect(result!.uri).toBe('https://pod.example/data/profiles/bob.ttl#me');
+      expect(result!.resourceUrl).toBe('https://pod.example/data/profiles/bob.ttl');
+      expect(result!.fragment).toBe('me');
+      // 关键: id 应该是 bob，不是 me
+      expect(result!.id).toBe('bob');
+      expect(result!.mode).toBe('document');
     });
   });
 

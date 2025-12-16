@@ -7,8 +7,7 @@
  * 3. 在回调中使用 drizzle API 查询最新数据
  */
 
-import { drizzle } from '../src/driver';
-import { podTable, string, datetime } from '../src/core/pod-table';
+import { drizzle, podTable, string, datetime } from 'drizzle-solid';
 import { getAuthenticatedSession, getPodBaseUrl } from './utils/auth';
 import { v4 as uuid } from 'uuid';
 import { eq } from 'drizzle-orm';

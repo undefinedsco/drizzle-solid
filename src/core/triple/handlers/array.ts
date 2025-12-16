@@ -23,7 +23,7 @@ export class ArrayHandler implements ColumnHandler {
     return column.options?.isArray === true || column.dataType === 'array';
   }
 
-  formatValue(value: unknown, column: PodColumnBase): RdfTerm[] {
+  formatValue(value: unknown, column: PodColumnBase, _context?: BuildContext): RdfTerm[] {
     if (!Array.isArray(value)) {
       throw new Error('Array column requires array value');
     }

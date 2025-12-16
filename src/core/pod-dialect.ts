@@ -147,6 +147,7 @@ export class PodDialect {
       sparqlConverter: this.sparqlConverter,
       sessionFetch: this.session.fetch,
       podUrl: this.podUrl,
+      ldpExecutor: this.ldpExecutor,
       getResolver: (table) => this.getResolver(table),
       listContainerResources: (containerUrl) => this.listContainerResources(containerUrl),
       findSubjectsForCondition: (condition, table, resourceUrl) =>
@@ -173,6 +174,40 @@ export class PodDialect {
    */
   getShapeManager(): ShapeManager {
     return this.shapeManager;
+  }
+
+  /**
+   * 设置 schema（表注册表）
+   * 用于 URI 引用字段的自动补全
+   * 
+   * 构建两个注册表：
+   * - tableRegistry: rdfClass -> tables[]（同一 class 可能对应多个表）
+   * - tableNameRegistry: tableName -> table（用于明确指定表名时查找）
+   */
+  setSchema(schema: Record<string, unknown>): void {
+    const tableRegistry = new Map<string, PodTable[]>();
+    const tableNameRegistry = new Map<string, PodTable>();
+    
+    for (const [key, value] of Object.entries(schema)) {
+      if (value && typeof value === 'object' && 'config' in value) {
+        const table = value as PodTable;
+        const rdfClass = table.getType?.() || table.config?.type;
+        const tableName = table.config?.name || key;
+        
+        // 添加到表名注册表
+        tableNameRegistry.set(tableName, table);
+        
+        // 添加到 class 注册表（同一 class 可能对应多个表）
+        if (rdfClass) {
+          const existing = tableRegistry.get(rdfClass) || [];
+          existing.push(table);
+          tableRegistry.set(rdfClass, existing);
+        }
+      }
+    }
+    
+    this.ldpExecutor.setTableRegistry(tableRegistry, tableNameRegistry);
+    this.ldpExecutor.setBaseUri(this.podUrl);
   }
 
   private async findSubjectsForCondition(

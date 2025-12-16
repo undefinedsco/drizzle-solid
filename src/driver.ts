@@ -36,6 +36,11 @@ export function drizzle<TSchema extends Record<string, unknown> = Record<string,
   // 自动连接到Pod
   dialect.connect().catch(console.error);
   
+  // 如果有 schema，设置表注册表（用于 URI 引用自动补全）
+  if (config?.schema) {
+    dialect.setSchema(config.schema as Record<string, unknown>);
+  }
+  
   // 创建PodAsyncSession和PodDatabase
   const podSession = new PodAsyncSession(dialect);
   return new PodDatabase<TSchema>(dialect, podSession, config?.schema);

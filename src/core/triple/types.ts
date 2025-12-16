@@ -70,8 +70,9 @@ export interface ColumnHandler {
    * 格式化值为 RDF 项
    * @param value 原始值
    * @param column 列定义
+   * @param context 构建上下文（可选，用于 URI 补全等）
    */
-  formatValue(value: unknown, column: PodColumnBase): RdfTerm | RdfTerm[];
+  formatValue(value: unknown, column: PodColumnBase, context?: BuildContext): RdfTerm | RdfTerm[];
 
   /**
    * 解析 RDF 值为 JS 值
@@ -113,6 +114,15 @@ export interface BuildContext {
 
   /** 获取命名空间 URI */
   getNamespaceUri: (table: PodTable) => string | undefined;
+
+  /** 基础 URI，用于解析相对 URI */
+  baseUri?: string;
+
+  /** 表注册表：rdfClass -> table[]，用于引用字段自动补全 URI */
+  tableRegistry?: Map<string, PodTable[]>;
+
+  /** 表名注册表：tableName -> table，用于明确指定表名时查找 */
+  tableNameRegistry?: Map<string, PodTable>;
 }
 
 /**

@@ -25,6 +25,16 @@ export const profiles = podTable('profiles', {
 
 > `base` 可以是相对路径（自动拼到当前 Pod 根）或绝对 URL；CRUD 前请调用 `db.init([table])` 以确保容器/资源存在。
 
+## Subject（Document vs Fragment）
+
+`subjectTemplate`（选填）用来决定“每行记录的 subject URI 形状”，也决定数据落在**一个文件**还是**多个文件**里：
+
+- **Document 模式**（每条记录一个文件）：`base` 是容器（以 `/` 结尾），默认 `subjectTemplate: '{id}.ttl'`，subject 形如 `.../users/alice.ttl`。
+  - 如果你希望区分“文档本身”和“文档描述的对象”，可以显式加 fragment：`subjectTemplate: '{id}.ttl#it'` → `.../users/alice.ttl#it`。
+- **Fragment 模式**（多条记录共享一个文件）：`base` 是具体资源（如 `.../tags.ttl`），默认 `subjectTemplate: '#{id}'`，subject 形如 `.../tags.ttl#tag-1`。
+
+这意味着：document 模式下 fragment 是**可选的**，完全由 `subjectTemplate` 控制（不需要额外的 fragment 配置项）。
+
 ## WebID
 WebID 是用户在 Solid 生态中的唯一身份 URL，例如 `https://localhost:3001/alice/profile/card#me`。集成测试会在登录后的 `session.info.webId` 中暴露该地址。
 
@@ -75,6 +85,35 @@ const db = drizzle(session);
 await db.init([contacts]);
 
 > `.inverse()` 会把列映射为 `<object> predicate <subject>`，适合同步 `<org> schema:member <person>` 这类反向边，Drizzle 在 SELECT/INSERT/UPDATE/DELETE 时会自动交换主体与宾语。
+
+### URI 引用与自动补全（reference）
+
+当列是 `uri()` 或 `.reference(...)` 引用字段时，你可以在 INSERT/UPDATE 时只传“相对 ID”，库会根据被引用表的 `base + subjectTemplate` 自动拼出完整 IRI（前提是 `drizzle(session, { schema })` 传入了 schema）：
+
+```ts
+const users = podTable('users', { id: string('id').primaryKey() }, {
+  base: '/data/users/',
+  subjectTemplate: '{id}.ttl',
+  type: 'https://schema.org/Person',
+});
+
+const posts = podTable('posts', {
+  id: string('id').primaryKey(),
+  author: uri('author').predicate('https://schema.org/author').reference(users),
+}, {
+  base: '/data/posts/',
+  subjectTemplate: '{id}.ttl',
+  type: 'https://schema.org/BlogPosting',
+});
+
+const db = drizzle(session, { schema: { users, posts } });
+await db.insert(posts).values({ id: 'post-1', author: 'alice' }); // -> .../users/alice.ttl
+```
+
+`reference(...)` 支持三种写法（用于解决同 class 多表歧义）：
+- `reference(usersTable)`：直接指定表对象（优先级最高）
+- `reference('users')`：指定表名（需要 schema 里存在同名 key 或 table.config.name）
+- `reference('https://schema.org/Person')`：指定 class URI（若同 class 多表会报歧义错误）
 
 ### Drizzle 风格查询助手
 

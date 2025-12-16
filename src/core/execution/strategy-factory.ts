@@ -14,12 +14,14 @@ import type { QueryCondition } from '../query-conditions';
 import type { ExecutionStrategy, ExecutionStrategyFactory } from './types';
 import { LdpStrategy, type LdpStrategyDependencies } from './ldp-strategy';
 import { SparqlStrategy, type SparqlStrategyDependencies } from './sparql-strategy';
+import type { LdpExecutor } from './ldp-executor';
 
 export interface StrategyFactoryDependencies {
   sparqlExecutor: ComunicaSPARQLExecutor;
   sparqlConverter: ASTToSPARQLConverter;
   sessionFetch: typeof fetch;
   podUrl: string;
+  ldpExecutor: LdpExecutor;
   getResolver: (table: PodTable) => ResourceResolver;
   listContainerResources: (containerUrl: string) => Promise<string[]>;
   findSubjectsForCondition: (
@@ -69,6 +71,7 @@ export class ExecutionStrategyFactoryImpl implements ExecutionStrategyFactory {
         sparqlExecutor: this.deps.sparqlExecutor,
         sparqlConverter: this.deps.sparqlConverter,
         fetchFn: this.deps.sessionFetch,
+        ldpExecutor: this.deps.ldpExecutor,
         getResolver: this.deps.getResolver,
         listContainerResources: this.deps.listContainerResources,
         findSubjectsForCondition: this.deps.findSubjectsForCondition

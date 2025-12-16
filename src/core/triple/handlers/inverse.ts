@@ -22,7 +22,7 @@ export class InverseHandler implements ColumnHandler {
     return column.options?.inverse === true;
   }
 
-  formatValue(value: unknown, column: PodColumnBase): RdfTerm {
+  formatValue(value: unknown, column: PodColumnBase, _context?: BuildContext): RdfTerm {
     // 逆向谓词的 object 通常是 URI 引用
     if (column.options?.referenceTarget || column.dataType === 'uri' || this.isUri(value)) {
       return {
