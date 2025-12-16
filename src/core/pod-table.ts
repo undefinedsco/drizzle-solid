@@ -442,12 +442,23 @@ export interface PodTableMapping {
 
 export type RelationKind = 'one' | 'many';
 
+/**
+ * 联邦查询发现函数类型
+ * 接收父记录，返回用于发现的 WebID 或 Pod URL
+ */
+export type DiscoverFunction<TParent = any> = (parent: TParent) => string | string[] | undefined;
+
 export interface RelationDefinition {
   type: RelationKind;
-  table: PodTable<any>;
+  /** 目标表或 schema（联邦查询时使用 PodSchema） */
+  table: PodTable<any> | PodSchema<any>;
   fields?: PodColumnBase[];
   references?: PodColumnBase[];
   relationName?: string;
+  /** 联邦查询：发现函数，用于从父记录获取 WebID 进行数据发现 */
+  discover?: DiscoverFunction;
+  /** 是否为联邦关系（目标是 PodSchema） */
+  isFederated?: boolean;
 }
 
 // 列类型基类
@@ -709,6 +720,39 @@ export class PodArrayColumn<
 }
 
 
+/**
+ * PodSchema - 联邦查询用的 schema 定义
+ * 
+ * 只包含表的结构信息（列、类型、谓词映射），不包含 base
+ * 用于 relations() 中的联邦查询，数据位置通过 discover 动态发现
+ */
+export interface PodSchema<TColumns extends Record<string, PodColumnBase<any, any, any, any>> = Record<string, PodColumnBase<any, any, any, any>>> {
+  /** Schema 标识 */
+  readonly $kind: 'PodSchema';
+  
+  /** 表名 */
+  readonly name: string;
+  
+  /** RDF 类型 */
+  readonly type: string;
+  
+  /** 列定义 */
+  readonly columns: TColumns;
+  
+  /** 命名空间配置 */
+  readonly namespace?: NamespaceConfig;
+  
+  /** subject 模板 */
+  readonly subjectTemplate?: string;
+  
+  /** 父类 */
+  readonly subClassOf?: string[];
+  
+  /** 原始表引用（用于类型推断） */
+  readonly _sourceTable: PodTable<TColumns>;
+}
+
+
 // 表定义类 - 支持泛型以进行类型推断
 export class PodTable<TColumns extends Record<string, PodColumnBase<any, any, any, any>> = Record<string, PodColumnBase<any, any, any, any>>> {
   static readonly [entityKind] = 'PodTable';
@@ -896,6 +940,32 @@ export class PodTable<TColumns extends Record<string, PodColumnBase<any, any, an
 
   getMapping(): PodTableMapping {
     return this.mapping;
+  }
+
+  /**
+   * 获取表的 schema 定义（用于联邦查询）
+   * 
+   * 返回只包含结构信息的 PodSchema，不包含 base
+   * 用于 relations() 中的联邦查询，数据位置通过 discover 动态发现
+   * 
+   * @example
+   * const friendsRelations = relations(friends, ({ many }) => ({
+   *   posts: many(posts.$schema, {
+   *     discover: (friend) => friend.webId,
+   *   }),
+   * }));
+   */
+  get $schema(): PodSchema<TColumns> {
+    return {
+      $kind: 'PodSchema',
+      name: this.config.name,
+      type: this.config.type,
+      columns: this.columns,
+      namespace: this.config.namespace,
+      subjectTemplate: this.subjectTemplate,
+      subClassOf: this.parentClasses.length > 0 ? [...this.parentClasses] : undefined,
+      _sourceTable: this,
+    };
   }
 
   private resolveBase(base: string | undefined, tableName: string, containerPathHint?: string): { resourcePath: string; containerPath: string } {
@@ -1340,14 +1410,30 @@ type ResolvedColumns<T extends Record<string, ColumnInput>> = {
 };
 
 type RelationBuilder = {
-  one: (table: PodTable<any>, options?: RelationOptions) => RelationDefinition;
-  many: (table: PodTable<any>, options?: RelationOptions) => RelationDefinition;
+  one: <T extends PodTable<any> | PodSchema<any>>(
+    table: T,
+    options?: RelationOptions<T>
+  ) => RelationDefinition;
+  many: <T extends PodTable<any> | PodSchema<any>>(
+    table: T,
+    options?: RelationOptions<T>
+  ) => RelationDefinition;
 };
 
-export interface RelationOptions {
+export interface RelationOptions<T = PodTable<any> | PodSchema<any>> {
   fields?: PodColumnBase[];
   references?: PodColumnBase[];
   relationName?: string;
+  /** 
+   * 联邦查询：发现函数
+   * 用于从父记录获取 WebID，然后通过 .well-known/solid 发现目标数据位置
+   * 
+   * @example
+   * posts: many(posts.$schema, {
+   *   discover: (friend) => friend.webId,
+   * })
+   */
+  discover?: DiscoverFunction;
 }
 
 export function podTable<
@@ -1413,25 +1499,42 @@ export function relations<TTable extends PodTable<any>>(
   builder: (helpers: RelationBuilder) => Record<string, RelationDefinition>
 ): Record<string, RelationDefinition> {
   const helpers: RelationBuilder = {
-    one: (target, options = {}) => ({
-      type: 'one',
-      table: target,
-      fields: options.fields,
-      references: options.references,
-      relationName: options.relationName
-    }),
-    many: (target, options = {}) => ({
-      type: 'many',
-      table: target,
-      fields: options.fields,
-      references: options.references,
-      relationName: options.relationName
-    })
+    one: (target, options = {}) => {
+      const isFederated = isPodSchema(target);
+      return {
+        type: 'one',
+        table: target,
+        fields: options.fields,
+        references: options.references,
+        relationName: options.relationName,
+        discover: options.discover,
+        isFederated,
+      };
+    },
+    many: (target, options = {}) => {
+      const isFederated = isPodSchema(target);
+      return {
+        type: 'many',
+        table: target,
+        fields: options.fields,
+        references: options.references,
+        relationName: options.relationName,
+        discover: options.discover,
+        isFederated,
+      };
+    }
   };
 
   const defs = builder(helpers);
   (table as any).relations = defs;
   return defs;
+}
+
+/**
+ * 检查目标是否为 PodSchema（用于联邦查询）
+ */
+function isPodSchema(target: PodTable<any> | PodSchema<any>): target is PodSchema<any> {
+  return (target as PodSchema<any>).$kind === 'PodSchema';
 }
 
 

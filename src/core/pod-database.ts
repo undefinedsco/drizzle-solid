@@ -8,7 +8,7 @@ import {
   UpdateQueryBuilder,
   DeleteQueryBuilder
 } from './pod-session';
-import { PodTable, type InferTableData, PodColumnBase, type RelationDefinition } from './pod-table';
+import { PodTable, type PodSchema, type InferTableData, PodColumnBase, type RelationDefinition } from './pod-table';
 import { QueryCondition } from './query-conditions';
 import { inArray } from './query-conditions';
 import { 
@@ -20,6 +20,25 @@ import {
   type NotificationType,
   type NotificationsClientConfig
 } from './notifications';
+import { FederatedQueryExecutor, type FederatedError, type FederatedQueryOptions } from './federated';
+
+
+/**
+ * 检查目标是否为 PodSchema（用于联邦查询）
+ */
+function isPodSchema(target: PodTable<any> | PodSchema<any>): target is PodSchema<any> {
+  return (target as PodSchema<any>).$kind === 'PodSchema';
+}
+
+/**
+ * 从 PodSchema 或 PodTable 获取 type
+ */
+function getTargetType(target: PodTable<any> | PodSchema<any>): string {
+  if (isPodSchema(target)) {
+    return target.type;
+  }
+  return target.config.type;
+}
 
 /**
  * 初始化表选项
@@ -37,12 +56,42 @@ export class PodDatabase<TSchema extends Record<string, unknown> = Record<string
   static readonly [entityKind] = 'PodDatabase';
 
   private notificationsClient: NotificationsClient | null = null;
+  private federatedExecutor: FederatedQueryExecutor | null = null;
+  /** 最近一次联邦查询的错误（如果有） */
+  private lastFederatedErrors: FederatedError[] = [];
 
   constructor(
     public dialect: PodDialect,
     public session: PodAsyncSession,
     public schema?: TSchema
   ) {}
+
+  /**
+   * 获取最近一次联邦查询的错误
+   * 在调用 findMany 等方法后可以检查此值
+   */
+  getLastFederatedErrors(): FederatedError[] {
+    return this.lastFederatedErrors;
+  }
+
+  /**
+   * 清除联邦查询错误
+   */
+  clearFederatedErrors(): void {
+    this.lastFederatedErrors = [];
+  }
+
+  /**
+   * 获取或创建 FederatedQueryExecutor
+   */
+  private getFederatedExecutor(): FederatedQueryExecutor {
+    if (!this.federatedExecutor) {
+      this.federatedExecutor = new FederatedQueryExecutor({
+        fetch: this.dialect.getAuthenticatedFetch(),
+      });
+    }
+    return this.federatedExecutor;
+  }
 
   // SELECT 查询
   select<TTable extends PodTable<any>>(fields?: SelectFieldMap): SelectQueryBuilder<TTable> {
@@ -665,6 +714,9 @@ export class PodDatabase<TSchema extends Record<string, unknown> = Record<string
         orderBy?: Array<{ column: any; direction?: 'asc' | 'desc' }> | { column: any; direction?: 'asc' | 'desc' };
         with?: Record<string, boolean | { table?: PodTable<any> }>;
       }): Promise<T[]> => {
+        // 清除之前的联邦查询错误
+        this.clearFederatedErrors();
+        
         let builder = this.session.select(options?.columns).from(table);
         if (options?.where) {
           builder = builder.where(options.where as any);
@@ -747,9 +799,45 @@ export class PodDatabase<TSchema extends Record<string, unknown> = Record<string
         : relationDef?.table ?? tableMap.get(key);
       if (!targetTable) continue;
 
+      // 联邦查询：使用 FederatedQueryExecutor
+      if (isPodSchema(targetTable) || relationDef?.isFederated) {
+        if (relationDef && relationDef.discover) {
+          try {
+            const executor = this.getFederatedExecutor();
+            const result = await executor.execute(dedupedRows, {
+              ...relationDef,
+              relationName: key,
+            });
+            
+            // 收集错误
+            if (result.errors && result.errors.length > 0) {
+              this.lastFederatedErrors.push(...result.errors);
+            }
+            
+            // 结果已经被添加到 dedupedRows 中
+          } catch (error) {
+            console.warn(`Federated relation "${key}" failed:`, error);
+            // 设置空数组作为默认值
+            dedupedRows.forEach((row) => {
+              row[key] = [];
+            });
+          }
+        } else {
+          console.warn(`Federated relation "${key}" missing discover function, skipping.`);
+          dedupedRows.forEach((row) => {
+            row[key] = [];
+          });
+        }
+        continue;
+      }
+
+      // 此时 targetTable 一定是 PodTable
+      const targetPodTable = targetTable as PodTable<any>;
+      const targetType = targetPodTable.config.type;
+
       const candidateColumns: PodColumnBase[] = relationDef?.fields && relationDef.fields.length > 0
         ? relationDef.fields
-        : (Object.values(targetTable.columns ?? {}) as PodColumnBase[]);
+        : (Object.values(targetPodTable.columns ?? {}) as PodColumnBase[]);
       const referenceColumns = relationDef?.fields && relationDef.fields.length > 0
         ? candidateColumns
         : candidateColumns.filter((col) =>
@@ -765,7 +853,7 @@ export class PodDatabase<TSchema extends Record<string, unknown> = Record<string
               col &&
               typeof col.isInverse === 'function' &&
               col.isInverse() &&
-              col.options?.referenceTarget === targetTable.config.type
+              col.options?.referenceTarget === targetType
             )
         );
         const parentColumns = Object.values(parentTable.columns ?? {}) as PodColumnBase[];
@@ -773,7 +861,7 @@ export class PodDatabase<TSchema extends Record<string, unknown> = Record<string
           (col) =>
             typeof col.isInverse === 'function' &&
             col.isInverse() &&
-            col.options?.referenceTarget === targetTable.config.type
+            col.options?.referenceTarget === targetType
         );
 
         if (inverseCandidates.length === 0) {
@@ -798,7 +886,7 @@ export class PodDatabase<TSchema extends Record<string, unknown> = Record<string
           continue;
         }
 
-        let childBuilder = this.session.select().from(targetTable);
+        let childBuilder = this.session.select().from(targetPodTable);
         childBuilder = childBuilder.where({ '@id': uniqueIris });
         const childRows = await childBuilder;
         const groupedByIri = this.groupRowsByIri(childRows);
@@ -828,7 +916,7 @@ export class PodDatabase<TSchema extends Record<string, unknown> = Record<string
         continue;
       }
 
-      let childBuilder = this.session.select().from(targetTable);
+      let childBuilder = this.session.select().from(targetPodTable);
       if (useReferenceIri) {
         childBuilder = childBuilder.where(inArray(refColumn, parentKeys as any));
       } else {

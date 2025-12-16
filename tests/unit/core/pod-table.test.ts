@@ -589,3 +589,187 @@ describe('JSON 和 Object 类型推断', () => {
     expect(updateData.profile).toEqual({ age: 26 });
   });
 });
+
+describe('PodTable.$schema', () => {
+  it('should return a PodSchema with $kind identifier', () => {
+    const posts = podTable('posts', {
+      id: id('id'),
+      title: string('title').predicate('https://schema.org/headline'),
+    }, {
+      base: '/data/posts/',
+      type: 'https://schema.org/BlogPosting',
+    });
+
+    const schema = posts.$schema;
+
+    expect(schema.$kind).toBe('PodSchema');
+    expect(schema.name).toBe('posts');
+    expect(schema.type).toBe('https://schema.org/BlogPosting');
+    expect(schema.columns).toBe(posts.columns);
+    expect(schema._sourceTable).toBe(posts);
+  });
+
+  it('should include subjectTemplate if defined', () => {
+    const posts = podTable('posts', {
+      id: id('id'),
+      title: string('title').predicate('https://schema.org/headline'),
+    }, {
+      base: '/data/posts/',
+      type: 'https://schema.org/BlogPosting',
+      subjectTemplate: '{id}.ttl#it',
+    });
+
+    const schema = posts.$schema;
+
+    expect(schema.subjectTemplate).toBe('{id}.ttl#it');
+  });
+
+  it('should include namespace if defined', () => {
+    const posts = podTable('posts', {
+      id: id('id'),
+      title: string('title'),
+    }, {
+      base: '/data/posts/',
+      type: 'https://schema.org/BlogPosting',
+      namespace: { prefix: 'schema', uri: 'https://schema.org/' },
+    });
+
+    const schema = posts.$schema;
+
+    expect(schema.namespace).toEqual({ prefix: 'schema', uri: 'https://schema.org/' });
+  });
+
+  it('should include subClassOf if defined', () => {
+    const posts = podTable('posts', {
+      id: id('id'),
+      title: string('title').predicate('https://schema.org/headline'),
+    }, {
+      base: '/data/posts/',
+      type: 'https://schema.org/BlogPosting',
+      subClassOf: ['https://schema.org/CreativeWork'],
+    });
+
+    const schema = posts.$schema;
+
+    expect(schema.subClassOf).toEqual(['https://schema.org/CreativeWork']);
+  });
+
+  it('should not include base in schema (federated query use case)', () => {
+    const posts = podTable('posts', {
+      id: id('id'),
+      title: string('title').predicate('https://schema.org/headline'),
+    }, {
+      base: '/data/posts/',
+      type: 'https://schema.org/BlogPosting',
+    });
+
+    const schema = posts.$schema;
+
+    // PodSchema should not have base - that's the whole point
+    expect((schema as any).base).toBeUndefined();
+  });
+});
+
+describe('relations() with federated discover', () => {
+  it('should support discover option with PodSchema', () => {
+    const friends = podTable('friends', {
+      id: id('id'),
+      name: string('name').predicate('https://schema.org/name'),
+      webId: uri('webId').predicate('http://xmlns.com/foaf/0.1/knows'),
+    }, {
+      base: '/data/friends/',
+      type: 'http://xmlns.com/foaf/0.1/Person',
+    });
+
+    const posts = podTable('posts', {
+      id: id('id'),
+      title: string('title').predicate('https://schema.org/headline'),
+    }, {
+      base: '/data/posts/',
+      type: 'https://schema.org/BlogPosting',
+    });
+
+    const friendsRelations = relations(friends, ({ many }) => ({
+      posts: many(posts.$schema, {
+        discover: (friend) => friend.webId,
+      }),
+    }));
+
+    expect(friendsRelations.posts).toBeDefined();
+    expect(friendsRelations.posts.type).toBe('many');
+    expect(friendsRelations.posts.isFederated).toBe(true);
+    expect(friendsRelations.posts.discover).toBeInstanceOf(Function);
+    
+    // Test that discover function works
+    const testFriend = { id: '1', name: 'Bob', webId: 'https://bob.pod/profile/card#me' };
+    expect(friendsRelations.posts.discover!(testFriend)).toBe('https://bob.pod/profile/card#me');
+  });
+
+  it('should mark relation as non-federated when using PodTable', () => {
+    const users = podTable('users', {
+      id: id('id'),
+      name: string('name').predicate('https://schema.org/name'),
+    }, {
+      base: '/data/users/',
+      type: 'https://schema.org/Person',
+    });
+
+    const posts = podTable('posts', {
+      id: id('id'),
+      title: string('title').predicate('https://schema.org/headline'),
+      authorId: uri('author').predicate('https://schema.org/author'),
+    }, {
+      base: '/data/posts/',
+      type: 'https://schema.org/BlogPosting',
+    });
+
+    const postsRelations = relations(posts, ({ one }) => ({
+      author: one(users, {
+        fields: [posts.columns.authorId],
+        references: [users.columns.id],
+      }),
+    }));
+
+    expect(postsRelations.author).toBeDefined();
+    expect(postsRelations.author.type).toBe('one');
+    expect(postsRelations.author.isFederated).toBe(false);
+    expect(postsRelations.author.discover).toBeUndefined();
+  });
+
+  it('should support discover returning array of webIds', () => {
+    const contacts = podTable('contacts', {
+      id: id('id'),
+      primaryWebId: uri('primaryWebId').predicate('http://xmlns.com/foaf/0.1/knows'),
+      secondaryWebId: uri('secondaryWebId').predicate('http://xmlns.com/foaf/0.1/knows'),
+    }, {
+      base: '/data/contacts/',
+      type: 'http://xmlns.com/foaf/0.1/Person',
+    });
+
+    const posts = podTable('posts', {
+      id: id('id'),
+      title: string('title').predicate('https://schema.org/headline'),
+    }, {
+      base: '/data/posts/',
+      type: 'https://schema.org/BlogPosting',
+    });
+
+    const contactsRelations = relations(contacts, ({ many }) => ({
+      posts: many(posts.$schema, {
+        discover: (contact) => [contact.primaryWebId, contact.secondaryWebId].filter(Boolean),
+      }),
+    }));
+
+    const testContact = {
+      id: '1',
+      primaryWebId: 'https://alice.pod/profile/card#me',
+      secondaryWebId: 'https://alice-work.pod/profile/card#me',
+    };
+
+    const webIds = contactsRelations.posts.discover!(testContact);
+    expect(webIds).toEqual([
+      'https://alice.pod/profile/card#me',
+      'https://alice-work.pod/profile/card#me',
+    ]);
+  });
+});

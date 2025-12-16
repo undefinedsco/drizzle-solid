@@ -57,6 +57,7 @@ export {
   // 类型
   type PodColumn,
   type PodTable,
+  type PodSchema,
   type NamespaceConfig,
   type PodTableOptions,
   type PodTableMapping,
@@ -64,7 +65,10 @@ export {
   type PodColumnOptions,
   type InferTableData,
   type InferInsertData,
-  type InferUpdateData
+  type InferUpdateData,
+  type RelationDefinition,
+  type RelationOptions,
+  type DiscoverFunction,
 } from './core/pod-table';
 
 // 查询构建器
@@ -94,12 +98,15 @@ export type {
 export {
   TypeIndexDiscovery,
   InteropDiscovery,
+  ProviderCache,
+  providerCache,
   INTEROP,
   SHAPETREES,
   type DataDiscovery,
   type DataLocation,
   type ShapeInfo,
   type DiscoverOptions,
+  type WellKnownResponse,
 } from './core/discovery';
 
 // SubjectResolver 主体 URI 解析
@@ -236,3 +243,14 @@ export {
   type Subscription,
   type SubscriptionFeature
 } from './core/notifications';
+
+// 联邦查询 (Federated Queries)
+export {
+  FederatedQueryExecutor,
+  federatedQueryExecutor,
+  type FederatedResult,
+  type FederatedError,
+  type FederatedQueryOptions,
+  type DiscoveredLocation,
+  type FederatedQueryContext
+} from './core/federated';
