@@ -30,6 +30,7 @@
     "example:quick": "ts-node examples/01-quick-start.ts",
     "example:query": "ts-node examples/02-relational-query.ts",
     "example:discovery": "ts-node examples/03-zero-config-discovery.ts",
+    "example:federated": "ts-node examples/06-federated-query.ts",
     "server:start": "node scripts/start-css-server.js",
     "server:start:sandbox": "node scripts/sandbox-wrapper.js",
     "server:setup": "node scripts/setup-preset-accounts.js",
