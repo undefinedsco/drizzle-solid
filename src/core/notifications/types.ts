@@ -91,6 +91,25 @@ export interface SubscribeOptions {
   onError?: (error: Error) => void;
   /** 连接关闭时的回调 */
   onClose?: () => void;
+  /** 
+   * 是否启用自动重连（默认 true）
+   * 当连接断开时（如 xpod node_id 切换），自动重新订阅
+   */
+  autoReconnect?: boolean;
+  /**
+   * 最大重连次数（默认 5）
+   * 设为 0 或 Infinity 表示无限重连
+   */
+  maxReconnectAttempts?: number;
+  /**
+   * 重连延迟基数（默认 1000ms）
+   * 实际延迟 = baseDelay * 2^attempt（指数退避）
+   */
+  reconnectDelayMs?: number;
+  /**
+   * 重连时的回调
+   */
+  onReconnect?: (attempt: number) => void;
 }
 
 /**

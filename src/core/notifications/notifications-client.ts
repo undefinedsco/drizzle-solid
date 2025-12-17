@@ -40,6 +40,10 @@ export interface NotificationsClientConfig {
  * 支持两种通道：
  * - streaming-http (SSE): CSS 直接连接模式，无需订阅
  * - websocket: 标准订阅模式，POST 获取 receiveFrom
+ * 
+ * 特性：
+ * - 自动重连：当连接断开时（如 xpod node_id 切换），自动重新订阅
+ * - 指数退避：重连延迟采用指数退避策略，避免服务器过载
  */
 export class NotificationsClient {
   private readonly fetch: typeof globalThis.fetch;
@@ -89,6 +93,48 @@ export class NotificationsClient {
   }
 
   /**
+   * 重新订阅（内部方法，用于自动重连）
+   * @internal
+   */
+  async resubscribe(
+    topic: string,
+    channelType: ChannelType,
+    discovery: DiscoveredService,
+    options: SubscribeOptions
+  ): Promise<NotificationChannel> {
+    let receiveFrom: string;
+    
+    if (channelType === 'streaming-http') {
+      receiveFrom = this.buildSSEDirectUrl(discovery.baseEndpoint, topic);
+      console.log(`[Notifications] SSE reconnect to: ${receiveFrom}`);
+    } else {
+      const endpoint = `${discovery.baseEndpoint}${CHANNEL_NAMES[channelType]}/`;
+      const subscriptionResponse = await this.createSubscription(
+        endpoint,
+        topic,
+        channelType,
+        options.features
+      );
+      receiveFrom = subscriptionResponse.receiveFrom;
+      console.log(`[Notifications] WebSocket resubscription created, receiveFrom: ${receiveFrom}`);
+    }
+
+    // 获取现有的 subscription 以便设置 onClose 回调
+    const existingSubscription = this.subscriptions.get(topic);
+    
+    // 创建通道，但不触发用户的 onClose 回调（由 SubscriptionImpl 管理）
+    const channelInstance = this.createChannelWithReconnect(
+      channelType,
+      receiveFrom,
+      options,
+      existingSubscription
+    );
+    
+    await channelInstance.connect();
+    return channelInstance;
+  }
+
+  /**
    * 连接到指定通道
    */
   private async connectChannel(
@@ -116,16 +162,29 @@ export class NotificationsClient {
       console.log(`[Notifications] WebSocket subscription created, receiveFrom: ${receiveFrom}`);
     }
 
-    // 创建并连接通道
-    const channelInstance = this.createChannel(channelType, receiveFrom, options);
-    await channelInstance.connect();
-
+    // 先创建 subscription 对象（需要在 channel 创建前，以便设置 onClose）
     const subscription = new SubscriptionImpl(
       topic,
       channelType,
-      channelInstance,
-      () => this.subscriptions.delete(topic)
+      null as unknown as NotificationChannel, // 稍后设置
+      () => this.subscriptions.delete(topic),
+      this,
+      options,
+      discovery
     );
+    
+    // 创建通道，onClose 时触发自动重连
+    const channelInstance = this.createChannelWithReconnect(
+      channelType,
+      receiveFrom,
+      options,
+      subscription
+    );
+    
+    await channelInstance.connect();
+    
+    // 设置通道引用
+    subscription.setChannel(channelInstance);
 
     this.subscriptions.set(topic, subscription);
     return subscription;
@@ -318,6 +377,40 @@ export class NotificationsClient {
         throw new Error(`Unsupported channel type: ${channelType}`);
     }
   }
+
+  /**
+   * 创建带自动重连支持的通道实例
+   */
+  private createChannelWithReconnect(
+    channelType: ChannelType,
+    receiveFrom: string,
+    options: SubscribeOptions,
+    subscription: SubscriptionImpl | undefined
+  ): NotificationChannel {
+    const config = {
+      receiveFrom,
+      onNotification: options.onNotification,
+      onError: options.onError,
+      // 拦截 onClose，触发自动重连
+      onClose: () => {
+        if (subscription) {
+          subscription.handleDisconnect();
+        } else {
+          options.onClose?.();
+        }
+      },
+      fetch: this.fetch,
+    };
+
+    switch (channelType) {
+      case 'streaming-http':
+        return new SSEChannel(config);
+      case 'websocket':
+        return new WebSocketChannel(config);
+      default:
+        throw new Error(`Unsupported channel type: ${channelType}`);
+    }
+  }
 }
 
 /**
@@ -327,23 +420,45 @@ class SubscriptionImpl implements Subscription {
   private _active = true;
   private readonly _channel: ChannelType;
   private readonly _topic: string;
-  private readonly notificationChannel: NotificationChannel;
+  private notificationChannel: NotificationChannel | null;
   private readonly onUnsubscribe: () => void;
+  
+  // 自动重连相关
+  private readonly client: NotificationsClient;
+  private readonly options: SubscribeOptions;
+  private readonly discovery: DiscoveredService;
+  private reconnectAttempts = 0;
+  private reconnectTimer: ReturnType<typeof setTimeout> | null = null;
+  private isReconnecting = false;
 
   constructor(
     topic: string,
     channel: ChannelType,
-    notificationChannel: NotificationChannel,
-    onUnsubscribe: () => void
+    notificationChannel: NotificationChannel | null,
+    onUnsubscribe: () => void,
+    client: NotificationsClient,
+    options: SubscribeOptions,
+    discovery: DiscoveredService
   ) {
     this._topic = topic;
     this._channel = channel;
     this.notificationChannel = notificationChannel;
     this.onUnsubscribe = onUnsubscribe;
+    this.client = client;
+    this.options = options;
+    this.discovery = discovery;
+  }
+
+  /**
+   * 设置通道引用（用于延迟初始化）
+   * @internal
+   */
+  setChannel(channel: NotificationChannel): void {
+    this.notificationChannel = channel;
   }
 
   get active(): boolean {
-    return this._active && this.notificationChannel.connected;
+    return this._active && (this.notificationChannel?.connected || this.isReconnecting);
   }
 
   get channel(): ChannelType {
@@ -354,11 +469,76 @@ class SubscriptionImpl implements Subscription {
     return this._topic;
   }
 
+  /**
+   * 处理连接断开，触发自动重连
+   */
+  handleDisconnect(): void {
+    if (!this._active) return;
+    
+    const autoReconnect = this.options.autoReconnect !== false; // 默认开启
+    const maxAttempts = this.options.maxReconnectAttempts ?? 5;
+    
+    if (!autoReconnect) {
+      this.options.onClose?.();
+      return;
+    }
+    
+    // 检查是否超过最大重连次数
+    if (maxAttempts > 0 && this.reconnectAttempts >= maxAttempts) {
+      console.log(`[Notifications] Max reconnect attempts (${maxAttempts}) reached for ${this._topic}`);
+      this.options.onClose?.();
+      return;
+    }
+    
+    this.isReconnecting = true;
+    this.reconnectAttempts++;
+    
+    // 指数退避延迟
+    const baseDelay = this.options.reconnectDelayMs ?? 1000;
+    const delay = Math.min(baseDelay * Math.pow(2, this.reconnectAttempts - 1), 30000); // 最大 30s
+    
+    console.log(`[Notifications] Connection lost for ${this._topic}, reconnecting in ${delay}ms (attempt ${this.reconnectAttempts})`);
+    this.options.onReconnect?.(this.reconnectAttempts);
+    
+    this.reconnectTimer = setTimeout(async () => {
+      try {
+        // 重新订阅获取新的 receiveFrom
+        const newChannel = await this.client.resubscribe(
+          this._topic,
+          this._channel,
+          this.discovery,
+          this.options
+        );
+        
+        // 替换旧通道
+        this.notificationChannel = newChannel;
+        this.reconnectAttempts = 0;
+        this.isReconnecting = false;
+        
+        console.log(`[Notifications] Reconnected successfully for ${this._topic}`);
+      } catch (error) {
+        console.error(`[Notifications] Reconnect failed for ${this._topic}:`, error);
+        this.isReconnecting = false;
+        
+        // 继续尝试重连
+        this.handleDisconnect();
+      }
+    }, delay);
+  }
+
   unsubscribe(): void {
     if (!this._active) return;
     
     this._active = false;
-    this.notificationChannel.disconnect();
+    this.isReconnecting = false;
+    
+    // 清除重连定时器
+    if (this.reconnectTimer) {
+      clearTimeout(this.reconnectTimer);
+      this.reconnectTimer = null;
+    }
+    
+    this.notificationChannel?.disconnect();
     this.onUnsubscribe();
   }
 }
