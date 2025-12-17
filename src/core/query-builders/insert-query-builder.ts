@@ -1,6 +1,6 @@
 import { entityKind, SQL } from 'drizzle-orm';
-import { PodTable, PodColumnBase, InferInsertData, InferTableData } from '../pod-table';
-import { PodAsyncSession, PodOperation } from '../pod-session'; // Import PodAsyncSession
+import { PodTable, PodColumnBase, InferInsertData, InferTableData, HookContext } from '../pod-table';
+import { PodAsyncSession, PodOperation } from '../pod-session';
 import { InsertQueryPlan } from './types';
 
 export class InsertQueryBuilder<TTable extends PodTable<any> = PodTable<any>> {
@@ -45,7 +45,12 @@ export class InsertQueryBuilder<TTable extends PodTable<any> = PodTable<any>> {
           rows
         }
       };
-      return await this.session.execute(operation) as InferTableData<TTable>[];
+      const results = await this.session.execute(operation) as InferTableData<TTable>[];
+      
+      // Call afterInsert hooks
+      await this.runAfterInsertHooks(results);
+      
+      return results;
     } else {
       throw new Error('No values specified for INSERT query');
     }
@@ -56,6 +61,57 @@ export class InsertQueryBuilder<TTable extends PodTable<any> = PodTable<any>> {
     onrejected?: ((reason: any) => TResult2 | PromiseLike<TResult2>) | undefined | null
   ): Promise<TResult1 | TResult2> {
     return this.execute().then(onfulfilled, onrejected);
+  }
+
+  /**
+   * Run afterInsert hooks for all inserted records.
+   */
+  private async runAfterInsertHooks(results: InferTableData<TTable>[]): Promise<void> {
+    const hooks = this.table.config.hooks;
+    if (!hooks?.afterInsert) {
+      return;
+    }
+
+    // Build hook context
+    const ctx = this.buildHookContext();
+    if (!ctx) {
+      console.warn('[InsertQueryBuilder] Cannot run hooks: missing session info');
+      return;
+    }
+
+    // Run hook for each inserted record
+    for (const record of results) {
+      try {
+        await hooks.afterInsert(ctx, record as Record<string, unknown>);
+      } catch (error) {
+        console.error('[InsertQueryBuilder] afterInsert hook failed:', error);
+        // Don't throw - the insert succeeded, just the hook failed
+      }
+    }
+  }
+
+  /**
+   * Build the HookContext from session info.
+   */
+  private buildHookContext(): HookContext | null {
+    const dialect = this.session.getDialect();
+    const webId = dialect.getWebId();
+    const fetchFn = dialect.getAuthenticatedFetch();
+
+    if (!webId || !fetchFn) {
+      return null;
+    }
+
+    return {
+      session: {
+        info: {
+          isLoggedIn: true,
+          webId,
+        },
+        fetch: fetchFn,
+      },
+      table: this.table,
+    };
   }
 
   private getRowsWithDefaults(): InferInsertData<TTable>[] {

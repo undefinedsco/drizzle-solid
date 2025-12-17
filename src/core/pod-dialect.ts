@@ -1328,6 +1328,13 @@ export class PodDialect {
   }
 
   /**
+   * 获取用户的 WebID
+   */
+  getWebId(): string {
+    return this.webId;
+  }
+
+  /**
    * 发现特定 RDF 类型的数据位置
    * 通过 TypeIndex 和 Interop 发现
    * 

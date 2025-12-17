@@ -368,6 +368,78 @@ export type InferUpdateData<TTable extends PodTable<Record<string, PodColumnBase
   [K in keyof TTable['columns']]?: UpdateColumnValue<TTable['columns'][K]>
 }>;
 
+/**
+ * Solid authentication session interface.
+ * Compatible with @inrupt/solid-client-authn-browser Session.
+ */
+export interface SolidSession {
+  info: {
+    isLoggedIn: boolean;
+    webId?: string;
+    sessionId?: string;
+  };
+  fetch: typeof globalThis.fetch;
+}
+
+/**
+ * Context passed to table hooks.
+ * Provides access to the Solid session for authentication and Pod operations.
+ */
+export interface HookContext {
+  /** 
+   * The Solid authentication session.
+   * Compatible with @inrupt/solid-client-authn-browser Session.
+   * Use session.fetch for authenticated requests and session.info.webId for the user's WebID.
+   */
+  session: SolidSession;
+  /** The table being operated on */
+  table: PodTable<any>;
+}
+
+/**
+ * Hooks for table lifecycle events.
+ * Use hooks to implement custom logic like:
+ * - Updating Profile when resources are published
+ * - Sending notifications
+ * - Audit logging
+ * - Cascading updates
+ * 
+ * @example
+ * const agents = podTable('agents', {
+ *   id: id(),
+ *   name: string('name'),
+ *   public: boolean('public'),
+ * }, {
+ *   type: 'https://vocab.ai/Agent',
+ *   hooks: {
+ *     afterInsert: async (ctx, record) => {
+ *       if (record.public) {
+ *         const pm = new ProfileManager(ctx.session);
+ *         await pm.addToProfile('http://xmlns.com/foaf/0.1/made', record['@id']);
+ *       }
+ *     },
+ *     afterUpdate: async (ctx, record, changes) => {
+ *       if ('public' in changes) {
+ *         const pm = new ProfileManager(ctx.session);
+ *         if (record.public) {
+ *           await pm.addToProfile('http://xmlns.com/foaf/0.1/made', record['@id']);
+ *         } else {
+ *           await pm.removeFromProfile('http://xmlns.com/foaf/0.1/made', record['@id']);
+ *         }
+ *       }
+ *     },
+ *   },
+ * });
+ */
+export interface TableHooks {
+  /** Called after a record is inserted */
+  afterInsert?: (ctx: HookContext, record: Record<string, unknown>) => Promise<void>;
+  /** Called after a record is updated. `changes` contains only the fields that were modified. */
+  afterUpdate?: (ctx: HookContext, record: Record<string, unknown>, changes: Record<string, unknown>) => Promise<void>;
+  /** Called after a record is deleted */
+  afterDelete?: (ctx: HookContext, record: Record<string, unknown>) => Promise<void>;
+}
+
 // 表配置选项
 export interface PodTableOptions {
   base?: string; // 资源基础路径，支持绝对或相对
@@ -418,6 +490,29 @@ export interface PodTableOptions {
   resourceMode?: 'ldp' | 'sparql';
   autoRegister?: boolean;
   containerPath?: string;
+
+  /**
+   * Lifecycle hooks for table operations.
+   * Use hooks to implement custom logic that runs after insert/update/delete.
+   * 
+   * @example
+   * const agents = podTable('agents', {
+   *   id: id(),
+   *   name: string('name'),
+   *   public: boolean('public'),
+   * }, {
+   *   type: 'https://vocab.ai/Agent',
+   *   hooks: {
+   *     afterInsert: async (ctx, record) => {
+   *       if (record.public) {
+   *         const pm = new PublishManager(ctx);
+   *         await pm.addToProfile('http://xmlns.com/foaf/0.1/made', record['@id']);
+   *       }
+   *     },
+   *   },
+   * });
+   */
+  hooks?: TableHooks;
 }
 
 export interface PodColumnMapping {
@@ -768,6 +863,7 @@ export class PodTable<TColumns extends Record<string, PodColumnBase<any, any, an
     containerPath?: string;
     resourcePath?: string;
     autoRegister?: boolean;
+    hooks?: TableHooks;
   };
   public mapping: PodTableMapping;
   public relations?: Record<string, RelationDefinition>;
@@ -838,7 +934,8 @@ export class PodTable<TColumns extends Record<string, PodColumnBase<any, any, an
       typeIndex: validTypeIndex ? typeIndexOption : undefined,
       subjectTemplate: this.subjectTemplate,
       autoRegister: options.autoRegister,
-      containerPath: baseConfig.containerPath
+      containerPath: baseConfig.containerPath,
+      hooks: options.hooks,
     };
     this.parentClasses = this.normalizeParents(options.subClassOf ?? []);
     if (this.parentClasses.length > 0) {
@@ -966,6 +1063,42 @@ export class PodTable<TColumns extends Record<string, PodColumnBase<any, any, an
       subClassOf: this.parentClasses.length > 0 ? [...this.parentClasses] : undefined,
       _sourceTable: this,
     };
+  }
+
+  /**
+   * Generate a relative URI for a record by ID
+   * 
+   * This returns a Pod-relative URI that drizzle-solid will automatically
+   * resolve to an absolute URI using the Pod URL at runtime.
+   * 
+   * @param id - The record ID (typically a nanoid or user-defined identifier)
+   * @returns Relative URI like '/.data/agents/xK9mN2.ttl' or '/.data/tags.ttl#abc123'
+   * 
+   * @example
+   * // Generate URI for a record by its ID
+   * const agentUri = agentTable.resolveUri('xK9mN2pL');
+   * // => '/.data/agents/xK9mN2pL.ttl'
+   * 
+   * // Prefer using @id from query results when available
+   * const msg = { maker: existingAgent['@id'], content: 'Hello!' }
+   */
+  resolveUri(id: string): string {
+    // Apply subjectTemplate
+    const template = this.subjectTemplate;
+    const resolved = template.replace(/\{id\}/g, id);
+    
+    // Build relative URI based on mode
+    if (resolved.startsWith('#')) {
+      // Fragment mode: /.data/tags.ttl#id
+      const resourcePath = this.resourcePath;
+      return `${resourcePath}${resolved}`;
+    }
+    
+    // Document mode: /.data/agents/openrouter.ttl
+    const normalizedContainer = this.containerPath.endsWith('/') 
+      ? this.containerPath 
+      : `${this.containerPath}/`;
+    return `${normalizedContainer}${resolved}`;
   }
 
   private resolveBase(base: string | undefined, tableName: string, containerPathHint?: string): { resourcePath: string; containerPath: string } {
@@ -1288,7 +1421,7 @@ export function id(name = 'id', options: PodColumnOptions = {}): PodStringColumn
     required: true,
     defaultValue: options.defaultValue ?? generateNanoId // Default to NanoID generation
   });
-  // 标记为“虚拟 ID 列”，生成/解析 subject 时使用，但不额外输出三元组
+  // 标记为"虚拟 ID 列"，生成/解析 subject 时使用，但不额外输出三元组
   (col as any)._virtualId = true;
   return col;
 }

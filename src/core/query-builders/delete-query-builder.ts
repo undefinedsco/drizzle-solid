@@ -1,5 +1,5 @@
 import { entityKind, SQL } from 'drizzle-orm';
-import { PodTable } from '../pod-table';
+import { PodTable, HookContext } from '../pod-table';
 import { PodAsyncSession, PodOperation } from '../pod-session';
 import { QueryCondition } from '../query-conditions';
 import { DeleteQueryPlan } from './types';
@@ -75,8 +75,64 @@ export class DeleteQueryBuilder<TTable extends PodTable<any> = PodTable<any>> {
         where: plan.where,
         plan
       };
-      return await this.session.execute(operation);
+      const results = await this.session.execute(operation);
+      
+      // Call afterDelete hooks
+      await this.runAfterDeleteHooks(results);
+      
+      return results;
     }
+  }
+
+  /**
+   * Run afterDelete hooks for all deleted records.
+   */
+  private async runAfterDeleteHooks(results: any[]): Promise<void> {
+    const hooks = this.table.config.hooks;
+    if (!hooks?.afterDelete) {
+      return;
+    }
+
+    // Build hook context
+    const ctx = this.buildHookContext();
+    if (!ctx) {
+      console.warn('[DeleteQueryBuilder] Cannot run hooks: missing session info');
+      return;
+    }
+
+    // Run hook for each deleted record
+    for (const record of results) {
+      try {
+        await hooks.afterDelete(ctx, record as Record<string, unknown>);
+      } catch (error) {
+        console.error('[DeleteQueryBuilder] afterDelete hook failed:', error);
+        // Don't throw - the delete succeeded, just the hook failed
+      }
+    }
+  }
+
+  /**
+   * Build the HookContext from session info.
+   */
+  private buildHookContext(): HookContext | null {
+    const dialect = this.session.getDialect();
+    const webId = dialect.getWebId();
+    const fetchFn = dialect.getAuthenticatedFetch();
+
+    if (!webId || !fetchFn) {
+      return null;
+    }
+
+    return {
+      session: {
+        info: {
+          isLoggedIn: true,
+          webId,
+        },
+        fetch: fetchFn,
+      },
+      table: this.table,
+    };
   }
 
   then<TResult1 = Awaited<ReturnType<DeleteQueryBuilder<TTable>['execute']>>, TResult2 = never>(

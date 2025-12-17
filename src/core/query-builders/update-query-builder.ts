@@ -1,5 +1,5 @@
 import { entityKind, SQL } from 'drizzle-orm';
-import { PodTable, InferUpdateData } from '../pod-table';
+import { PodTable, PodColumnBase, InferUpdateData, HookContext } from '../pod-table';
 import { PodAsyncSession, PodOperation } from '../pod-session';
 import { QueryCondition } from '../query-conditions';
 import { UpdateQueryPlan } from './types';
@@ -95,10 +95,69 @@ export class UpdateQueryBuilder<TTable extends PodTable<any> = PodTable<any>> {
         where: plan.where,
         plan
       };
-      return await this.session.execute(operation);
+      const results = await this.session.execute(operation);
+      
+      // Call afterUpdate hooks
+      await this.runAfterUpdateHooks(results);
+      
+      return results;
     } else {
       throw new Error('No data specified for UPDATE query');
     }
+  }
+
+  /**
+   * Run afterUpdate hooks for all updated records.
+   */
+  private async runAfterUpdateHooks(results: any[]): Promise<void> {
+    const hooks = this.table.config.hooks;
+    if (!hooks?.afterUpdate) {
+      return;
+    }
+
+    // Build hook context
+    const ctx = this.buildHookContext();
+    if (!ctx) {
+      console.warn('[UpdateQueryBuilder] Cannot run hooks: missing session info');
+      return;
+    }
+
+    // Get the changes that were made
+    const changes = (this.updateData ?? {}) as Record<string, unknown>;
+
+    // Run hook for each updated record
+    for (const record of results) {
+      try {
+        await hooks.afterUpdate(ctx, record as Record<string, unknown>, changes);
+      } catch (error) {
+        console.error('[UpdateQueryBuilder] afterUpdate hook failed:', error);
+        // Don't throw - the update succeeded, just the hook failed
+      }
+    }
+  }
+
+  /**
+   * Build the HookContext from session info.
+   */
+  private buildHookContext(): HookContext | null {
+    const dialect = this.session.getDialect();
+    const webId = dialect.getWebId();
+    const fetchFn = dialect.getAuthenticatedFetch();
+
+    if (!webId || !fetchFn) {
+      return null;
+    }
+
+    return {
+      session: {
+        info: {
+          isLoggedIn: true,
+          webId,
+        },
+        fetch: fetchFn,
+      },
+      table: this.table,
+    };
   }
 
   then<TResult1 = Awaited<ReturnType<UpdateQueryBuilder<TTable>['execute']>>, TResult2 = never>(
