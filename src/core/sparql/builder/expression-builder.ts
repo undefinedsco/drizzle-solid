@@ -120,22 +120,44 @@ export class ExpressionBuilder {
     if (operator === 'IS NULL' || operator === 'IS NOT NULL') {
       const colName = columnChunk?.name;
       if (!colName) return '';
-      const variable = `?${colName}`;
+      
+      // Check if this is a virtual id column (uses @id predicate)
+      const column = table.columns[colName];
+      const isIdColumn = colName === 'id';
+      const idPredicate = isIdColumn && column ? getPredicateForColumn(column, table) : null;
+      const isVirtualId = isIdColumn && idPredicate === '@id';
+      const isSubject = colName === 'subject' || colName === '@id' || isVirtualId;
+      
+      const variable = isSubject ? '?subject' : `?${colName}`;
       return operator === 'IS NULL' ? `!(BOUND(${variable}))` : `BOUND(${variable})`;
     }
 
     // Handle comparison operators
     if (columnChunk && operator) {
       const colName = columnChunk.name;
-      const variable = (colName === 'subject' || colName === '@id') ? '?subject' : `?${colName}`;
       const column = table.columns[colName];
+      
+      // Check if this is a virtual id column (uses @id predicate)
+      const isIdColumn = colName === 'id';
+      const idPredicate = isIdColumn && column ? getPredicateForColumn(column, table) : null;
+      const isVirtualId = isIdColumn && idPredicate === '@id';
+      const isSubject = colName === 'subject' || colName === '@id' || isVirtualId;
+      
+      const variable = isSubject ? '?subject' : `?${colName}`;
 
       // Handle IN
       if (operator === 'IN' || operator === 'NOT IN') {
         if (!Array.isArray(valueChunk) || valueChunk.length === 0) {
           return operator === 'IN' ? 'false' : 'true';
         }
-        const formattedValues = valueChunk.map((v: any) => formatValue(v, column)).join(', ');
+        const formattedValues = valueChunk.map((v: any) => {
+          if (isSubject && isVirtualId) {
+            // Convert id value to full URI
+            const uri = subjectResolver.resolve(table, { id: String(v) });
+            return `<${uri}>`;
+          }
+          return formatValue(v, column);
+        }).join(', ');
         const expr = `${variable} IN(${formattedValues})`;
         return operator === 'NOT IN' ? `!(${expr})` : expr;
       }
@@ -150,7 +172,14 @@ export class ExpressionBuilder {
       }
 
       // Basic comparison
-      const formattedValue = formatValue(valueChunk, column);
+      let formattedValue: string;
+      if (isSubject && isVirtualId) {
+        // Convert id value to full URI for @id predicate
+        const uri = subjectResolver.resolve(table, { id: String(valueChunk) });
+        formattedValue = `<${uri}>`;
+      } else {
+        formattedValue = formatValue(valueChunk, column) as string;
+      }
       return `(${variable} ${operator} ${formattedValue})`;
     }
 
@@ -183,7 +212,14 @@ export class ExpressionBuilder {
     const colName = this.resolveColumnName(condition.value);
     if (!colName) return '';
     
-    const variable = (colName === 'subject' || colName === '@id') ? '?subject' : `?${colName}`;
+    // Check if this is a virtual id column (uses @id predicate)
+    const column = table.columns[colName];
+    const isIdColumn = colName === 'id';
+    const idPredicate = isIdColumn && column ? getPredicateForColumn(column, table) : null;
+    const isVirtualId = isIdColumn && idPredicate === '@id';
+    const isSubject = colName === 'subject' || colName === '@id' || isVirtualId;
+    
+    const variable = isSubject ? '?subject' : `?${colName}`;
     
     if (op === 'IS NULL') {
       return `!(BOUND(${variable}))`;
