@@ -211,20 +211,97 @@ export class NotificationsClient {
 
   /**
    * 发现资源的 notifications 服务
+   * 
+   * 发现顺序:
+   * 1. 从 HEAD 请求的 Link header 直接获取通知端点
+   * 2. 从 storage description (.well-known/solid) 获取
+   * 3. 回退到默认的 /.notifications/ 路径
    */
   private async discoverNotificationService(resourceUrl: string): Promise<DiscoveredService> {
-    const storageRoot = await this.findStorageRoot(resourceUrl);
-    const descriptionUrl = `${storageRoot}.well-known/solid`;
+    // 1. 尝试从 Link header 发现通知端点
+    const linkDiscovery = await this.discoverFromLinkHeader(resourceUrl);
+    if (linkDiscovery) {
+      return linkDiscovery;
+    }
+    
+    // 2. 尝试从 storage description 发现
+    // .well-known/solid 应该在服务器根，不是 Pod 根
+    const url = new URL(resourceUrl);
+    const descriptionUrl = `${url.origin}/.well-known/solid`;
     
     try {
-      return await this.fetchStorageDescription(descriptionUrl, storageRoot);
+      return await this.fetchStorageDescription(descriptionUrl, url.origin);
     } catch {
-      // 回退：使用默认的 notifications 路径
-      const url = new URL(resourceUrl);
+      // 3. 回退：使用默认的 notifications 路径
       return {
         baseEndpoint: `${url.origin}/.notifications/`,
         supportedChannels: ['websocket', 'streaming-http']
       };
+    }
+  }
+
+  /**
+   * 从 HEAD 请求的 Link header 发现通知端点
+   * 
+   * CSS 在 Link header 中提供:
+   * - solid:updatesViaStreamingHttp2023 - SSE 端点
+   * - (WebSocket 通常也可用，但不在 Link header 中公开)
+   */
+  private async discoverFromLinkHeader(resourceUrl: string): Promise<DiscoveredService | null> {
+    try {
+      const response = await this.fetch(resourceUrl, { method: 'HEAD' });
+      const linkHeader = response.headers.get('Link');
+      
+      if (!linkHeader) return null;
+      
+      const url = new URL(resourceUrl);
+      const supportedChannels: ChannelType[] = [];
+      
+      // 检查 streaming-http (SSE) 端点
+      // Link: <http://localhost:3000/.notifications/StreamingHTTPChannel2023/...>; rel="http://www.w3.org/ns/solid/terms#updatesViaStreamingHttp2023"
+      const sseMatch = linkHeader.match(/<([^>]+)>;\s*rel="?http:\/\/www\.w3\.org\/ns\/solid\/terms#updatesViaStreamingHttp2023"?/);
+      if (sseMatch) {
+        supportedChannels.push('streaming-http');
+      }
+      
+      // 检查 WebSocket 端点 (如果有的话)
+      const wsMatch = linkHeader.match(/<([^>]+)>;\s*rel="?http:\/\/www\.w3\.org\/ns\/solid\/terms#updatesViaWebSocketChannel2023"?/);
+      if (wsMatch) {
+        supportedChannels.push('websocket');
+      }
+      
+      // 如果找到了 SSE 端点，提取 base endpoint
+      // 同时假设 WebSocket 也可用（CSS 通常两者都支持）
+      if (sseMatch) {
+        const endpointUrl = sseMatch[1];
+        const parsedEndpoint = new URL(endpointUrl);
+        const pathParts = parsedEndpoint.pathname.split('/');
+        // 找到 .notifications 的位置
+        const notificationsIndex = pathParts.findIndex(p => p === '.notifications');
+        if (notificationsIndex !== -1) {
+          const basePath = pathParts.slice(0, notificationsIndex + 1).join('/') + '/';
+          // 如果没有明确发现 WebSocket，也添加它（CSS 通常支持）
+          if (!supportedChannels.includes('websocket')) {
+            supportedChannels.push('websocket');
+          }
+          return {
+            baseEndpoint: `${parsedEndpoint.origin}${basePath}`,
+            supportedChannels
+          };
+        }
+      }
+      
+      // 如果只发现了 WebSocket
+      if (wsMatch && supportedChannels.length > 0) {
+        return {
+          baseEndpoint: `${url.origin}/.notifications/`,
+          supportedChannels
+        };
+      }
+      
+      return null;
+    } catch {
+      return null;
     }
   }
 
