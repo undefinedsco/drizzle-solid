@@ -2,15 +2,20 @@
  * 07-hooks-and-profile.ts
  *
  * 展示 Drizzle Solid 的 Hooks 系统和 ProfileManager：
- * 1. 使用表生命周期钩子 (afterInsert, afterUpdate, afterDelete)
- * 2. 使用 ProfileManager 管理 Profile 中的资源链接
- * 3. 实现 "发布/取消发布" 模式
+ * 1. 使用 solidSchema 定义纯数据结构（不含 hooks）
+ * 2. 使用 db.createTable 绑定位置和 hooks
+ * 3. 使用 ProfileManager 管理 Profile 中的资源链接
+ * 4. 实现 "发布/取消发布" 模式
+ *
+ * Schema/Table 分离设计：
+ * - Schema（模型层）：只定义数据结构，可复用，不含 hooks
+ * - Table（应用层）：通过 db.createTable 创建，hooks 可访问 db 实例
  *
  * 当资源被标记为 `public: true` 时，会自动通过 `foaf:made` 链接到用户的 Profile，
  * 使其可被爬虫和其他应用发现。
  */
 
-import { drizzle, podTable, id, string, boolean, ProfileManager, eq } from 'drizzle-solid';
+import { drizzle, solidSchema, id, string, boolean, ProfileManager, eq } from 'drizzle-solid';
 import type { HookContext } from 'drizzle-solid';
 import { Session } from '@inrupt/solid-client-authn-node';
 import { config as loadEnv } from 'dotenv';
@@ -51,32 +56,50 @@ function getPodBaseUrl(session: Session): string {
 const FOAF_MADE = 'http://xmlns.com/foaf/0.1/made';
 
 /**
- * 定义 agents 表，配置了完整的生命周期钩子。
+ * 定义 agents schema（纯数据结构，不含 hooks）
  * 
- * 这个表演示了如何在记录的生命周期中自动管理 Profile 链接：
- * - 插入时：如果 public=true，添加到 Profile
- * - 更新时：如果 public 字段变化，相应更新 Profile
- * - 删除时：如果之前是 public，从 Profile 移除
+ * Schema 是可复用的，可以在不同的应用场景中使用不同的 hooks
  */
-function createAgentsTable(podBase: string) {
-  return podTable('agents', {
-    id: id(),
-    name: string('name').predicate('https://schema.org/name'),
-    description: string('description').predicate('https://schema.org/description'),
-    public: boolean('public').predicate('https://schema.org/isAccessibleForFree'),
-  }, {
-    type: 'https://schema.org/SoftwareApplication',
+const agentsSchema = solidSchema('agents', {
+  id: id(),
+  name: string('name').predicate('https://schema.org/name'),
+  description: string('description').predicate('https://schema.org/description'),
+  public: boolean('public').predicate('https://schema.org/isAccessibleForFree'),
+}, {
+  type: 'https://schema.org/SoftwareApplication',
+  subjectTemplate: '{id}.ttl',
+});
+
+async function run(providedSession?: Session) {
+  console.log('=== Example 07: Hooks and ProfileManager ===\n');
+
+  // 1. 认证
+  const session = providedSession || await getAuthenticatedSession();
+  const podBase = getPodBaseUrl(session);
+  
+  console.log('Connected to Pod:', podBase);
+  console.log('WebID:', session.info.webId);
+  console.log('');
+
+  // 2. 创建数据库连接
+  const db = drizzle(session);
+
+  // 3. 使用 db.createTable 创建表，绑定位置和 hooks
+  //    hooks 中的 ctx.db 可以访问数据库实例，实现跨表操作
+  const agents = db.createTable(agentsSchema, {
     base: `${podBase}data/hooks-example/agents/`,
-    subjectTemplate: '{id}.ttl',
     hooks: {
       /**
        * afterInsert: 记录插入后触发
        * 
-       * @param ctx - 包含 session 和 table 的上下文
+       * @param ctx - 包含 session, table 和 db 的上下文
        * @param record - 刚插入的完整记录（包含 @id）
        */
       afterInsert: async (ctx: HookContext, record: Record<string, unknown>) => {
         console.log(`  [Hook] afterInsert: ${record.name}`);
+        
+        // ctx.db 可用于跨表操作，例如：
+        // await ctx.db.insert(auditLogTable).values({ action: 'agent_created', entityId: record['@id'] });
         
         if (record.public) {
           console.log(`  [Hook] Resource is public, adding to Profile...`);
@@ -97,7 +120,7 @@ function createAgentsTable(podBase: string) {
       /**
        * afterUpdate: 记录更新后触发
        * 
-       * @param ctx - 包含 session 和 table 的上下文
+       * @param ctx - 包含 session, table 和 db 的上下文
        * @param record - 更新后的完整记录
        * @param changes - 本次更新中变化的字段
        */
@@ -123,7 +146,7 @@ function createAgentsTable(podBase: string) {
       /**
        * afterDelete: 记录删除后触发
        * 
-       * @param ctx - 包含 session 和 table 的上下文
+       * @param ctx - 包含 session, table 和 db 的上下文
        * @param record - 被删除的记录
        */
       afterDelete: async (ctx: HookContext, record: Record<string, unknown>) => {
@@ -140,22 +163,8 @@ function createAgentsTable(podBase: string) {
       },
     },
   });
-}
 
-async function run(providedSession?: Session) {
-  console.log('=== Example 07: Hooks and ProfileManager ===\n');
-
-  // 1. 认证
-  const session = providedSession || await getAuthenticatedSession();
-  const podBase = getPodBaseUrl(session);
-  
-  console.log('Connected to Pod:', podBase);
-  console.log('WebID:', session.info.webId);
-  console.log('');
-
-  // 2. 创建表和数据库连接
-  const agents = createAgentsTable(podBase);
-  const db = drizzle(session);
+  // 4. 初始化表
   await db.init([agents]);
 
   try {

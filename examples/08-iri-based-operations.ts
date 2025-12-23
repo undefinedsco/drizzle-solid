@@ -12,11 +12,14 @@
  * - 使用引用的远程 Agent
  * - 查看共享的文件
  * - 详情页场景
+ * 
+ * Schema/Table 分离说明：
+ * - 本示例使用 solidSchema + db.createTable 模式
+ * - solidSchema 定义纯数据结构（不含 base 和 hooks）
+ * - db.createTable 绑定位置和可选的 hooks
  */
 
-import { drizzle, podTable, string, datetime } from 'drizzle-solid';
-import { v4 as uuid } from 'uuid';
-
+import { drizzle, solidSchema, string, datetime, id } from 'drizzle-solid';
 import { Session } from '@inrupt/solid-client-authn-node';
 import { config as loadEnv } from 'dotenv';
 
@@ -52,63 +55,75 @@ function getPodBaseUrl(session: Session): string {
   return session.info.webId.split('profile')[0];
 }
 
+/**
+ * 定义 Schema（纯数据结构，不含 base）
+ * 
+ * Schema 可以复用于查询任意 Pod 的数据，
+ * 通过 db.createTable 或 schema.at() 绑定到具体位置
+ */
+const profileSchema = solidSchema('profile', {
+  id: id(),
+  name: string('name').predicate('http://xmlns.com/foaf/0.1/name'),
+  bio: string('bio').predicate('http://schema.org/description'),
+}, {
+  type: 'http://xmlns.com/foaf/0.1/Person'
+});
+
+const agentSchema = solidSchema('agents', {
+  id: id(),
+  name: string('name').predicate('http://schema.org/name'),
+  description: string('description').predicate('http://schema.org/description'),
+  createdAt: datetime('createdAt').predicate('http://schema.org/dateCreated')
+}, {
+  type: 'http://schema.org/SoftwareApplication'
+});
+
 async function run(providedSession?: Session) {
   // 1. 认证
   const session = providedSession || await getAuthenticatedSession();
   const podBase = getPodBaseUrl(session);
   console.log(`Connected to Pod: ${podBase}`);
 
-  // 2. 定义 Schema
-  // 注意：Schema 定义不绑定具体位置，可以用于查询任意 Pod 的数据
-  const profileSchema = podTable('profile', {
-    id: string('id').primaryKey(),
-    name: string('name').predicate('http://xmlns.com/foaf/0.1/name'),
-    bio: string('bio').predicate('http://schema.org/description'),
-  }, {
-    base: `${podBase}profile/card`,  // 本地 Pod 的默认位置
-    type: 'http://xmlns.com/foaf/0.1/Person'
-  });
-
-  const agentSchema = podTable('agents', {
-    id: string('id').primaryKey(),
-    name: string('name').predicate('http://schema.org/name'),
-    description: string('description').predicate('http://schema.org/description'),
-    createdAt: datetime('createdAt').predicate('http://schema.org/dateCreated')
-  }, {
-    base: `${podBase}data/agents.ttl`,
-    type: 'http://schema.org/SoftwareApplication'
-  });
-
+  // 2. 创建数据库和表
   const db = drizzle(session);
-  await db.init([agentSchema]);
+
+  // 使用 db.createTable 绑定 schema 到具体位置
+  // 如果需要 hooks，可以在这里添加
+  const agentTable = db.createTable(agentSchema, {
+    base: `${podBase}data/agents.ttl`,
+  });
+
+  const profileTable = db.createTable(profileSchema, {
+    base: `${podBase}profile/card`,
+  });
+
+  await db.init([agentTable]);
 
   // 3. 创建测试数据
-  const testId = uuid();
-  const testIri = `${podBase}data/agents.ttl#${testId}`;
-  
   console.log('\n--- Creating test agent ---');
-  await db.insert(agentSchema).values({
-    id: testId,
+  const [created] = await db.insert(agentTable).values({
     name: 'Test Agent',
     description: 'An agent for testing IRI operations',
     createdAt: new Date()
   });
+  
+  const testIri = created['@id'];
   console.log(`Created agent with IRI: ${testIri}`);
 
   // 4. findByIri - 通过完整 IRI 查询
   console.log('\n--- findByIri Demo ---');
   
   // 查询本地 Pod 的实体
-  const agent = await db.findByIri(agentSchema, testIri);
+  const agent = await db.findByIri(agentTable, testIri);
   console.log('Found agent:', agent);
 
   // 业务层不需要区分本地/远程，统一使用 IRI
-  // const remoteProfile = await db.findByIri(profileSchema, 'https://alice.pod/profile/card#me');
+  // const remoteProfile = await db.findByIri(profileTable, 'https://alice.pod/profile/card#me');
 
   // 5. subscribeByIri - 订阅单个实体的变更
   console.log('\n--- subscribeByIri Demo ---');
   
-  const unsubscribe = await db.subscribeByIri(agentSchema, testIri, {
+  const unsubscribe = await db.subscribeByIri(agentTable, testIri, {
     onUpdate: (data) => {
       console.log('[UPDATE] Agent updated:', data.name);
     },
@@ -127,7 +142,7 @@ async function run(providedSession?: Session) {
   // 6. updateByIri - 通过 IRI 更新实体
   console.log('\n--- updateByIri Demo ---');
   
-  const updated = await db.updateByIri(agentSchema, testIri, {
+  const updated = await db.updateByIri(agentTable, testIri, {
     name: 'Updated Agent Name',
     description: 'Description updated via updateByIri'
   });
@@ -139,7 +154,7 @@ async function run(providedSession?: Session) {
   // 7. deleteByIri - 通过 IRI 删除实体
   console.log('\n--- deleteByIri Demo ---');
   
-  const deleted = await db.deleteByIri(agentSchema, testIri);
+  const deleted = await db.deleteByIri(agentTable, testIri);
   console.log('Delete result:', deleted);
 
   // 等待通知到达
@@ -150,7 +165,7 @@ async function run(providedSession?: Session) {
   console.log('\nUnsubscribed from agent changes');
 
   // 9. 验证删除
-  const notFound = await db.findByIri(agentSchema, testIri);
+  const notFound = await db.findByIri(agentTable, testIri);
   console.log('Agent after delete:', notFound); // Should be null
 
   console.log('\n--- API Comparison ---');

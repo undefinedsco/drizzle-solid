@@ -383,7 +383,7 @@ export interface SolidSession {
 
 /**
  * Context passed to table hooks.
- * Provides access to the Solid session for authentication and Pod operations.
+ * Provides access to the Solid session and database for operations.
  */
 export interface HookContext {
   /** 
@@ -394,6 +394,20 @@ export interface HookContext {
   session: SolidSession;
   /** The table being operated on */
   table: PodTable<any>;
+  /** 
+   * The database instance.
+   * Use this to perform operations on other tables within hooks.
+   * 
+   * @example
+   * ```typescript
+   * afterUpdate: async (ctx, record, changes) => {
+   *   if ('starred' in changes && record.starred) {
+   *     await ctx.db.insert(favoriteTable).values({ ... });
+   *   }
+   * }
+   * ```
+   */
+  db: any;
 }
 
 /**
@@ -820,9 +834,35 @@ export class PodArrayColumn<
 
 
 /**
- * Schema 配置选项（不含 base）
+ * Schema 配置选项（不含 base 和 hooks）
+ * 
+ * Schema 是纯数据结构定义，不包含 hooks。
+ * Hooks 应该在 db.createTable() 时提供。
  */
-export type SolidSchemaOptions = Omit<PodTableOptions, 'base'>;
+export type SolidSchemaOptions = Omit<PodTableOptions, 'base' | 'hooks'>;
+
+/**
+ * Options for db.createTable()
+ * 
+ * @example
+ * ```typescript
+ * const userTable = db.createTable(userSchema, {
+ *   base: '/data/users/',
+ *   hooks: {
+ *     afterInsert: async (ctx, record) => {
+ *       // ctx.db is available here
+ *       await ctx.db.insert(auditTable).values({ ... });
+ *     }
+ *   }
+ * });
+ * ```
+ */
+export interface CreateTableOptions {
+  /** Resource base path (relative or absolute IRI) */
+  base: string;
+  /** Lifecycle hooks for table operations */
+  hooks?: TableHooks;
+}
 
 /**
  * SolidSchema - 独立的 schema 定义类

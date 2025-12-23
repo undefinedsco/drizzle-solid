@@ -69,6 +69,7 @@ export {
   type HookContext,
   type TableHooks,
   type SolidSession,
+  type CreateTableOptions,
 } from './core/pod-table';
 
 // Profile 管理（工具类，可在 hooks 中使用）

@@ -111,6 +111,7 @@ export class InsertQueryBuilder<TTable extends PodTable<any> = PodTable<any>> {
         fetch: fetchFn,
       },
       table: this.table,
+      db: (this.table as any)._db ?? null,
     };
   }
 

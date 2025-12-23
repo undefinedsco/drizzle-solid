@@ -1,5 +1,5 @@
 import { describe, it, expect } from 'vitest';
-import { podTable, id, string, boolean, HookContext, TableHooks } from '../../../src/core/pod-table';
+import { podTable, solidSchema, id, string, boolean, HookContext, TableHooks } from '../../../src/core/pod-table';
 
 describe('TableHooks', () => {
   describe('hooks configuration', () => {
@@ -92,12 +92,14 @@ describe('TableHooks', () => {
           fetch: globalThis.fetch,
         },
         table: {} as any,
+        db: {} as any, // db is now part of HookContext
       };
 
       expect(ctx.session).toBeDefined();
       expect(ctx.session.info.webId).toBe('https://alice.pod/profile/card#me');
       expect(ctx.session.fetch).toBeDefined();
       expect(ctx.table).toBeDefined();
+      expect(ctx.db).toBeDefined();
     });
 
     it('should have correct TableHooks shape', () => {
@@ -158,6 +160,55 @@ describe('TableHooks', () => {
       // Verify the hooks are configured
       expect(agents.config.hooks?.afterInsert).toBeDefined();
       expect(agents.config.hooks?.afterUpdate).toBeDefined();
+    });
+  });
+
+  describe('solidSchema', () => {
+    it('should create schema without hooks', () => {
+      const userSchema = solidSchema('users', {
+        id: id(),
+        name: string('name').predicate('https://schema.org/name'),
+        email: string('email').predicate('https://schema.org/email'),
+      }, {
+        type: 'https://schema.org/Person',
+      });
+
+      expect(userSchema.name).toBe('users');
+      expect(userSchema.type).toBe('https://schema.org/Person');
+      expect(userSchema.columns).toBeDefined();
+      expect(userSchema.columns.id).toBeDefined();
+      expect(userSchema.columns.name).toBeDefined();
+      expect(userSchema.columns.email).toBeDefined();
+    });
+
+    it('should create table from schema using at()', () => {
+      const userSchema = solidSchema('users', {
+        id: id(),
+        name: string('name').predicate('https://schema.org/name'),
+      }, {
+        type: 'https://schema.org/Person',
+      });
+
+      const userTable = userSchema.at('/data/users/');
+      
+      expect(userTable.config.name).toBe('users');
+      expect(userTable.config.base).toBe('/data/users/');
+      expect(userTable.config.type).toBe('https://schema.org/Person');
+    });
+
+    it('should not include hooks in SolidSchemaOptions', () => {
+      // SolidSchemaOptions should not accept hooks - they go in createTable
+      const userSchema = solidSchema('users', {
+        id: id(),
+        name: string('name').predicate('https://schema.org/name'),
+      }, {
+        type: 'https://schema.org/Person',
+        // hooks should not be allowed here (type check)
+      });
+
+      // Schema created via solidSchema should not have hooks
+      const table = userSchema.at('/data/users/');
+      expect(table.config.hooks).toBeUndefined();
     });
   });
 });

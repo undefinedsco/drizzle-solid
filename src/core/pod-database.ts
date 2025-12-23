@@ -8,7 +8,7 @@ import {
   UpdateQueryBuilder,
   DeleteQueryBuilder
 } from './pod-session';
-import { PodTable, SolidSchema, isSolidSchema, type InferTableData, PodColumnBase, type RelationDefinition } from './pod-table';
+import { PodTable, SolidSchema, isSolidSchema, type InferTableData, PodColumnBase, type RelationDefinition, type CreateTableOptions } from './pod-table';
 import { QueryCondition } from './query-conditions';
 import { inArray } from './query-conditions';
 import { 
@@ -86,6 +86,68 @@ export class PodDatabase<TSchema extends Record<string, unknown> = Record<string
       });
     }
     return this.federatedExecutor;
+  }
+
+  /**
+   * Create a table from a schema with hooks
+   * 
+   * This is the recommended way to create tables when you need hooks that
+   * can access the database instance (e.g., for cross-table operations).
+   * 
+   * @param schema - The schema definition (created via solidSchema())
+   * @param options - Table options including base path and hooks
+   * @returns A PodTable instance with hooks bound to this database
+   * 
+   * @example
+   * ```typescript
+   * const userSchema = solidSchema('users', {
+   *   id: id(),
+   *   name: text('name').predicate(SCHEMA.name),
+   *   email: text('email').predicate(SCHEMA.email),
+   * }, {
+   *   type: SCHEMA.Person,
+   * });
+   * 
+   * const userTable = db.createTable(userSchema, {
+   *   base: '/data/users/',
+   *   hooks: {
+   *     afterInsert: async (ctx, record) => {
+   *       // ctx.db is available - can query/insert other tables
+   *       await ctx.db.insert(auditTable).values({
+   *         action: 'user_created',
+   *         userId: record['@id'],
+   *       });
+   *     },
+   *     afterUpdate: async (ctx, record, changes) => {
+   *       if ('email' in changes) {
+   *         // Send verification email via another service
+   *         await ctx.db.insert(notificationTable).values({
+   *           type: 'email_changed',
+   *           userId: record['@id'],
+   *         });
+   *       }
+   *     },
+   *   },
+   * });
+   * ```
+   */
+  createTable<TColumns extends Record<string, PodColumnBase<any, any, any, any>>>(
+    schema: SolidSchema<TColumns>,
+    options: CreateTableOptions
+  ): PodTable<TColumns> {
+    // Create table using schema.at() with the base path
+    const table = schema.at(options.base);
+    
+    // Attach hooks if provided
+    if (options.hooks) {
+      table.config.hooks = options.hooks;
+    }
+    
+    // Store reference to db in table for hook context
+    // This allows hooks to access db when invoked
+    (table as any)._db = this;
+    
+    return table;
   }
 
   // SELECT 查询
