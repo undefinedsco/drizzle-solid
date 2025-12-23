@@ -5,6 +5,7 @@
  */
 
 import type { PodColumnBase, PodTable } from '../pod-table';
+import type { UriResolver } from '../uri';
 
 /**
  * RDF 项类型
@@ -114,6 +115,9 @@ export interface BuildContext {
 
   /** 获取命名空间 URI */
   getNamespaceUri: (table: PodTable) => string | undefined;
+
+  /** URI 解析器 */
+  uriResolver?: UriResolver;
 
   /** 基础 URI，用于解析相对 URI */
   baseUri?: string;

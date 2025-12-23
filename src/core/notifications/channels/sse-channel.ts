@@ -29,10 +29,12 @@ export class SSEChannel extends BaseChannel {
     try {
       // CSS 直接模式不需要 Accept: text/event-stream
       // 使用 text/turtle 可以获得 Turtle 格式的通知流
+      const requestId = `notify-sse-${Date.now()}`;
       const response = await fetchFn(this.config.receiveFrom, {
         method: 'GET',
         headers: {
           'Accept': 'text/turtle, text/event-stream',
+          'X-Request-ID': requestId,
         },
         signal: this.abortController.signal,
       });
@@ -92,7 +94,8 @@ export class SSEChannel extends BaseChannel {
           break;
         }
 
-        buffer += decoder.decode(value, { stream: true });
+        const chunk = decoder.decode(value, { stream: true });
+        buffer += chunk;
         
         // 根据内容类型选择解析方式
         if (this.contentType.includes('text/turtle')) {

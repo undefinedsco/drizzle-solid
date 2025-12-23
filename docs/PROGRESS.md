@@ -19,13 +19,13 @@
 
 ```typescript
 // 发现某类型的数据位置
-const locations = await db.discover('https://schema.org/Person');
+const locations = await db.discovery.discover('https://schema.org/Person');
 
 // 获取所有数据注册
-const all = await db.discoverAll();
+const all = await db.discovery.discoverAll();
 
 // 按应用发现
-const acmeData = await db.discoverByApp('https://acme.com/app#id');
+const acmeData = await db.discovery.discoverByApp('https://acme.com/app#id');
 
 // 位置转表（支持 Shape 选择）
 const table = await db.locationToTable(location, { appId: 'https://acme.com/app#id' });

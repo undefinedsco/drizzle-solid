@@ -8,20 +8,11 @@ describe('Index exports', () => {
     expect(typeof indexModule).toBe('object');
   });
 
-  it('应该导出核心类', async () => {
-    const {
-      PodDialect,
-      PodAsyncSession,
-      PodDatabase,
-      ASTToSPARQLConverter,
-      SolidSPARQLExecutor
-    } = await import('@src/index');
+  it('应该导出主要入口', async () => {
+    const { drizzle, solid } = await import('@src/index');
 
-    expect(PodDialect).toBeDefined();
-    expect(PodAsyncSession).toBeDefined();
-    expect(PodDatabase).toBeDefined();
-    expect(ASTToSPARQLConverter).toBeDefined();
-    expect(SolidSPARQLExecutor).toBeDefined();
+    expect(drizzle).toBeDefined();
+    expect(solid).toBeDefined();
   });
 
   it('应该导出表和列构建器', async () => {
@@ -51,7 +42,8 @@ describe('Index exports', () => {
       updateThing,
       deleteThing,
       validateRDFData,
-      parseRDFResponse
+      parseRDFResponse,
+      findByIRI
     } = await import('@src/index');
 
     expect(createThing).toBeDefined();
@@ -60,6 +52,16 @@ describe('Index exports', () => {
     expect(deleteThing).toBeDefined();
     expect(validateRDFData).toBeDefined();
     expect(parseRDFResponse).toBeDefined();
+    expect(findByIRI).toBeDefined();
+  });
+
+  it('应该导出发现与联邦相关接口', async () => {
+    const { ProviderCache, INTEROP, SHAPETREES, FederatedQueryExecutor } = await import('@src/index');
+
+    expect(ProviderCache).toBeDefined();
+    expect(INTEROP).toBeDefined();
+    expect(SHAPETREES).toBeDefined();
+    expect(FederatedQueryExecutor).toBeDefined();
   });
 
   it('应该导出类型定义', async () => {

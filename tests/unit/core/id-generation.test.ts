@@ -14,6 +14,7 @@ describe('ID Generation', () => {
     id: id(),
     name: string('name').predicate('http://schema.org/name')
   }, {
+    base: '/data/users.ttl',
     type: 'http://schema.org/Person'
   });
 
@@ -48,7 +49,7 @@ describe('ID Generation', () => {
     const customTable = podTable('custom', {
       id: id('id', { defaultValue: () => 'custom-id-123' }),
       name: string('name').predicate('http://schema.org/name')
-    }, { type: 'http://example.org/Test' });
+    }, { base: '/data/custom.ttl', type: 'http://example.org/Test' });
 
     const insertBuilder = new InsertQueryBuilder(session, customTable);
     insertBuilder.values({ name: 'Charlie' });

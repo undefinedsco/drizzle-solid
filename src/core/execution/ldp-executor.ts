@@ -8,20 +8,22 @@ import type { PodTable } from '../pod-table';
 import type { ComunicaSPARQLExecutor } from '../sparql-executor';
 import { TripleBuilderImpl } from '../triple/builder';
 import type { TripleBuilder } from '../triple/types';
-import { subjectResolver } from '../subject';
+import type { UriResolver } from '../uri';
 
 export class LdpExecutor {
   private sparqlExecutor: ComunicaSPARQLExecutor;
   private fetchFn: typeof fetch;
   private tripleBuilder: TripleBuilderImpl;
+  private uriResolver: UriResolver;
   
   // 用于跟踪 N3 Patch 请求数
   private n3PatchCounter = 0;
 
-  constructor(sparqlExecutor: ComunicaSPARQLExecutor, fetchFn: typeof fetch) {
+  constructor(sparqlExecutor: ComunicaSPARQLExecutor, fetchFn: typeof fetch, uriResolver: UriResolver) {
     this.sparqlExecutor = sparqlExecutor;
     this.fetchFn = fetchFn;
-    this.tripleBuilder = new TripleBuilderImpl();
+    this.uriResolver = uriResolver;
+    this.tripleBuilder = new TripleBuilderImpl(uriResolver);
   }
 
   /**
@@ -56,7 +58,7 @@ export class LdpExecutor {
 
     rows.forEach((row, idx) => {
       // 使用 SubjectResolver 生成 URI
-      const subject = subjectResolver.resolve(table, row, idx);
+      const subject = this.uriResolver.resolveSubject(table, row, idx);
       
       // 1. rdf:type
       const typeTriple = this.tripleBuilder.buildTypeTriple(subject, table.config.type as string);
@@ -79,17 +81,17 @@ export class LdpExecutor {
       return [];
     }
 
-    const mode = subjectResolver.getResourceMode(table);
+    const mode = this.uriResolver.getResourceMode(table);
 
     // Document Mode: 每条记录单独写入各自的文件
     if (mode === 'document') {
       const results: any[] = [];
       for (let idx = 0; idx < rows.length; idx++) {
         const row = rows[idx];
-        const subject = subjectResolver.resolve(table, row, idx);
+        const subject = this.uriResolver.resolveSubject(table, row, idx);
 
         // 从 subject URI 提取资源 URL (去掉 fragment 如果有)
-        const docResourceUrl = subjectResolver.getResourceUrl(subject);
+        const docResourceUrl = this.uriResolver.getResourceUrl(subject);
 
         // 收集该记录的三元组
         const recordTriples: string[] = [];
@@ -195,12 +197,12 @@ export class LdpExecutor {
     }
 
     const results: any[] = [];
-    const mode = subjectResolver.getResourceMode(table);
+    const mode = this.uriResolver.getResourceMode(table);
 
     for (const subject of subjects) {
       // Document mode: 从 subject URI 获取资源 URL
       const targetResourceUrl = mode === 'document'
-        ? subjectResolver.getResourceUrl(subject)
+        ? this.uriResolver.getResourceUrl(subject)
         : resourceUrl;
 
       // 1. 获取普通字段的 Patch 数据（无 WHERE 子句）
@@ -208,7 +210,7 @@ export class LdpExecutor {
       
       if (!patchData) continue;
       
-      const { deleteTriples, insertTriples } = patchData;
+      const { deleteTriples, insertTriples, deleteWherePatterns } = patchData;
       
       // 2. 处理内联对象字段（TripleBuilder 的 buildDelete 和 buildInsert 已经处理了逻辑）
       // 但我们需要先查询旧的内联对象以便删除
@@ -270,7 +272,7 @@ export class LdpExecutor {
           continue;
       }
 
-      const res = await this.executeN3Patch(targetResourceUrl, finalDeletes, finalInserts, []);
+      const res = await this.executeN3Patch(targetResourceUrl, finalDeletes, finalInserts, [], deleteWherePatterns);
       results.push(...res);
       
       // Delay between updates to prevent server overload/locking
@@ -289,13 +291,13 @@ export class LdpExecutor {
     resourceUrl: string
   ): Promise<any[]> {
     const results: any[] = [];
-    const mode = subjectResolver.getResourceMode(table);
+    const mode = this.uriResolver.getResourceMode(table);
 
     for (const subject of subjects) {
       try {
         // Document mode: 从 subject URI 获取资源 URL
         const targetResourceUrl = mode === 'document'
-          ? subjectResolver.getResourceUrl(subject)
+          ? this.uriResolver.getResourceUrl(subject)
           : resourceUrl;
 
         // Recursively fetch all triples for this subject and its inline children
@@ -338,9 +340,10 @@ export class LdpExecutor {
     table: PodTable,
     data: Record<string, any>,
     resourceUrl: string
-  ): Promise<{ deleteTriples: string[]; insertTriples: string[] } | null> {
+  ): Promise<{ deleteTriples: string[]; insertTriples: string[]; deleteWherePatterns: string[] } | null> {
     const deleteTriples: string[] = [];
     const insertTriples: string[] = [];
+    const deleteWherePatterns: string[] = [];
 
     for (const [key, rawValue] of Object.entries(data)) {
       if (rawValue === undefined) continue;
@@ -372,8 +375,11 @@ export class LdpExecutor {
 
       const predicate = this.tripleBuilder.getPredicateUri(col, table);
       const isInverse = Boolean(col.options?.inverse);
+      const safeKey = key.replace(/[^a-zA-Z0-9_]/g, '_');
 
       if (isInverse) {
+         // Delete all inverse links for this predicate to avoid stale values.
+         deleteWherePatterns.push(`?s_${safeKey} <${predicate}> <${subject}> .`);
          // Inverse logic
          const existingSubjects = await this.fetchInverseSubjects(resourceUrl, subject, predicate);
          
@@ -393,6 +399,9 @@ export class LdpExecutor {
 
       // Normal logic
       // fetch existing values to build concrete delete triples
+      // Delete all existing predicate values to avoid stale literals (e.g. updatedAt duplication).
+      deleteWherePatterns.push(`<${subject}> <${predicate}> ?o_${safeKey} .`);
+
       const existingValues = await this.fetchExistingObjects(resourceUrl, subject, predicate);
       
       existingValues.forEach((existing) => {
@@ -408,7 +417,7 @@ export class LdpExecutor {
       insertTriples.push(...this.tripleBuilder.toN3Strings(result.triples));
     }
 
-    return { deleteTriples, insertTriples };
+    return { deleteTriples, insertTriples, deleteWherePatterns };
   }
 
   /**
@@ -422,16 +431,17 @@ export class LdpExecutor {
     resourceUrl: string,
     deleteTriples: string[],
     insertTriples: string[],
-    wherePatterns: string[] = []
+    wherePatterns: string[] = [],
+    deleteWherePatterns: string[] = []
   ): Promise<any[]> {
-    if (deleteTriples.length === 0 && insertTriples.length === 0) {
+    if (deleteTriples.length === 0 && insertTriples.length === 0 && deleteWherePatterns.length === 0) {
       return [];
     }
 
     this.n3PatchCounter++;
     
     // 构建 SPARQL UPDATE 查询
-    const sparqlUpdate = this.buildSparqlUpdate(deleteTriples, insertTriples);
+    const sparqlUpdate = this.buildSparqlUpdate(deleteTriples, insertTriples, deleteWherePatterns);
     
     let response;
     let lastError;
@@ -455,7 +465,13 @@ export class LdpExecutor {
         // 如果 SPARQL UPDATE 不被支持 (415/405)，尝试 N3 Patch
         // 如果 SPARQL UPDATE 不被支持 (415/405)，尝试 N3 Patch
         if (response.status === 415 || response.status === 405) {
-          return await this.executeN3PatchInternal(resourceUrl, deleteTriples, insertTriples, wherePatterns);
+          const fallbackDeletes = deleteWherePatterns.length > 0
+            ? [...deleteTriples, ...deleteWherePatterns]
+            : deleteTriples;
+          const fallbackWhere = deleteWherePatterns.length > 0
+            ? deleteWherePatterns
+            : wherePatterns;
+          return await this.executeN3PatchInternal(resourceUrl, fallbackDeletes, insertTriples, fallbackWhere);
         }
         
         // 服务器错误，重试
@@ -486,9 +502,19 @@ export class LdpExecutor {
   /**
    * 构建 SPARQL UPDATE 查询
    */
-  private buildSparqlUpdate(deleteTriples: string[], insertTriples: string[]): string {
+  private buildSparqlUpdate(
+    deleteTriples: string[],
+    insertTriples: string[],
+    deleteWherePatterns: string[]
+  ): string {
     const parts: string[] = [];
     
+    if (deleteWherePatterns.length > 0) {
+      for (const pattern of deleteWherePatterns) {
+        parts.push(`DELETE WHERE {\n${pattern}\n}`);
+      }
+    }
+
     if (deleteTriples.length > 0) {
       parts.push(`DELETE DATA {\n${deleteTriples.join('\n')}\n}`);
     }

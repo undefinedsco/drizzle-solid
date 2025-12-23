@@ -7,6 +7,7 @@ export type {
   ChannelType,
   SubscribeOptions,
   TableSubscribeOptions,
+  EntitySubscribeOptions,
   Subscription,
   SubscriptionFeature,
 } from './types';

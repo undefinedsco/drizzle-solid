@@ -3,13 +3,15 @@
  */
 import { describe, it, expect, beforeEach } from 'vitest';
 import { podTable, string, id } from '../../../../src/core/pod-table';
-import { subjectResolver, SubjectResolverImpl } from '../../../../src/core/subject';
+import { UriResolverImpl } from '../../../../src/core/uri';
 
 const ns = { prefix: 'schema', uri: 'https://schema.org/' };
 
 describe('extractIdFromSubject mode handling', () => {
+  let resolver: UriResolverImpl;
+
   beforeEach(() => {
-    (subjectResolver as SubjectResolverImpl).setPodUrl('https://pod.example');
+    resolver = new UriResolverImpl('https://pod.example');
   });
 
   describe('document mode', () => {
@@ -23,20 +25,20 @@ describe('extractIdFromSubject mode handling', () => {
     });
 
     it('should extract id from document URI filename', () => {
-      const parsed = subjectResolver.parse('https://pod.example/data/users/alice.ttl', documentTable);
+      const parsed = resolver.parseSubject('https://pod.example/data/users/alice.ttl', documentTable);
       expect(parsed).not.toBeNull();
       expect(parsed!.id).toBe('alice');
       expect(parsed!.mode).toBe('document');
     });
 
     it('should extract id from document URI with different extension', () => {
-      const parsed = subjectResolver.parse('https://pod.example/data/users/bob.rdf', documentTable);
+      const parsed = resolver.parseSubject('https://pod.example/data/users/bob.rdf', documentTable);
       expect(parsed).not.toBeNull();
       expect(parsed!.id).toBe('bob');
     });
 
     it('should handle nested paths in document mode', () => {
-      const parsed = subjectResolver.parse('https://pod.example/data/users/2025/01/carol.ttl', documentTable);
+      const parsed = resolver.parseSubject('https://pod.example/data/users/2025/01/carol.ttl', documentTable);
       expect(parsed).not.toBeNull();
       expect(parsed!.id).toBe('carol');
     });
@@ -53,14 +55,14 @@ describe('extractIdFromSubject mode handling', () => {
     });
 
     it('should extract id from fragment URI', () => {
-      const parsed = subjectResolver.parse('https://pod.example/data/tags.ttl#tag-1', fragmentTable);
+      const parsed = resolver.parseSubject('https://pod.example/data/tags.ttl#tag-1', fragmentTable);
       expect(parsed).not.toBeNull();
       expect(parsed!.id).toBe('tag-1');
       expect(parsed!.mode).toBe('fragment');
     });
 
     it('should extract id from fragment with special characters', () => {
-      const parsed = subjectResolver.parse('https://pod.example/data/tags.ttl#my-tag_123', fragmentTable);
+      const parsed = resolver.parseSubject('https://pod.example/data/tags.ttl#my-tag_123', fragmentTable);
       expect(parsed).not.toBeNull();
       expect(parsed!.id).toBe('my-tag_123');
     });
@@ -73,7 +75,7 @@ describe('extractIdFromSubject mode handling', () => {
         type: 'https://example.org/Item',
         namespace: ns,
       });
-      expect(subjectResolver.getResourceMode(table)).toBe('document');
+      expect(resolver.getResourceMode(table)).toBe('document');
     });
 
     it('should detect fragment mode from .ttl extension', () => {
@@ -82,7 +84,7 @@ describe('extractIdFromSubject mode handling', () => {
         type: 'https://example.org/Item',
         namespace: ns,
       });
-      expect(subjectResolver.getResourceMode(table)).toBe('fragment');
+      expect(resolver.getResourceMode(table)).toBe('fragment');
     });
 
     it('should detect fragment mode from .jsonld extension', () => {
@@ -91,7 +93,7 @@ describe('extractIdFromSubject mode handling', () => {
         type: 'https://example.org/Item',
         namespace: ns,
       });
-      expect(subjectResolver.getResourceMode(table)).toBe('fragment');
+      expect(resolver.getResourceMode(table)).toBe('fragment');
     });
   });
 });

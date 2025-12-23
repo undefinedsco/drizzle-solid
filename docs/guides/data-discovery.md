@@ -64,7 +64,7 @@ import { drizzle } from 'drizzle-solid';
 const db = drizzle(session);
 
 // 发现某类型的所有数据位置
-const locations = await db.discover('https://schema.org/Person');
+const locations = await db.discovery.discover('https://schema.org/Person');
 
 console.log(locations);
 // [
@@ -83,7 +83,7 @@ console.log(locations);
 
 ```typescript
 // 只发现某个应用注册的数据
-const acmeLocations = await db.discover('https://schema.org/Person', {
+const acmeLocations = await db.discovery.discover('https://schema.org/Person', {
   appId: 'https://acme.com/app#id'
 });
 ```
@@ -92,7 +92,7 @@ const acmeLocations = await db.discover('https://schema.org/Person', {
 
 ```typescript
 // 获取所有数据注册的详细信息
-const allRegistrations = await db.discoverAll();
+const allRegistrations = await db.discovery.discoverAll();
 
 for (const reg of allRegistrations) {
   console.log(`${reg.rdfClass} at ${reg.container}`);
@@ -106,7 +106,7 @@ for (const reg of allRegistrations) {
 
 ```typescript
 // 发现某个应用注册的所有数据类型
-const acmeData = await db.discoverByApp('https://acme.com/app#id');
+const acmeData = await db.discovery.discoverByApp('https://acme.com/app#id');
 ```
 
 ## 从位置到表
@@ -116,7 +116,7 @@ const acmeData = await db.discoverByApp('https://acme.com/app#id');
 ### 基本转换
 
 ```typescript
-const locations = await db.discover('https://schema.org/Person');
+const locations = await db.discovery.discover('https://schema.org/Person');
 const table = await db.locationToTable(locations[0]);
 
 // 现在可以查询
@@ -186,19 +186,34 @@ await db.init(persons);
 
 ### 使用 SAI 注册
 
-SAI 注册需要创建 `InteropDiscovery` 实例：
+SAI 注册使用同一套 `db.discovery` 接口，并且必须显式提供 `registryPath`：
 
 ```typescript
-import { InteropDiscovery } from 'drizzle-solid';
-
-const discovery = new InteropDiscovery(webId, fetch, clientId);
-
-// 注册表
-await discovery.register(table, {
+// 注册表（缺少 RegistrySet 时会自动创建，需要提供 registryPath）
+await db.discovery.register(table, {
+  registryPath: 'https://alice.pod/registries/your-app/',
   shapeUrl: 'https://shapes.example/Person.shacl',  // 可选
   containerSlug: 'persons',  // 自定义容器名
   force: false  // 是否强制重新注册
 });
+
+### 同时注册 TypeIndex + SAI（推荐）
+
+在表配置中声明 TypeIndex 和 SAI RegistrySet 路径，`db.init()` 会自动注册两者：
+
+```typescript
+const persons = podTable('persons', {
+  id: id(),
+  name: string('name').predicate('https://schema.org/name'),
+}, {
+  base: '/data/persons/',
+  type: 'https://schema.org/Person',
+  typeIndex: 'private',
+  saiRegistryPath: 'https://alice.pod/registries/your-app/',
+});
+
+await db.init(persons);
+```
 ```
 
 ## 场景示例
@@ -222,7 +237,7 @@ Beta App 也扩展了 Person Shape:
 当发现数据时：
 
 ```typescript
-const locations = await db.discover('https://schema.org/Person');
+const locations = await db.discovery.discover('https://schema.org/Person');
 // locations[0].shapes 包含三个 Shape
 
 // 使用社区 Shape（只有基本字段）
@@ -243,13 +258,16 @@ const acmeTable = await db.locationToTable(locations[0], {
 const bobDb = drizzle(bobSession);
 
 // 发现 Alice Pod 中 Bob 有权访问的数据
-const discovery = new InteropDiscovery(
-  'https://alice.pod/profile/card#me',
-  bobSession.fetch,
-  'https://bob-app.example/id'
+import { solid } from 'drizzle-solid';
+
+const discoveryDb = drizzle(
+  solid({
+    webId: 'https://alice.pod/profile/card#me',
+    fetch: bobSession.fetch
+  })
 );
 
-const locations = await discovery.discover('https://schema.org/Person');
+const locations = await discoveryDb.discovery.discover('https://schema.org/Person');
 // 返回 Alice 授权给 Bob 的数据位置
 ```
 
@@ -266,6 +284,8 @@ CompositeDiscovery
 ```
 
 结果会按 Container 合并，同一个 Container 的多个 Shape 会合并到 `shapes` 数组中。
+
+`db.discovery` 返回 DataDiscovery 接口；`PodDatabase` 还提供了 `discover()`/`discoverAll()` 等便捷封装。
 
 ### 为什么以 Container 为中心？
 
@@ -289,6 +309,16 @@ CompositeDiscovery
 | `discoverByApp(appId)` | 按应用 ID 发现数据 |
 | `locationToTable(location, options?)` | 将位置转换为 PodTable |
 | `discoverTablesFor(rdfClass, discoverOpts?, tableOpts?)` | 发现并转换为表 |
+
+### DataDiscovery 接口（`db.discovery`）
+
+| 方法 | 说明 |
+|------|------|
+| `register(table, options?)` | 注册数据类型（TypeIndex + SAI；SAI 需提供 `registryPath`） |
+| `discover(rdfClass, options?)` | 发现某类型的数据位置 |
+| `discoverAll()` | 获取所有数据注册信息 |
+| `discoverByApp(appId)` | 按应用 ID 发现数据 |
+| `isRegistered(rdfClass)` | 检查类型是否已注册 |
 
 ### DiscoverOptions
 

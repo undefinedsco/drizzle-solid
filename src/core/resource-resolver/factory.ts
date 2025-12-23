@@ -8,14 +8,17 @@ import type { PodTable } from '../pod-table';
 import type { ResourceResolver, ResourceResolverFactory } from './types';
 import { FragmentResourceResolver } from './fragment-resolver';
 import { DocumentResourceResolver } from './document-resolver';
-import { subjectResolver } from '../subject/resolver';
+import type { UriResolver } from '../uri';
+import { UriResolverImpl } from '../uri';
 
 export class ResourceResolverFactoryImpl implements ResourceResolverFactory {
   private podBaseUrl: string;
   private resolverCache = new WeakMap<PodTable, ResourceResolver>();
+  private uriResolver: UriResolver;
 
-  constructor(podBaseUrl: string) {
+  constructor(podBaseUrl: string, uriResolver?: UriResolver) {
     this.podBaseUrl = podBaseUrl;
+    this.uriResolver = uriResolver ?? new UriResolverImpl();
   }
 
   /**
@@ -48,16 +51,17 @@ export class ResourceResolverFactoryImpl implements ResourceResolverFactory {
   }
 
   private determineMode(table: PodTable): 'fragment' | 'document' {
-    // Delegate to subjectResolver for consistent mode detection
-    return subjectResolver.getResourceMode(table);
+    // Delegate to UriResolver for consistent mode detection
+    return this.uriResolver.getResourceMode(table);
   }
 }
 
 /**
  * Determine the resource mode for a table
  * Utility function for use outside of factory context
- * @deprecated Use subjectResolver.getResourceMode() directly
+ * @deprecated Prefer using a UriResolver instance directly
  */
 export function getResourceMode(table: PodTable): 'fragment' | 'document' {
-  return subjectResolver.getResourceMode(table);
+  const resolver = new UriResolverImpl();
+  return resolver.getResourceMode(table);
 }

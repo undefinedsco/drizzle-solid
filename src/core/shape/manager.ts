@@ -248,7 +248,7 @@ export class DrizzleShapeManager implements ShapeManager {
     // 创建 PodTable
     const table = podTable(tableName, columns, {
       type: shape.targetClass,
-      containerPath: containerPath
+      base: containerPath
     });
 
     return {

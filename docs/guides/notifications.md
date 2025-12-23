@@ -75,6 +75,7 @@ type NotificationType =
 
 | 回调 | 触发时机 |
 |------|---------|
+| `onNotification` | 原始通知事件（服务端返回的 NotificationEvent） |
 | `onCreate` | 新资源创建 |
 | `onUpdate` | 资源内容变更 |
 | `onDelete` | 资源删除 |
@@ -82,6 +83,11 @@ type NotificationType =
 | `onRemove` | 资源从容器移除 |
 | `onError` | 连接错误 |
 | `onClose` | 连接关闭 |
+
+说明：
+- `onNotification` 与 `onCreate/onUpdate/...` 都是服务端通知回调，前者是原始事件，后者是按类型分发。
+- 如果同时提供两类回调，会各自触发；需要自行避免重复处理。
+- 表级 hooks（`podTable` 的 `hooks.afterInsert/afterUpdate/afterDelete`）是本地写操作后的生命周期钩子，不依赖通知流。
 
 ## 通道类型
 
@@ -231,6 +237,7 @@ async subscribe<TTable extends PodTable<any>>(
 interface TableSubscribeOptions {
   channel?: 'streaming-http' | 'websocket';  // 默认 'streaming-http'
   features?: ('state' | 'endAt' | 'rate')[];
+  onNotification?: (event: NotificationEvent) => void;
   onCreate?: (activity: Activity) => void | Promise<void>;
   onUpdate?: (activity: Activity) => void | Promise<void>;
   onDelete?: (activity: Activity) => void | Promise<void>;

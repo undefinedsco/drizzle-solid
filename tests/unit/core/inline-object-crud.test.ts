@@ -1,16 +1,13 @@
-import { describe, expect, it, beforeEach } from 'vitest';
+import { describe, expect, it } from 'vitest';
 import { ASTToSPARQLConverter } from '../../../src/core/ast-to-sparql';
 import { podTable, string, object } from '../../../src/core/pod-table';
-import { subjectResolver } from '../../../src/core/subject';
+import { UriResolverImpl } from '../../../src/core/uri';
 
 const schemaNamespace = { uri: 'https://schema.org/', prefix: 'schema' };
 
 describe('inline object CRUD SPARQL generation', () => {
-  beforeEach(() => {
-    subjectResolver.setPodUrl('https://pod.example');
-  });
-
-  const converter = new ASTToSPARQLConverter('https://pod.example/');
+  const resolver = new UriResolverImpl('https://pod.example');
+  const converter = new ASTToSPARQLConverter('https://pod.example/', undefined, resolver);
   const threadsTable = podTable('threads', {
     id: string('id').primaryKey(),
     title: string('title').predicate('https://schema.org/headline'),

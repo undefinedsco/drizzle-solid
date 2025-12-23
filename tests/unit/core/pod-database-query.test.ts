@@ -25,6 +25,10 @@ describe('PodDatabase query facade', () => {
         captured.where = where;
         return builder;
       },
+      whereByIri: (iri: any) => {
+        captured.whereByIri = iri;
+        return builder;
+      },
       orderBy: (..._args: any[]) => builder,
       limit: (_v: any) => builder,
       offset: (_v: any) => builder,
@@ -61,5 +65,7 @@ describe('PodDatabase query facade', () => {
   it('findByIRI 应该识别绝对 IRI', async () => {
     const row = await db.query.users.findByIRI('https://pod.example/users.ttl#1');
     expect(row?.name).toBe('Alice');
+    // Should use whereByIri internally
+    expect(captured.whereByIri).toBe('https://pod.example/users.ttl#1');
   });
 });

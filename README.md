@@ -430,6 +430,8 @@ Drizzle Solid 使用组合策略 (`CompositeDiscovery`)：
 
 这种设计确保了既能兼容旧的 Solid 应用（基于 TypeIndex），又能支持未来的互操作性规范（SAI）。
 
+架构说明见 `docs/guides/architecture.md`。
+
 ## ✅ 当前 SQL 支持范围
 
 - 已实现：`select/insert/update/delete`、Drizzle 风格的 `where` 条件构建器（`eq/ne/lt/gte/like/in/not` 等）、`orderBy`、`limit/offset`、`distinct`、嵌套布尔组合，以及基于本地回放的 `count/sum/avg/min/max` 聚合、`JOIN` 和 `GROUP BY`。

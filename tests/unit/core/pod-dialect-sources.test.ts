@@ -78,16 +78,17 @@ describe('PodDialect resolveTableUrls source selection', () => {
     const logTable = podTable('logs', {
       id: string('id').primaryKey().predicate('https://schema.org/identifier')
     }, {
-      base: 'logs/',  // ends with / -> document mode
+      base: '/logs/',  // ends with / -> document mode (container)
       type: 'https://schema.org/Message',
       namespace: { prefix: 'schema', uri: 'https://schema.org/' }
     });
 
     const resource = (dialect as any).resolveTableResource(logTable);
+    // In document mode, resourceUrl IS the container (each record is a separate file)
     expect(resource).toEqual({
       mode: 'ldp',
       containerUrl: 'https://example.com/profile/logs/',
-      resourceUrl: 'https://example.com/profile/logs/logs.ttl'
+      resourceUrl: 'https://example.com/profile/logs/'
     });
 
     const plan = {

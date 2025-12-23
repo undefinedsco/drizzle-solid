@@ -8,33 +8,28 @@ import {
   UpdateQueryBuilder,
   DeleteQueryBuilder
 } from './pod-session';
-import { PodTable, type PodSchema, type InferTableData, PodColumnBase, type RelationDefinition } from './pod-table';
+import { PodTable, SolidSchema, isSolidSchema, type InferTableData, PodColumnBase, type RelationDefinition } from './pod-table';
 import { QueryCondition } from './query-conditions';
 import { inArray } from './query-conditions';
 import { 
   NotificationsClient, 
   type SubscribeOptions, 
   type TableSubscribeOptions,
+  type EntitySubscribeOptions,
   type Subscription,
   type Activity,
   type NotificationType,
   type NotificationsClientConfig
 } from './notifications';
 import { FederatedQueryExecutor, type FederatedError, type FederatedQueryOptions } from './federated';
+import type { DataDiscovery } from './discovery';
 
 
 /**
- * 检查目标是否为 PodSchema（用于联邦查询）
+ * 从 SolidSchema 或 PodTable 获取 type
  */
-function isPodSchema(target: PodTable<any> | PodSchema<any>): target is PodSchema<any> {
-  return (target as PodSchema<any>).$kind === 'PodSchema';
-}
-
-/**
- * 从 PodSchema 或 PodTable 获取 type
- */
-function getTargetType(target: PodTable<any> | PodSchema<any>): string {
-  if (isPodSchema(target)) {
+function getTargetType(target: PodTable<any> | SolidSchema<any>): string {
+  if (isSolidSchema(target)) {
     return target.type;
   }
   return target.config.type;
@@ -126,6 +121,237 @@ export class PodDatabase<TSchema extends Record<string, unknown> = Record<string
     return rows.length > 0 ? rows[0] : null;
   }
 
+  /**
+   * 通过完整 IRI 查询单个实体
+   * 
+   * @param table - 表定义（用于解析 schema）
+   * @param iri - 完整 IRI，本地或远程
+   * @returns 实体数据，如果不存在则返回 null
+   * 
+   * @example
+   * ```typescript
+   * // 本地 Agent
+   * db.findByIri(agentTable, 'https://my.pod/agents/translator')
+   * 
+   * // 远程 Profile  
+   * db.findByIri(solidProfileTable, 'https://alice.pod/profile/card#me')
+   * 
+   * // 业务层不区分本地远程
+   * db.findByIri(agentTable, contact.entityUri)
+   * ```
+   */
+  async findByIri<TTable extends PodTable<any>>(
+    table: TTable,
+    iri: string
+  ): Promise<InferTableData<TTable> | null> {
+    if (!iri || typeof iri !== 'string') {
+      throw new Error('findByIri requires a valid IRI string');
+    }
+
+    // 解析文档 URL（去掉 fragment）
+    const { documentUrl } = this.parseIri(iri);
+    
+    // 用 schema.at(documentUrl) 创建指向目标位置的表
+    const targetTable = table.$schema.at(documentUrl);
+    
+    // 使用 whereByIri 内部方法
+    const rows = await this.session
+      .select()
+      .from(targetTable)
+      .whereByIri(iri)
+      .limit(1);
+    
+    return (rows[0] ?? null) as InferTableData<TTable> | null;
+  }
+
+  /**
+   * 解析 IRI 为文档 URL 和 fragment
+   */
+  private parseIri(iri: string): { documentUrl: string; fragment: string | null } {
+    const hashIndex = iri.indexOf('#');
+    if (hashIndex >= 0) {
+      return {
+        documentUrl: iri.substring(0, hashIndex),
+        fragment: iri.substring(hashIndex + 1)
+      };
+    }
+    return { documentUrl: iri, fragment: null };
+  }
+
+  /**
+   * 通过完整 IRI 订阅单个实体的变更
+   * 
+   * @param table - 表定义
+   * @param iri - 完整 IRI，本地或远程
+   * @param options - 订阅选项
+   * @returns 取消订阅函数
+   * 
+   * @example
+   * ```typescript
+   * const unsubscribe = await db.subscribeByIri(
+   *   solidProfileTable,
+   *   'https://alice.pod/profile/card#me',
+   *   {
+   *     onUpdate: (data) => {
+   *       console.log('Profile updated:', data.name)
+   *     },
+   *     onDelete: () => {
+   *       console.log('Profile deleted')
+   *     },
+   *     onError: (error) => {
+   *       console.log('Subscription error:', error)
+   *     }
+   *   }
+   * )
+   * 
+   * // 离开时取消订阅
+   * unsubscribe()
+   * ```
+   */
+  async subscribeByIri<TTable extends PodTable<any>>(
+    table: TTable,
+    iri: string,
+    options: EntitySubscribeOptions<InferTableData<TTable>>
+  ): Promise<() => void> {
+    if (!iri || typeof iri !== 'string') {
+      throw new Error('subscribeByIri requires a valid IRI string');
+    }
+
+    if (!iri.startsWith('http://') && !iri.startsWith('https://')) {
+      throw new Error(`subscribeByIri requires an absolute IRI, got: ${iri}`);
+    }
+
+    // 懒初始化 NotificationsClient
+    if (!this.notificationsClient) {
+      const authenticatedFetch = this.dialect.getAuthenticatedFetch();
+      const config: NotificationsClientConfig = {
+        preferredChannels: this.dialect.config.preferredChannels ?? ['streaming-http', 'websocket'],
+      };
+      this.notificationsClient = new NotificationsClient(authenticatedFetch, config);
+    }
+
+    // 解析文档 URL（订阅文档，而不是 fragment）
+    const { documentUrl } = this.parseIri(iri);
+
+    // 订阅文档变更
+    const subscription = await this.notificationsClient.subscribe(documentUrl, {
+      channel: options.channel,
+      features: options.features,
+      onNotification: async (event) => {
+        try {
+          if (event.type === 'Update') {
+            // 重新获取数据
+            const data = await this.findByIri(table, iri);
+            if (data) {
+              await options.onUpdate(data);
+            }
+          } else if (event.type === 'Delete') {
+            await options.onDelete?.();
+          }
+        } catch (error) {
+          options.onError?.(error as Error);
+        }
+      },
+      onError: options.onError,
+    });
+
+    // 返回取消订阅函数
+    return () => subscription.unsubscribe();
+  }
+
+  /**
+   * 通过完整 IRI 更新单个实体
+   * 
+   * @param table - 表定义
+   * @param iri - 完整 IRI
+   * @param data - 要更新的数据
+   * @returns 更新后的实体数据
+   * 
+   * @example
+   * ```typescript
+   * const updated = await db.updateByIri(
+   *   agentTable,
+   *   'https://my.pod/agents/translator#agent',
+   *   { name: 'New Name', description: 'Updated description' }
+   * )
+   * ```
+   */
+  async updateByIri<TTable extends PodTable<any>>(
+    table: TTable,
+    iri: string,
+    data: Partial<Omit<InferTableData<TTable>, '@id' | 'id'>>
+  ): Promise<InferTableData<TTable> | null> {
+    if (!iri || typeof iri !== 'string') {
+      throw new Error('updateByIri requires a valid IRI string');
+    }
+
+    if (!iri.startsWith('http://') && !iri.startsWith('https://')) {
+      throw new Error(`updateByIri requires an absolute IRI, got: ${iri}`);
+    }
+
+    // 解析文档 URL
+    const { documentUrl } = this.parseIri(iri);
+    
+    // 用 schema.at(documentUrl) 创建指向目标位置的表
+    const targetTable = table.$schema.at(documentUrl);
+
+    // 使用 whereByIri 内部方法进行更新
+    await this.session
+      .update(targetTable)
+      .set(data as any)
+      .whereByIri(iri);
+
+    // 返回更新后的数据
+    return await this.findByIri(table, iri);
+  }
+
+  /**
+   * 通过完整 IRI 删除单个实体
+   * 
+   * @param table - 表定义
+   * @param iri - 完整 IRI
+   * @returns 是否删除成功
+   * 
+   * @example
+   * ```typescript
+   * const deleted = await db.deleteByIri(
+   *   agentTable,
+   *   'https://my.pod/agents/translator#agent'
+   * )
+   * ```
+   */
+  async deleteByIri<TTable extends PodTable<any>>(
+    table: TTable,
+    iri: string
+  ): Promise<boolean> {
+    if (!iri || typeof iri !== 'string') {
+      throw new Error('deleteByIri requires a valid IRI string');
+    }
+
+    if (!iri.startsWith('http://') && !iri.startsWith('https://')) {
+      throw new Error(`deleteByIri requires an absolute IRI, got: ${iri}`);
+    }
+
+    // 先检查实体是否存在
+    const existing = await this.findByIri(table, iri);
+    if (!existing) {
+      return false;
+    }
+
+    // 解析文档 URL
+    const { documentUrl } = this.parseIri(iri);
+    
+    // 用 schema.at(documentUrl) 创建指向目标位置的表
+    const targetTable = table.$schema.at(documentUrl);
+
+    // 使用 whereByIri 内部方法进行删除
+    await this.session
+      .delete(targetTable)
+      .whereByIri(iri);
+
+    return true;
+  }
+
   // 事务支持
   async transaction<T>(
     transaction: (tx: PodDatabase<TSchema>) => Promise<T>
@@ -149,6 +375,13 @@ export class PodDatabase<TSchema extends Record<string, unknown> = Record<string
   // 获取模式信息
   getSchema() {
     return this.schema;
+  }
+
+  /**
+   * 数据发现入口（TypeIndex + SAI 组合策略）
+   */
+  get discovery(): DataDiscovery {
+    return this.dialect.getDiscovery();
   }
 
   // 连接状态
@@ -208,40 +441,48 @@ export class PodDatabase<TSchema extends Record<string, unknown> = Record<string
       this.notificationsClient = new NotificationsClient(authenticatedFetch, config);
     }
 
-    // 获取表的资源 URL（容器或文件）
-    const topic = this.resolveTableTopic(table);
+    // 获取表的资源 URL（容器或文件），支持 iri 覆盖
+    const topic = this.resolveTableTopic(table, options.iri);
 
     // 将 TableSubscribeOptions 转换为底层 SubscribeOptions
     const subscribeOptions: SubscribeOptions = {
       channel: options.channel,
       features: options.features,
       onNotification: (event) => {
-        // 构造 Activity 对象
-        const activity: Activity = {
-          id: event.id,
-          type: event.type,
-          object: event.object,
-          published: event.published,
-          state: event.state,
-        };
+        options.onNotification?.(event);
 
-        // 根据类型分发到对应回调
-        switch (event.type) {
-          case 'Create':
-            options.onCreate?.(activity);
-            break;
-          case 'Update':
-            options.onUpdate?.(activity);
-            break;
-          case 'Delete':
-            options.onDelete?.(activity);
-            break;
-          case 'Add':
-            options.onAdd?.(activity);
-            break;
-          case 'Remove':
-            options.onRemove?.(activity);
-            break;
+        const hasTypedHandlers = Boolean(
+          options.onCreate || options.onUpdate || options.onDelete || options.onAdd || options.onRemove
+        );
+
+        if (hasTypedHandlers) {
+          // 构造 Activity 对象
+          const activity: Activity = {
+            id: event.id,
+            type: event.type,
+            object: event.object,
+            published: event.published,
+            state: event.state,
+          };
+
+          // 根据类型分发到对应回调
+          switch (event.type) {
+            case 'Create':
+              options.onCreate?.(activity);
+              break;
+            case 'Update':
+              options.onUpdate?.(activity);
+              break;
+            case 'Delete':
+              options.onDelete?.(activity);
+              break;
+            case 'Add':
+              options.onAdd?.(activity);
+              break;
+            case 'Remove':
+              options.onRemove?.(activity);
+              break;
+          }
         }
       },
       onError: options.onError,
@@ -253,8 +494,18 @@ export class PodDatabase<TSchema extends Record<string, unknown> = Record<string
 
   /**
    * 解析表对应的订阅主题 URL
+   * @param table 表定义
+   * @param iriOverride 可选的 IRI 覆盖（用于订阅其他 Pod 的资源）
    */
-  private resolveTableTopic<TTable extends PodTable<any>>(table: TTable): string {
+  private resolveTableTopic<TTable extends PodTable<any>>(table: TTable, iriOverride?: string): string {
+    // 如果提供了 iri 覆盖，直接使用
+    if (iriOverride) {
+      if (!iriOverride.startsWith('http://') && !iriOverride.startsWith('https://')) {
+        throw new Error(`iri must be an absolute URL, got: ${iriOverride}`);
+      }
+      return iriOverride;
+    }
+
     const config = this.dialect.getConfig();
     const podUrl = config.webId
       ? new URL(config.webId).origin
@@ -334,7 +585,7 @@ export class PodDatabase<TSchema extends Record<string, unknown> = Record<string
       id: string('id').primaryKey()
     }, {
       type: rdfClass,
-      containerPath: location.container
+      base: location.container
     });
 
     await this.init(table);
@@ -500,7 +751,7 @@ export class PodDatabase<TSchema extends Record<string, unknown> = Record<string
       id: string('id').primaryKey()
     }, {
       type: 'http://www.w3.org/2000/01/rdf-schema#Resource',
-      containerPath: location.container
+      base: location.container
     });
 
     await this.init(table);
@@ -749,9 +1000,12 @@ export class PodDatabase<TSchema extends Record<string, unknown> = Record<string
         return await findFirst<T>({ ...options, where: { ...(options?.where ?? {}), id } });
       };
 
-      const findByIRI = async <T = InferTableData<typeof table>>(iri: string, options?: Parameters<typeof findMany>[0]) => {
-        const where = iri.includes('://') ? { '@id': iri } : { id: iri };
-        return await findFirst<T>({ ...options, where: { ...(options?.where ?? {}), ...where } });
+      /**
+       * @deprecated Use db.findByIri(table, iri) instead
+       */
+      const findByIRI = async <T = InferTableData<typeof table>>(iri: string, _options?: Parameters<typeof findMany>[0]) => {
+        // Delegate to the main findByIri method
+        return await this.findByIri(table, iri) as T | null;
       };
 
       const count = async (options?: { where?: Record<string, unknown> | QueryCondition }) => {
@@ -800,7 +1054,7 @@ export class PodDatabase<TSchema extends Record<string, unknown> = Record<string
       if (!targetTable) continue;
 
       // 联邦查询：使用 FederatedQueryExecutor
-      if (isPodSchema(targetTable) || relationDef?.isFederated) {
+      if (isSolidSchema(targetTable) || relationDef?.isFederated) {
         if (relationDef && relationDef.discover) {
           try {
             const executor = this.getFederatedExecutor();
@@ -887,7 +1141,7 @@ export class PodDatabase<TSchema extends Record<string, unknown> = Record<string
         }
 
         let childBuilder = this.session.select().from(targetPodTable);
-        childBuilder = childBuilder.where({ '@id': uniqueIris });
+        childBuilder = childBuilder.whereByIri(uniqueIris);
         const childRows = await childBuilder;
         const groupedByIri = this.groupRowsByIri(childRows);
 

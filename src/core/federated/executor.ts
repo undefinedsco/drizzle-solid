@@ -4,7 +4,7 @@
  * 执行跨 Pod 的联邦查询
  */
 
-import type { PodSchema, PodTable, RelationDefinition, DiscoverFunction } from '../pod-table';
+import type { SolidSchema, PodTable, RelationDefinition, DiscoverFunction } from '../pod-table';
 import { ProviderCache, type WellKnownResponse } from '../discovery/provider-cache';
 import type { 
   FederatedResult, 
@@ -51,7 +51,7 @@ export class FederatedQueryExecutor {
       return { data: resultRows };
     }
 
-    const targetSchema = relationDef.table as PodSchema<any>;
+    const targetSchema = relationDef.table as SolidSchema<any>;
     const discoverFn = relationDef.discover;
     const relationName = relationDef.relationName ?? 'items';
     const targetType = targetSchema.type;

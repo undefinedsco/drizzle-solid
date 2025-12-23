@@ -38,9 +38,28 @@ export class UpdateQueryBuilder<TTable extends PodTable<any> = PodTable<any>> {
       const simple = this.convertQueryConditionToSimple(conditions);
       this.whereConditions = Object.keys(simple).length > 0 ? simple : undefined;
     } else {
+      // Check for @id usage and reject
+      if (conditions && typeof conditions === 'object' && '@id' in conditions) {
+        throw new Error(
+          `Using '@id' in where() is not supported. ` +
+          `Use db.updateByIri(table, iri, data) for IRI-based updates, ` +
+          `or use { id: 'value' } for id-based updates.`
+        );
+      }
       this.whereConditions = conditions;
       this.conditionTree = undefined;
     }
+    return this;
+  }
+
+  /**
+   * Internal method that allows @id in conditions.
+   * Used by *ByIri methods internally.
+   * @internal
+   */
+  whereByIri(iri: string) {
+    this.whereConditions = { '@id': iri };
+    this.conditionTree = undefined;
     return this;
   }
 

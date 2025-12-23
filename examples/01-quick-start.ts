@@ -8,13 +8,45 @@
  */
 
 import { drizzle, podTable, string, datetime } from 'drizzle-solid';
-import { getAuthenticatedSession, getPodBaseUrl } from './utils/auth';
 import { v4 as uuid } from 'uuid';
 
 import { Session } from '@inrupt/solid-client-authn-node';
+import { config as loadEnv } from 'dotenv';
+
+loadEnv();
+loadEnv({ path: '.env.local', override: true });
+
+async function getAuthenticatedSession(): Promise<Session> {
+  const session = new Session();
+  const clientId = process.env.SOLID_CLIENT_ID;
+  const clientSecret = process.env.SOLID_CLIENT_SECRET;
+  const oidcIssuer = process.env.SOLID_OIDC_ISSUER || 'http://localhost:3000/';
+
+  if (!clientId || !clientSecret) {
+    throw new Error('Missing SOLID_CLIENT_ID or SOLID_CLIENT_SECRET');
+  }
+
+  await session.login({
+    clientId,
+    clientSecret,
+    oidcIssuer,
+    tokenType: 'DPoP'
+  });
+
+  if (!session.info.isLoggedIn) {
+    throw new Error('Login failed');
+  }
+
+  return session;
+}
+
+function getPodBaseUrl(session: Session): string {
+  if (!session.info.webId) throw new Error('No WebID');
+  return session.info.webId.split('profile')[0];
+}
 
 async function run(providedSession?: Session) {
-  // 1. 认证 (见 utils/auth.ts)
+  // 1. 认证
   // 如果测试运行器提供了 session，则直接使用，否则执行登录
   const session = providedSession || await getAuthenticatedSession();
   const podBase = getPodBaseUrl(session);

@@ -1,7 +1,8 @@
 import { PodTable } from '../pod-table';
 import { TypeIndexManager, TypeIndexEntry } from '../typeindex-manager';
 import { DataDiscovery, DataLocation, DiscoverOptions, RegisterOptions } from './types';
-import { subjectResolver } from '../subject';
+import type { UriResolver } from '../uri';
+import { UriResolverImpl } from '../uri';
 
 /**
  * 基于 TypeIndex 的数据发现实现
@@ -9,10 +10,12 @@ import { subjectResolver } from '../subject';
 export class TypeIndexDiscovery implements DataDiscovery {
   private manager: TypeIndexManager;
   private podUrl: string;
+  private uriResolver: UriResolver;
 
-  constructor(manager: TypeIndexManager, podUrl: string) {
+  constructor(manager: TypeIndexManager, podUrl: string, uriResolver?: UriResolver) {
     this.manager = manager;
     this.podUrl = podUrl;
+    this.uriResolver = uriResolver ?? new UriResolverImpl(podUrl);
   }
 
   /**
@@ -36,7 +39,7 @@ export class TypeIndexDiscovery implements DataDiscovery {
     // 计算路径
     // 如果是 fragment 模式，instance 指向具体文件
     // 如果是 document 模式，instanceContainer 指向容器
-    const resourceMode = subjectResolver.getResourceMode(table);
+    const resourceMode = this.uriResolver.getResourceMode(table);
     let containerPath = table.getContainerPath() || '/data/';
     let instanceContainer = `${this.podUrl.replace(/\/$/, '')}${containerPath}`;
     

@@ -367,13 +367,11 @@ describe('CSS integration: drizzle CRUD', () => {
     expect(fragmentResults).toHaveLength(1);
     expect(fragmentResults[0]?.name).toBe(targetName);
 
-    const absoluteResults = await db
-      .select()
-      .from(profileTable)
-      .where({ '@id': `${resourceUrl}#${subjectId}` });
+    // Use findByIri for absolute IRI lookup
+    const absoluteResult = await db.findByIri(profileTable, `${resourceUrl}#${subjectId}`);
 
-    expect(absoluteResults).toHaveLength(1);
-    expect(absoluteResults[0]?.name).toBe(targetName);
+    expect(absoluteResult).not.toBeNull();
+    expect(absoluteResult?.name).toBe(targetName);
 
     await session.fetch(resourceUrl, { method: 'DELETE' }).catch(() => undefined);
   });

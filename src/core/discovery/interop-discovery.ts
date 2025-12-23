@@ -1,7 +1,7 @@
 import { PodTable } from '../pod-table';
 import { DataDiscovery, DataLocation, DiscoverOptions, DataRegistrationInfo, RegisterOptions, ShapeInfo } from './types';
 import { INTEROP, SHAPETREES } from './interop-types';
-import { registrySetTable, dataRegistryTable, dataRegistrationTable, accessGrantTable, dataGrantTable, applicationRegistrationTable } from './interop-tables';
+import { registrySetSchema, dataRegistrySchema, dataRegistrationSchema, accessGrantSchema, dataGrantSchema, applicationRegistrationSchema } from './interop-tables';
 import { getPredicateForColumn } from '../sparql/helpers';
 import { getSolidDataset, getThing, getUrl, getUrlAll, getThingAll, createThing, setThing, addUrl, saveSolidDatasetAt, createContainerAt, setUrl, setDatetime, createSolidDataset } from '@inrupt/solid-client';
 
@@ -14,6 +14,14 @@ interface RawDiscoveryResult {
   source: 'typeindex' | 'interop' | 'config';
 }
 
+const normalizeRdfClass = (value?: string): string | undefined => {
+  if (!value) return value;
+  if (value.startsWith('http://schema.org/')) {
+    return value.replace('http://schema.org/', 'https://schema.org/');
+  }
+  return value;
+};
+
 export class InteropDiscovery implements DataDiscovery {
   // Cache for ShapeTree -> Shape URL resolution
   private shapeTreeCache: Map<string, { expectsType?: string; shape?: string }> = new Map();
@@ -24,32 +32,148 @@ export class InteropDiscovery implements DataDiscovery {
     private clientId?: string
   ) {}
 
-  async register(table: PodTable, options?: RegisterOptions): Promise<void> {
-    const rdfClass = typeof table.config.type === 'string' ? table.config.type : (table.config.type as any).value;
-    
-    // 1. Check if already registered (unless force is set)
-    if (!options?.force) {
-      const existing = await this.discover(rdfClass);
-      if (existing.length > 0) {
-        console.log(`[InteropDiscovery] ${table.config.name} already registered, skipping`);
-        return;
-      }
+  private async ensureRegistrySet(
+    profileDataset: any,
+    profileThing: any,
+    options?: RegisterOptions
+  ): Promise<string> {
+    if (!options?.registryPath) {
+      throw new Error('Missing registryPath for SAI registry auto-creation.');
     }
+    const registriesPath = options.registryPath.endsWith('/')
+      ? options.registryPath
+      : `${options.registryPath}/`;
+    const registriesParent = registriesPath.replace(/[^/]+\/$/, '');
+    const agentRegistryUrl = `${registriesPath}agents/`;
+    const setResourceUrl = `${registriesPath}set.ttl`;
+    const setId = 'set-drizzle-solid';
+    const registrySetUrl = `${setResourceUrl}#${setId}`;
+    const dataRegistryResourceUrl = `${registriesPath}data-registry.ttl`;
+    const dataRegistryId = 'data-registry';
+    const dataRegistryUrl = `${dataRegistryResourceUrl}#${dataRegistryId}`;
 
     try {
-      // 2. Find DataRegistry
+      if (registriesParent && registriesParent !== registriesPath) {
+        await createContainerAt(registriesParent, { fetch: this.fetchFn });
+      }
+      await createContainerAt(registriesPath, { fetch: this.fetchFn });
+    } catch {}
+
+    try {
+      await createContainerAt(agentRegistryUrl, { fetch: this.fetchFn });
+    } catch {}
+
+    const dataRegistryThing = setUrl(
+      createThing({ url: dataRegistryUrl }),
+      'http://www.w3.org/1999/02/22-rdf-syntax-ns#type',
+      INTEROP.DataRegistry
+    );
+    let dataRegistryDataset: ReturnType<typeof createSolidDataset> | undefined;
+    try {
+      dataRegistryDataset = await getSolidDataset(dataRegistryResourceUrl, { fetch: this.fetchFn });
+    } catch {
+      dataRegistryDataset = undefined;
+    }
+    if (dataRegistryDataset) {
+      const existingThing = getThing(dataRegistryDataset, dataRegistryUrl);
+      if (!existingThing) {
+        const updatedDataset = setThing(dataRegistryDataset, dataRegistryThing);
+        await saveSolidDatasetAt(dataRegistryResourceUrl, updatedDataset, { fetch: this.fetchFn });
+      }
+    } else {
+      let newDataset = createSolidDataset();
+      newDataset = setThing(newDataset, dataRegistryThing);
+      await saveSolidDatasetAt(dataRegistryResourceUrl, newDataset, { fetch: this.fetchFn });
+    }
+
+    let registrySetThing = createThing({ url: registrySetUrl });
+    registrySetThing = setUrl(registrySetThing, 'http://www.w3.org/1999/02/22-rdf-syntax-ns#type', INTEROP.RegistrySet);
+    registrySetThing = addUrl(registrySetThing, INTEROP.hasDataRegistry, dataRegistryUrl);
+    registrySetThing = addUrl(registrySetThing, 'http://www.w3.org/ns/solid/interop#hasAgentRegistry', agentRegistryUrl);
+    let registrySetDataset: ReturnType<typeof createSolidDataset> | undefined;
+    try {
+      registrySetDataset = await getSolidDataset(setResourceUrl, { fetch: this.fetchFn });
+    } catch {
+      registrySetDataset = undefined;
+    }
+    if (registrySetDataset) {
+      const existingThing = getThing(registrySetDataset, registrySetUrl);
+      if (!existingThing) {
+        const updatedDataset = setThing(registrySetDataset, registrySetThing);
+        await saveSolidDatasetAt(setResourceUrl, updatedDataset, { fetch: this.fetchFn });
+      } else {
+        const hasDataRegistryPred = getPredicateForColumn(registrySetSchema.columns.hasDataRegistry, registrySetSchema);
+        const hasAgentRegistryPred = getPredicateForColumn(registrySetSchema.columns.hasAgentRegistry, registrySetSchema);
+        const dataRegistries = getUrlAll(existingThing, hasDataRegistryPred);
+        const agentRegistries = getUrlAll(existingThing, hasAgentRegistryPred);
+        let updatedThing = existingThing;
+        if (!dataRegistries.includes(dataRegistryUrl)) {
+          updatedThing = addUrl(updatedThing, hasDataRegistryPred, dataRegistryUrl);
+        }
+        if (!agentRegistries.includes(agentRegistryUrl)) {
+          updatedThing = addUrl(updatedThing, hasAgentRegistryPred, agentRegistryUrl);
+        }
+        if (updatedThing !== existingThing) {
+          const updatedDataset = setThing(registrySetDataset, updatedThing);
+          await saveSolidDatasetAt(setResourceUrl, updatedDataset, { fetch: this.fetchFn });
+        }
+      }
+    } else {
+      let newDataset = createSolidDataset();
+      newDataset = setThing(newDataset, registrySetThing);
+      await saveSolidDatasetAt(setResourceUrl, newDataset, { fetch: this.fetchFn });
+    }
+
+    const updatedProfileThing = setUrl(profileThing, INTEROP.hasRegistrySet, registrySetUrl);
+    const updatedProfileDataset = setThing(profileDataset, updatedProfileThing);
+    const profileUrl = this.webId.split('#')[0];
+    await saveSolidDatasetAt(profileUrl, updatedProfileDataset, { fetch: this.fetchFn });
+
+    return registrySetUrl;
+  }
+
+  async register(table: PodTable, options?: RegisterOptions): Promise<void> {
+    if (!options?.registryPath) {
+      throw new Error('registryPath is required for SAI registration.');
+    }
+    const rdfClass = typeof table.config.type === 'string' ? table.config.type : (table.config.type as any).value;
+    const normalizedClass = normalizeRdfClass(rdfClass) ?? rdfClass;
+    
+    try {
+      // 1. Ensure RegistrySet exists (auto-create if missing)
       const profileDataset = await getSolidDataset(this.webId, { fetch: this.fetchFn });
       const profileThing = getThing(profileDataset, this.webId);
       if (!profileThing) throw new Error('Profile not found');
 
-      const registrySetUrl = getUrl(profileThing, INTEROP.hasRegistrySet);
-      if (!registrySetUrl) throw new Error('No RegistrySet found in profile');
+    let registrySetUrl = getUrl(profileThing, INTEROP.hasRegistrySet);
+    let registrySetDataset;
+    let registrySetThing;
+    if (registrySetUrl) {
+      try {
+        registrySetDataset = await getSolidDataset(registrySetUrl, { fetch: this.fetchFn });
+        registrySetThing = getThing(registrySetDataset, registrySetUrl);
+      } catch {
+        registrySetDataset = undefined;
+        registrySetThing = undefined;
+      }
+    }
+      if (!registrySetUrl || !registrySetThing) {
+        registrySetUrl = await this.ensureRegistrySet(profileDataset, profileThing, options);
+        registrySetDataset = await getSolidDataset(registrySetUrl, { fetch: this.fetchFn });
+        registrySetThing = getThing(registrySetDataset, registrySetUrl);
+        if (!registrySetThing) throw new Error('RegistrySet not found');
+      }
 
-      const registrySetDataset = await getSolidDataset(registrySetUrl, { fetch: this.fetchFn });
-      const registrySetThing = getThing(registrySetDataset, registrySetUrl);
-      if (!registrySetThing) throw new Error('RegistrySet not found');
+      // 2. Check if already registered (unless force is set)
+      if (!options?.force) {
+        const existing = await this.discover(rdfClass);
+        if (existing.length > 0) {
+          console.log(`[InteropDiscovery] ${table.config.name} already registered, skipping`);
+          return;
+        }
+      }
 
-      const dataRegistryPred = getPredicateForColumn(registrySetTable.columns.hasDataRegistry, registrySetTable);
+      const dataRegistryPred = getPredicateForColumn(registrySetSchema.columns.hasDataRegistry, registrySetSchema);
       const dataRegistryUrls = getUrlAll(registrySetThing, dataRegistryPred);
       
       if (dataRegistryUrls.length === 0) throw new Error('No DataRegistry found');
@@ -73,7 +197,7 @@ export class InteropDiscovery implements DataDiscovery {
       const shapeTreeUrl = `${registrationResourceUrl}#ShapeTree`;
       let shapeTreeThing = createThing({ url: shapeTreeUrl });
       shapeTreeThing = setUrl(shapeTreeThing, 'http://www.w3.org/1999/02/22-rdf-syntax-ns#type', SHAPETREES.ShapeTree);
-      shapeTreeThing = setUrl(shapeTreeThing, SHAPETREES.expectsType, rdfClass);
+      shapeTreeThing = setUrl(shapeTreeThing, SHAPETREES.expectsType, normalizedClass);
       
       // If Shape URL is provided, link it
       if (options?.shapeUrl) {
@@ -83,8 +207,11 @@ export class InteropDiscovery implements DataDiscovery {
       // 5. Create DataRegistration
       let registrationThing = createThing({ url: registrationResourceUrl });
       registrationThing = setUrl(registrationThing, 'http://www.w3.org/1999/02/22-rdf-syntax-ns#type', INTEROP.DataRegistration);
-      // Use clientId as registeredBy if available, otherwise use webId
-      registrationThing = setUrl(registrationThing, INTEROP.registeredBy, this.clientId ?? this.webId);
+      // Use clientId when it looks like a URL, otherwise fallback to webId.
+      const registeredBy = this.clientId && /^https?:\/\//.test(this.clientId)
+        ? this.clientId
+        : this.webId;
+      registrationThing = setUrl(registrationThing, INTEROP.registeredBy, registeredBy);
       registrationThing = setDatetime(registrationThing, 'http://www.w3.org/ns/solid/interop#registeredAt', new Date());
       registrationThing = setUrl(registrationThing, INTEROP.registeredShapeTree, shapeTreeUrl);
       
@@ -94,22 +221,49 @@ export class InteropDiscovery implements DataDiscovery {
       try {
         existingDataset = await getSolidDataset(registrationResourceUrl, { fetch: this.fetchFn });
       } catch {
-        // Resource doesn't exist, will be created
         existingDataset = null;
       }
-      
-      // Use empty dataset as base, add things to it
-      let datasetToSave = createSolidDataset();
-      datasetToSave = setThing(datasetToSave, registrationThing);
-      datasetToSave = setThing(datasetToSave, shapeTreeThing);
-      await saveSolidDatasetAt(registrationResourceUrl, datasetToSave, { fetch: this.fetchFn });
+
+      let datasetToSave = existingDataset ?? createSolidDataset();
+      let updated = false;
+
+      const existingRegistration = getThing(datasetToSave, registrationResourceUrl);
+      if (!existingRegistration) {
+        datasetToSave = setThing(datasetToSave, registrationThing);
+        updated = true;
+      } else {
+        let updatedRegistration = existingRegistration;
+        const existingBy = getUrl(existingRegistration, INTEROP.registeredBy);
+        const existingShapeTree = getUrl(existingRegistration, INTEROP.registeredShapeTree);
+
+        if (!existingBy) {
+          updatedRegistration = setUrl(updatedRegistration, INTEROP.registeredBy, registeredBy);
+        }
+        if (!existingShapeTree) {
+          updatedRegistration = setUrl(updatedRegistration, INTEROP.registeredShapeTree, shapeTreeUrl);
+        }
+        if (updatedRegistration !== existingRegistration) {
+          datasetToSave = setThing(datasetToSave, updatedRegistration);
+          updated = true;
+        }
+      }
+
+      const existingShapeTreeThing = getThing(datasetToSave, shapeTreeUrl);
+      if (!existingShapeTreeThing) {
+        datasetToSave = setThing(datasetToSave, shapeTreeThing);
+        updated = true;
+      }
+
+      if (!existingDataset || updated) {
+        await saveSolidDatasetAt(registrationResourceUrl, datasetToSave, { fetch: this.fetchFn });
+      }
 
       // 7. Link from DataRegistry
       let registryDataset = await getSolidDataset(targetRegistryUrl, { fetch: this.fetchFn });
       let registryThing = getThing(registryDataset, targetRegistryUrl);
       if (!registryThing) throw new Error('Registry Thing missing in Dataset');
 
-      const hasDataRegistrationPred = getPredicateForColumn(dataRegistryTable.columns.hasDataRegistration, dataRegistryTable);
+      const hasDataRegistrationPred = getPredicateForColumn(dataRegistrySchema.columns.hasDataRegistration, dataRegistrySchema);
       registryThing = addUrl(registryThing, hasDataRegistrationPred, registrationResourceUrl);
       
       registryDataset = setThing(registryDataset, registryThing);
@@ -117,13 +271,13 @@ export class InteropDiscovery implements DataDiscovery {
 
       // Update cache
       this.shapeTreeCache.set(shapeTreeUrl, {
-        expectsType: rdfClass,
+        expectsType: normalizedClass,
         shape: options?.shapeUrl
       });
 
       console.log(`[InteropDiscovery] Registered ${table.config.name} at ${registrationResourceUrl}`);
       console.log(`[InteropDiscovery] -> ShapeTree: ${shapeTreeUrl}`);
-      console.log(`[InteropDiscovery] -> expectsType: ${rdfClass}`);
+      console.log(`[InteropDiscovery] -> expectsType: ${normalizedClass}`);
       if (options?.shapeUrl) {
         console.log(`[InteropDiscovery] -> Shape: ${options.shapeUrl}`);
       }
@@ -208,6 +362,7 @@ export class InteropDiscovery implements DataDiscovery {
 
   private async discoverDataRegistrationsRaw(registrySetUrl: string, rdfClass: string, options?: DiscoverOptions): Promise<RawDiscoveryResult[]> {
     const results: RawDiscoveryResult[] = [];
+    const normalizedClass = normalizeRdfClass(rdfClass) ?? rdfClass;
     try {
       // Fetch RegistrySet
       const registrySetDataset = await getSolidDataset(registrySetUrl, { fetch: this.fetchFn });
@@ -215,7 +370,7 @@ export class InteropDiscovery implements DataDiscovery {
       if (!registrySetThing) return [];
 
       // Use predicate from Table Definition
-      const hasDataRegistryPred = getPredicateForColumn(registrySetTable.columns.hasDataRegistry, registrySetTable);
+      const hasDataRegistryPred = getPredicateForColumn(registrySetSchema.columns.hasDataRegistry, registrySetSchema);
       const dataRegistryUrls = getUrlAll(registrySetThing, hasDataRegistryPred);
 
       for (const registryUrl of dataRegistryUrls) {
@@ -224,7 +379,7 @@ export class InteropDiscovery implements DataDiscovery {
           const registryThing = getThing(registryDataset, registryUrl);
           if (!registryThing) continue;
 
-          const hasDataRegistrationPred = getPredicateForColumn(dataRegistryTable.columns.hasDataRegistration, dataRegistryTable);
+          const hasDataRegistrationPred = getPredicateForColumn(dataRegistrySchema.columns.hasDataRegistration, dataRegistrySchema);
           const registrationUrls = getUrlAll(registryThing, hasDataRegistrationPred);
 
           for (const registrationUrl of registrationUrls) {
@@ -232,13 +387,13 @@ export class InteropDiscovery implements DataDiscovery {
              const registrationThing = getThing(registrationDataset, registrationUrl);
              if (!registrationThing) continue;
 
-             const registeredShapeTreePred = getPredicateForColumn(dataRegistrationTable.columns.registeredShapeTree, dataRegistrationTable);
+             const registeredShapeTreePred = getPredicateForColumn(dataRegistrationSchema.columns.registeredShapeTree, dataRegistrationSchema);
              const shapeTreeUrl = getUrl(registrationThing, registeredShapeTreePred);
              
              if (!shapeTreeUrl) continue;
 
              // Get registeredBy for appId filtering
-             const registeredByPred = getPredicateForColumn(dataRegistrationTable.columns.registeredBy, dataRegistrationTable);
+             const registeredByPred = getPredicateForColumn(dataRegistrationSchema.columns.registeredBy, dataRegistrationSchema);
              const registeredBy = getUrl(registrationThing, registeredByPred);
 
              // Filter by appId if specified
@@ -247,7 +402,7 @@ export class InteropDiscovery implements DataDiscovery {
              }
 
              const shapeTreeInfo = await this.resolveShapeTree(shapeTreeUrl);
-             const matches = shapeTreeInfo?.expectsType === rdfClass;
+             const matches = normalizeRdfClass(shapeTreeInfo?.expectsType) === normalizedClass;
              
              if (matches) {
                results.push({
@@ -276,6 +431,7 @@ export class InteropDiscovery implements DataDiscovery {
     }
     
     const results: RawDiscoveryResult[] = [];
+    const normalizedClass = normalizeRdfClass(rdfClass) ?? rdfClass;
     try {
       // 1. RegistrySet -> AgentRegistry
       const registrySetDataset = await getSolidDataset(registrySetUrl, { fetch: this.fetchFn });
@@ -285,7 +441,7 @@ export class InteropDiscovery implements DataDiscovery {
           return [];
       }
 
-      const agentRegistryPred = getPredicateForColumn(registrySetTable.columns.hasAgentRegistry, registrySetTable);
+      const agentRegistryPred = getPredicateForColumn(registrySetSchema.columns.hasAgentRegistry, registrySetSchema);
       const agentRegistryUrls = getUrlAll(registrySetThing, agentRegistryPred);
 
       for (const agentRegistryUrl of agentRegistryUrls) {
@@ -309,11 +465,11 @@ export class InteropDiscovery implements DataDiscovery {
               
               for (const regThing of things) {
                 // Check registeredAgent
-                const registeredAgentPred = getPredicateForColumn(applicationRegistrationTable.columns.registeredAgent, applicationRegistrationTable);
+                const registeredAgentPred = getPredicateForColumn(applicationRegistrationSchema.columns.registeredAgent, applicationRegistrationSchema);
                 const agent = getUrl(regThing, registeredAgentPred);
                 
                 if (agent === this.clientId) {
-                  const hasAccessGrantPred = getPredicateForColumn(applicationRegistrationTable.columns.hasAccessGrant, applicationRegistrationTable);
+                  const hasAccessGrantPred = getPredicateForColumn(applicationRegistrationSchema.columns.hasAccessGrant, applicationRegistrationSchema);
                   const accessGrantUrls = getUrlAll(regThing, hasAccessGrantPred);
 
                   for (const grantUrl of accessGrantUrls) {
@@ -326,7 +482,7 @@ export class InteropDiscovery implements DataDiscovery {
                     
                     if (!grantThing) continue;
 
-                    const hasDataGrantPred = getPredicateForColumn(accessGrantTable.columns.hasDataGrant, accessGrantTable);
+                    const hasDataGrantPred = getPredicateForColumn(accessGrantSchema.columns.hasDataGrant, accessGrantSchema);
                     const dataGrantUrls = getUrlAll(grantThing, hasDataGrantPred);
 
                     for (const dataGrantUrl of dataGrantUrls) {
@@ -339,13 +495,13 @@ export class InteropDiscovery implements DataDiscovery {
                        
                        if (!dataGrantThing) continue;
 
-                       const shapeTreePred = getPredicateForColumn(dataGrantTable.columns.registeredShapeTree, dataGrantTable);
+                       const shapeTreePred = getPredicateForColumn(dataGrantSchema.columns.registeredShapeTree, dataGrantSchema);
                        const shapeTreeUrl = getUrl(dataGrantThing, shapeTreePred);
                        
                        if (!shapeTreeUrl) continue;
 
                        // Get data owner for registeredBy
-                       const dataOwnerPred = getPredicateForColumn(dataGrantTable.columns.dataOwner, dataGrantTable);
+                       const dataOwnerPred = getPredicateForColumn(dataGrantSchema.columns.dataOwner, dataGrantSchema);
                        const dataOwner = getUrl(dataGrantThing, dataOwnerPred);
 
                        // Filter by appId if specified (here appId refers to data owner/registrant)
@@ -354,10 +510,10 @@ export class InteropDiscovery implements DataDiscovery {
                        }
 
                        const shapeTreeInfo = await this.resolveShapeTree(shapeTreeUrl);
-                       const matches = shapeTreeInfo?.expectsType === rdfClass;
+                       const matches = normalizeRdfClass(shapeTreeInfo?.expectsType) === normalizedClass;
                        
                        if (matches) {
-                         const hasDataRegistrationPred = getPredicateForColumn(dataGrantTable.columns.hasDataRegistration, dataGrantTable);
+                         const hasDataRegistrationPred = getPredicateForColumn(dataGrantSchema.columns.hasDataRegistration, dataGrantSchema);
                          const registrationUrl = getUrl(dataGrantThing, hasDataRegistrationPred);
                          
                          console.log(`[InteropDiscovery] Found matching Data Grant: ${dataGrantUrl}`);
@@ -446,7 +602,7 @@ export class InteropDiscovery implements DataDiscovery {
           const registrySetThing = getThing(registrySetDataset, registrySetUrl);
           if (!registrySetThing) continue;
 
-          const hasDataRegistryPred = getPredicateForColumn(registrySetTable.columns.hasDataRegistry, registrySetTable);
+          const hasDataRegistryPred = getPredicateForColumn(registrySetSchema.columns.hasDataRegistry, registrySetSchema);
           const dataRegistryUrls = getUrlAll(registrySetThing, hasDataRegistryPred);
 
           for (const registryUrl of dataRegistryUrls) {
@@ -455,7 +611,7 @@ export class InteropDiscovery implements DataDiscovery {
               const registryThing = getThing(registryDataset, registryUrl);
               if (!registryThing) continue;
 
-              const hasDataRegistrationPred = getPredicateForColumn(dataRegistryTable.columns.hasDataRegistration, dataRegistryTable);
+              const hasDataRegistrationPred = getPredicateForColumn(dataRegistrySchema.columns.hasDataRegistration, dataRegistrySchema);
               const registrationUrls = getUrlAll(registryThing, hasDataRegistrationPred);
 
               for (const registrationUrl of registrationUrls) {
@@ -464,15 +620,15 @@ export class InteropDiscovery implements DataDiscovery {
                   const registrationThing = getThing(registrationDataset, registrationUrl);
                   if (!registrationThing) continue;
 
-                  const registeredShapeTreePred = getPredicateForColumn(dataRegistrationTable.columns.registeredShapeTree, dataRegistrationTable);
+                  const registeredShapeTreePred = getPredicateForColumn(dataRegistrationSchema.columns.registeredShapeTree, dataRegistrationSchema);
                   const shapeTreeUrl = getUrl(registrationThing, registeredShapeTreePred);
                   
                   if (!shapeTreeUrl) continue;
 
-                  const registeredByPred = getPredicateForColumn(dataRegistrationTable.columns.registeredBy, dataRegistrationTable);
+                  const registeredByPred = getPredicateForColumn(dataRegistrationSchema.columns.registeredBy, dataRegistrationSchema);
                   const registeredBy = getUrl(registrationThing, registeredByPred);
 
-                  const registeredAtPred = getPredicateForColumn(dataRegistrationTable.columns.registeredAt, dataRegistrationTable);
+                  const registeredAtPred = getPredicateForColumn(dataRegistrationSchema.columns.registeredAt, dataRegistrationSchema);
                   const registeredAtStr = getUrl(registrationThing, registeredAtPred);
                   const registeredAt = registeredAtStr ? new Date(registeredAtStr) : undefined;
 
@@ -508,7 +664,7 @@ export class InteropDiscovery implements DataDiscovery {
 
   private async checkShapeTreeMatchesClass(shapeTreeUrl: string, rdfClass: string): Promise<boolean> {
     const info = await this.resolveShapeTree(shapeTreeUrl);
-    return info?.expectsType === rdfClass;
+    return normalizeRdfClass(info?.expectsType) === (normalizeRdfClass(rdfClass) ?? rdfClass);
   }
 
   /**

@@ -2,15 +2,8 @@
 export { drizzle, type SolidDatabase, type SolidAuthSession } from './driver';
 export * from './solid';
 
-// 核心类
-export { PodDialect } from './core/pod-dialect';
-export { PodAsyncSession } from './core/pod-session';
-export { PodDatabase } from './core/pod-database';
+// 公共工具
 export { findByIRI } from './utils/find-by-iri';
-
-// SPARQL 相关
-export { ASTToSPARQLConverter, type SPARQLQuery } from './core/ast-to-sparql';
-export { SolidSPARQLExecutor } from './core/sparql-executor';
 
 // 表和列构建器
 export {
@@ -54,10 +47,14 @@ export {
   RDF_PREDICATES,
   RDF_CLASSES,
   relations,
+  // Schema（不绑定位置）
+  solidSchema,
+  SolidSchema,
+  isSolidSchema,
   // 类型
   type PodColumn,
   type PodTable,
-  type PodSchema,
+  type SolidSchemaOptions,
   type NamespaceConfig,
   type PodTableOptions,
   type PodTableMapping,
@@ -102,48 +99,18 @@ export type {
 
 // DataDiscovery 数据发现
 export {
-  TypeIndexDiscovery,
-  InteropDiscovery,
   ProviderCache,
-  providerCache,
   INTEROP,
   SHAPETREES,
   type DataDiscovery,
   type DataLocation,
   type ShapeInfo,
   type DiscoverOptions,
+  type RegisterOptions,
+  type DataRegistrationInfo,
+  type LocationToTableOptions,
   type WellKnownResponse,
 } from './core/discovery';
-
-// SubjectResolver 主体 URI 解析
-export {
-  SubjectResolverImpl,
-  subjectResolver,
-  type SubjectResolver,
-  type ResourceMode,
-  type ParsedSubject,
-  type TimeContext
-} from './core/subject';
-
-// ResourceResolver 资源解析抽象
-export {
-  ResourceResolverFactoryImpl,
-  FragmentResourceResolver,
-  DocumentResourceResolver,
-  getResourceMode,
-  type ResourceResolver,
-  type ResourceResolverFactory
-} from './core/resource-resolver';
-
-// TripleBuilder 三元组构建
-export {
-  TripleBuilderImpl,
-  tripleBuilder,
-  type TripleBuilder,
-  type Triple,
-  type BuildResult,
-  type ColumnHandler
-} from './core/triple';
 
 // 工具函数
 export {
@@ -246,6 +213,8 @@ export {
   type NotificationType,
   type ChannelType,
   type SubscribeOptions,
+  type TableSubscribeOptions,
+  type EntitySubscribeOptions,
   type Subscription,
   type SubscriptionFeature
 } from './core/notifications';

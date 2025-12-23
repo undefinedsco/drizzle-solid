@@ -13,6 +13,7 @@ describe('TableHooks', () => {
         name: string('name').predicate('https://schema.org/name'),
         public: boolean('public').predicate('https://schema.org/isPublic'),
       }, {
+        base: '/data/agents.ttl',
         type: 'https://vocab.ai/Agent',
         hooks: {
           afterInsert: afterInsertFn,
@@ -32,6 +33,7 @@ describe('TableHooks', () => {
         id: id(),
         name: string('name').predicate('https://schema.org/name'),
       }, {
+        base: '/data/agents.ttl',
         type: 'https://vocab.ai/Agent',
         hooks: {
           afterInsert: afterInsertFn,
@@ -50,6 +52,7 @@ describe('TableHooks', () => {
         id: id(),
         name: string('name').predicate('https://schema.org/name'),
       }, {
+        base: '/data/agents.ttl',
         type: 'https://vocab.ai/Agent',
       });
 
@@ -63,6 +66,7 @@ describe('TableHooks', () => {
         id: id(),
         name: string('name').predicate('https://schema.org/name'),
       }, {
+        base: '/data/agents.ttl',
         type: 'https://vocab.ai/Agent',
         hooks: {
           afterInsert: afterInsertFn,
@@ -127,6 +131,7 @@ describe('TableHooks', () => {
         name: string('name').predicate('https://schema.org/name'),
         public: boolean('public').predicate('https://schema.org/isPublic'),
       }, {
+        base: '/data/agents.ttl',
         type: 'https://vocab.ai/Agent',
         hooks: {
           afterInsert: async (ctx, record) => {

@@ -1,7 +1,39 @@
 import { drizzle, podTable, string, uri } from 'drizzle-solid';
 import { relations } from 'drizzle-orm';
-import { getAuthenticatedSession, getPodBaseUrl } from './utils/auth';
-import type { Session } from '@inrupt/solid-client-authn-node';
+import { Session } from '@inrupt/solid-client-authn-node';
+import { config as loadEnv } from 'dotenv';
+
+loadEnv();
+loadEnv({ path: '.env.local', override: true });
+
+async function getAuthenticatedSession(): Promise<Session> {
+  const session = new Session();
+  const clientId = process.env.SOLID_CLIENT_ID;
+  const clientSecret = process.env.SOLID_CLIENT_SECRET;
+  const oidcIssuer = process.env.SOLID_OIDC_ISSUER || 'http://localhost:3000/';
+
+  if (!clientId || !clientSecret) {
+    throw new Error('Missing SOLID_CLIENT_ID or SOLID_CLIENT_SECRET');
+  }
+
+  await session.login({
+    clientId,
+    clientSecret,
+    oidcIssuer,
+    tokenType: 'DPoP'
+  });
+
+  if (!session.info.isLoggedIn) {
+    throw new Error('Login failed');
+  }
+
+  return session;
+}
+
+function getPodBaseUrl(session: Session): string {
+  if (!session.info.webId) throw new Error('No WebID');
+  return session.info.webId.split('profile')[0];
+}
 
 async function run(providedSession?: Session) {
   const session = providedSession || await getAuthenticatedSession();

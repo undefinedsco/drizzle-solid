@@ -602,11 +602,10 @@ describe('PodTable.$schema', () => {
 
     const schema = posts.$schema;
 
-    expect(schema.$kind).toBe('PodSchema');
+    expect(schema.$kind).toBe('SolidSchema');
     expect(schema.name).toBe('posts');
     expect(schema.type).toBe('https://schema.org/BlogPosting');
     expect(schema.columns).toBe(posts.columns);
-    expect(schema._sourceTable).toBe(posts);
   });
 
   it('should include subjectTemplate if defined', () => {

@@ -173,6 +173,8 @@ describe('Solid Chat App Integration (Alice & Bob)', () => {
     
     // 创建/更新 RegistrySet (Alice)
     await ensureContainer(aliceSession, 'registries/');
+    await ensureContainer(aliceSession, 'registries/chat/');
+    await ensureContainer(aliceSession, 'registries/chat/agents/');
     const setIdAlice = `set-chat-alice-${Date.now()}`;
     await aliceDb.insert(saiAlice.registrySet).values({
         id: setIdAlice,
@@ -214,6 +216,7 @@ describe('Solid Chat App Integration (Alice & Bob)', () => {
     
     // 1. Bob RegistrySet
     await ensureContainer(bobSession, 'registries/');
+    await ensureContainer(bobSession, 'registries/chat/');
     const setIdBob = `set-chat-bob-${Date.now()}`;
     
     // 清理旧数据
@@ -242,7 +245,7 @@ describe('Solid Chat App Integration (Alice & Bob)', () => {
     await bobSession.fetch(bobProfileResource, { method: 'PATCH', headers: { 'Content-Type': 'text/n3' }, body: patchBodyBob });
 
     // 3. Bob Agent Registry & Grants
-    await ensureContainer(bobSession, 'registries/agents/');
+    await ensureContainer(bobSession, 'registries/chat/agents/');
     await bobSession.fetch(saiBob.appRegResource, { method: 'PUT', headers: { 'Content-Type': 'text/turtle' }, body: '' });
 
     // 这里的 Data Grant 指向 Alice 的 chatContainer

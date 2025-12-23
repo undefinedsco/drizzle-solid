@@ -8,7 +8,7 @@ import {
   SelectField, SelectFieldMap, JoinType, ColumnReference, ResolvedJoinCondition, SessionInterface
 } from './types';
 import { createLiteralCondition, buildConditionTreeFromObject } from './helpers';
-import { subjectResolver } from '../subject';
+import { UriResolverImpl } from '../uri';
 
 export class SelectQueryBuilder<TTable extends PodTable<any> = PodTable<any>> {
   static readonly [entityKind] = 'SelectQueryBuilder';
@@ -57,14 +57,38 @@ export class SelectQueryBuilder<TTable extends PodTable<any> = PodTable<any>> {
     this.selectedFields = { ...fields };
   }
 
+  /**
+   * Add WHERE conditions to the query
+   * 
+   * Note: Using '@id' directly in conditions is deprecated.
+   * Use db.findByIri(table, iri) for IRI-based lookups instead.
+   */
   where(conditions: Record<string, any> | SQL | QueryCondition) {
     if (conditions instanceof SQL) {
       this.sql = conditions;
     } else if (this.isQueryCondition(conditions)) {
       this.processQueryCondition(conditions);
     } else {
+      // Check for @id usage and warn/reject
+      if (conditions && typeof conditions === 'object' && '@id' in conditions) {
+        throw new Error(
+          `Using '@id' in where() is not supported. ` +
+          `Use db.findByIri(table, iri) for IRI-based lookups, ` +
+          `or use { id: 'value' } for id-based lookups.`
+        );
+      }
       this.processWhereObject(conditions);
     }
+    return this;
+  }
+
+  /**
+   * Internal method that allows @id in conditions.
+   * Used by *ByIri methods internally.
+   * @internal
+   */
+  whereByIri(iri: string | string[]) {
+    this.processWhereObject({ '@id': iri });
     return this;
   }
 
@@ -995,6 +1019,19 @@ export class SelectQueryBuilder<TTable extends PodTable<any> = PodTable<any>> {
         return;
       }
       const target = merged.get(key)!;
+      const normalizeValueKey = (val: unknown): string => {
+        if (val instanceof Date) return `date:${val.toISOString()}`;
+        if (typeof val === 'string') return `str:${val}`;
+        if (typeof val === 'number') return `num:${val}`;
+        if (typeof val === 'boolean') return `bool:${val}`;
+        if (val === null || val === undefined) return 'nil';
+        try {
+          return `obj:${JSON.stringify(val)}`;
+        } catch {
+          return `obj:${String(val)}`;
+        }
+      };
+
       Object.entries(row).forEach(([col, value]) => {
         if (value === undefined) return;
         const existing = target[col];
@@ -1006,7 +1043,8 @@ export class SelectQueryBuilder<TTable extends PodTable<any> = PodTable<any>> {
         const incomingArr = Array.isArray(value) ? value : [value];
         const combined = [...existingArr];
         incomingArr.forEach((entry) => {
-          if (!combined.some((item) => item === entry)) {
+          const entryKey = normalizeValueKey(entry);
+          if (!combined.some((item) => normalizeValueKey(item) === entryKey)) {
             combined.push(entry);
           }
         });
@@ -1376,9 +1414,11 @@ export class SelectQueryBuilder<TTable extends PodTable<any> = PodTable<any>> {
       return undefined;
     }
 
-    // Use SubjectResolver for proper document/fragment mode handling
+    // Use UriResolver for proper document/fragment mode handling
     if (table) {
-      const parsed = subjectResolver.parse(subject, table);
+      const dialect = this.session.getDialect?.();
+      const resolver = dialect?.getUriResolver?.() ?? new UriResolverImpl();
+      const parsed = resolver.parseSubject(subject, table);
       if (parsed && parsed.id) {
         return parsed.id;
       }

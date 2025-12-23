@@ -120,17 +120,9 @@ describe('Examples Verification Suite', () => {
   }, 120000);
 
   it('05-data-discovery.ts should run successfully', async () => {
-    // Setup SAI data for discovery
     const aliceSession = session;
-    const alicePodBase = aliceSession.info.webId.split('profile')[0];
-    const personContainer = `${alicePodBase}data/persons-discovery-test/`;
-    
-    // Ensure container exists
-    await ensureContainer(aliceSession, personContainer);
-    
-    // Setup SAI registration for the container
-    const clientId = aliceSession.info.clientId || 'https://example.app/id';
-    await setupSaiForExample(aliceSession, clientId, personContainer);
+
+    await runDataDiscovery(aliceSession);
     
     // Test basic discovery function
     const locations = await basicDiscovery(aliceSession);

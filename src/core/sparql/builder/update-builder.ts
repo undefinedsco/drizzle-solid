@@ -3,7 +3,10 @@ import { PodTable, PodColumnBase } from '../../pod-table';
 import { SPARQLQuery } from '../types';
 import { getPredicateForColumn, formatValue, generateSubjectUri } from '../helpers';
 import { QueryCondition } from '../../query-conditions';
-import { tripleBuilder } from '../../triple/builder';
+import { TripleBuilderImpl } from '../../triple/builder';
+import type { UriResolver } from '../../uri';
+import { UriResolverImpl } from '../../uri';
+import type { TableRegistryContext } from '../../ast-to-sparql';
 
 // Helper to extract the base document URI from a resource URI
 // e.g., 'http://example.com/pod/data/alice.ttl#me' -> 'http://example.com/pod/data/alice.ttl'
@@ -18,10 +21,54 @@ function getDocumentUriFromSubjectUri(subjectUri: string): string {
 export class UpdateBuilder {
   private generator: any;
   private prefixes: Record<string, string>;
+  private tripleBuilder: TripleBuilderImpl;
+  private uriResolver: UriResolver;
+  private tableContext?: TableRegistryContext;
 
-  constructor(prefixes: Record<string, string>) {
+  constructor(prefixes: Record<string, string>, uriResolver: UriResolver = new UriResolverImpl()) {
     this.generator = new (sparqljs as any).Generator();
     this.prefixes = prefixes;
+    this.uriResolver = uriResolver;
+    this.tripleBuilder = new TripleBuilderImpl(uriResolver);
+  }
+
+  /**
+   * Set table context for URI resolution and inline child handling
+   */
+  setTableContext(context: TableRegistryContext): void {
+    this.tableContext = context;
+    this.tripleBuilder.setTableRegistry(context.tableRegistry, context.tableNameRegistry);
+    if (context.baseUri) {
+      this.tripleBuilder.setBaseUri(context.baseUri);
+    }
+  }
+
+  private getUriContext(): TableRegistryContext | undefined {
+    return this.tableContext;
+  }
+
+  private resolveReferenceTerm(value: any, column: PodColumnBase | any, table: PodTable): string {
+    const raw = String(value ?? '').replace(/^<|>$/g, '');
+    if (this.uriResolver.isAbsoluteUri(raw)) {
+      return raw;
+    }
+    try {
+      return this.uriResolver.resolveReference(raw, column, this.getUriContext());
+    } catch (error) {
+      const tableName = table.config?.name ?? 'unknown';
+      const columnName = column?.name ?? 'unknown';
+      throw new Error(`[UpdateBuilder] Failed to resolve URI for ${tableName}.${columnName}: ${error}`);
+    }
+  }
+
+  private formatValueOrThrow(value: any, column: PodColumnBase | any, table: PodTable): string {
+    try {
+      return formatValue(value, column, this.uriResolver, this.getUriContext()) as string;
+    } catch (error) {
+      const tableName = table.config?.name ?? 'unknown';
+      const columnName = column?.name ?? 'unknown';
+      throw new Error(`[UpdateBuilder] Failed to resolve URI for ${tableName}.${columnName}: ${error}`);
+    }
   }
 
   convertInsert(valuesOrPlan: any[] | { table: PodTable; rows: any[] }, table?: PodTable, targetGraph?: string): SPARQLQuery {
@@ -137,7 +184,7 @@ export class UpdateBuilder {
     const rdfClass = table.config.type;
 
     for (const row of rows) {
-      const subjectUri = generateSubjectUri(row, table);
+      const subjectUri = generateSubjectUri(row, table, this.uriResolver);
       const subjectTerm = { termType: 'NamedNode', value: subjectUri };
 
       triples.push({
@@ -171,7 +218,7 @@ export class UpdateBuilder {
           (column.dataType === 'array' && ((column as any).elementType === 'object' || column.options?.baseType === 'object'));
 
         if (isInline) {
-          const result = tripleBuilder.buildInsert(subjectUri, column, value, table);
+          const result = this.tripleBuilder.buildInsert(subjectUri, column, value, table);
           triples.push(...result.triples.map(this.toSparqlJsTriple), ...(result.childTriples?.map(this.toSparqlJsTriple) ?? []));
           return;
         }
@@ -179,7 +226,7 @@ export class UpdateBuilder {
         if (column.options?.inverse) {
            const values = Array.isArray(value) ? value : [value];
            values.forEach(v => {
-             const valStr = String(v).replace(/^<|>$/g, '');
+             const valStr = this.resolveReferenceTerm(v, column, table);
              triples.push({
                subject: { termType: 'NamedNode', value: valStr },
                predicate: { termType: 'NamedNode', value: predicate },
@@ -189,7 +236,7 @@ export class UpdateBuilder {
            return;
         }
 
-        const formatted = formatValue(value, column);
+        const formatted = this.formatValueOrThrow(value, column, table);
         const objectTerm = this.parseTermString(formatted as string);
 
         triples.push({
@@ -211,7 +258,7 @@ export class UpdateBuilder {
     const updates: any[] = [];
 
     for (const record of targetRecords) {
-      const resourceUri = generateSubjectUri(record, table);
+      const resourceUri = generateSubjectUri(record, table, this.uriResolver);
       const docGraph = targetGraph || getDocumentUriFromSubjectUri(resourceUri);
       const graphTerm = { termType: 'NamedNode', value: docGraph };
 
@@ -293,7 +340,7 @@ export class UpdateBuilder {
       }
     } else {
       for (const record of targetRecords) {
-        const resourceUri = generateSubjectUri(record, table);
+        const resourceUri = generateSubjectUri(record, table, this.uriResolver);
         const docGraph = targetGraph || getDocumentUriFromSubjectUri(resourceUri);
         const graphTerm = { termType: 'NamedNode', value: docGraph };
 
@@ -375,7 +422,7 @@ export class UpdateBuilder {
         whereTriples.push(linkTriple, childTriple);
 
         if (value !== null && value !== undefined) {
-          const result = tripleBuilder.buildInsert(resourceUri, column, value, table);
+          const result = this.tripleBuilder.buildInsert(resourceUri, column, value, table);
           insertTriples.push(...result.triples.map(this.toSparqlJsTriple), ...(result.childTriples?.map(this.toSparqlJsTriple) ?? []));
         }
         return;
@@ -387,7 +434,7 @@ export class UpdateBuilder {
         whereTriples.push(inverseTriple);
 
         if (value !== null && value !== undefined) {
-          const valStr = String(value).replace(/^<|>$/g, '');
+          const valStr = this.resolveReferenceTerm(value, column, table);
           insertTriples.push({
             subject: { termType: 'NamedNode', value: valStr },
             predicate: predicateTerm,
@@ -400,7 +447,7 @@ export class UpdateBuilder {
         whereTriples.push(deleteTriple);
 
         if (value !== null && value !== undefined) {
-          const formatted = formatValue(value, column);
+          const formatted = this.formatValueOrThrow(value, column, table);
           const objectTerm = this.parseTermString(formatted as string);
           insertTriples.push({ subject: subjectTerm, predicate: predicateTerm, object: objectTerm });
         }

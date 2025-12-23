@@ -439,4 +439,3 @@ export class SubjectResolverImpl implements SubjectResolver {
 }
 
 // 默认实例
-export const subjectResolver = new SubjectResolverImpl();

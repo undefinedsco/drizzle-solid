@@ -4,17 +4,29 @@ import { SelectBuilder } from './sparql/builder/select-builder';
 import { UpdateBuilder } from './sparql/builder/update-builder';
 import { SPARQLQuery } from './sparql/types';
 import { SelectQueryPlan } from './select-plan';
-import { subjectResolver } from './subject';
 import { getPredicateForColumn, formatValue, generateSubjectUri } from './sparql/helpers';
 import { ExpressionBuilder } from './sparql/builder/expression-builder';
 import { QueryCondition } from './query-conditions';
+import type { UriResolver } from './uri';
+import { UriResolverImpl } from './uri';
 
 export type { SPARQLQuery };
+
+/**
+ * Table registry context for URI resolution
+ */
+export interface TableRegistryContext {
+  tableRegistry: Map<string, PodTable[]>;
+  tableNameRegistry: Map<string, PodTable>;
+  baseUri?: string;
+}
 
 export class ASTToSPARQLConverter {
   private selectBuilder: SelectBuilder;
   private updateBuilder: UpdateBuilder;
   private expressionBuilder: ExpressionBuilder;
+  private tableContext?: TableRegistryContext;
+  private uriResolver: UriResolver;
   private prefixes: Record<string, string> = {
     'rdf': 'http://www.w3.org/1999/02/22-rdf-syntax-ns#',
     'rdfs': 'http://www.w3.org/2000/01/rdf-schema#',
@@ -26,10 +38,25 @@ export class ASTToSPARQLConverter {
     'xsd': 'http://www.w3.org/2001/XMLSchema#'
   };
 
-  constructor(private podUrl: string, private webId?: string) {
-    this.selectBuilder = new SelectBuilder(this.prefixes);
-    this.updateBuilder = new UpdateBuilder(this.prefixes);
-    this.expressionBuilder = new ExpressionBuilder();
+  constructor(private podUrl: string, private webId?: string, uriResolver?: UriResolver) {
+    this.uriResolver = uriResolver ?? new UriResolverImpl(podUrl);
+    this.selectBuilder = new SelectBuilder(this.prefixes, this.uriResolver);
+    this.updateBuilder = new UpdateBuilder(this.prefixes, this.uriResolver);
+    this.expressionBuilder = new ExpressionBuilder(this.uriResolver);
+  }
+
+  /**
+   * Set table registry for URI reference resolution
+   */
+  setTableRegistry(
+    tableRegistry: Map<string, PodTable[]>,
+    tableNameRegistry: Map<string, PodTable>,
+    baseUri?: string
+  ): void {
+    this.tableContext = { tableRegistry, tableNameRegistry, baseUri };
+    this.selectBuilder.setTableContext(this.tableContext);
+    this.expressionBuilder.setTableContext(this.tableContext);
+    this.updateBuilder.setTableContext(this.tableContext);
   }
 
   convertSelect(ast: any, table: PodTable, targetGraph?: string, fromSources?: string[], allowGraphVariable = true): SPARQLQuery {
@@ -90,7 +117,7 @@ export class ASTToSPARQLConverter {
   }
 
   generateSubjectUri(record: any, table: PodTable): string {
-    return generateSubjectUri(record, table);
+    return generateSubjectUri(record, table, this.uriResolver);
   }
 
   /**

@@ -409,12 +409,14 @@ export class NotificationsClient {
       topic,
       ...(features && features.length > 0 ? { features } : {}),
     };
+    const requestId = `notify-sub-${Date.now()}`;
 
     const response = await this.fetch(endpoint, {
       method: 'POST',
       headers: {
         'Content-Type': 'application/ld+json',
         'Accept': 'application/ld+json',
+        'X-Request-ID': requestId,
       },
       body: JSON.stringify(requestBody),
     });

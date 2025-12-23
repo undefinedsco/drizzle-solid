@@ -9,13 +9,14 @@ import type {
   DeleteQueryPlan
 } from './types';
 import { isSameOrigin, getFetchForOrigin } from '../utils/origin-auth';
-import { subjectResolver } from '../subject';
+import type { UriResolver } from '../uri';
 
 export interface SparqlStrategyDependencies {
   sparqlExecutor: ComunicaSPARQLExecutor;
   sparqlConverter: ASTToSPARQLConverter;
   sessionFetch: typeof fetch;
   podUrl: string;
+  uriResolver: UriResolver;
 }
 
 export class SparqlStrategy implements ExecutionStrategy {
@@ -25,12 +26,14 @@ export class SparqlStrategy implements ExecutionStrategy {
   private sparqlConverter: ASTToSPARQLConverter;
   private sessionFetch: typeof fetch;
   private podUrl: string;
+  private uriResolver: UriResolver;
 
   constructor(deps: SparqlStrategyDependencies) {
     this.sparqlExecutor = deps.sparqlExecutor;
     this.sparqlConverter = deps.sparqlConverter;
     this.sessionFetch = deps.sessionFetch;
     this.podUrl = deps.podUrl;
+    this.uriResolver = deps.uriResolver;
   }
 
   /**
@@ -43,7 +46,7 @@ export class SparqlStrategy implements ExecutionStrategy {
     if (!table) return undefined;
     
     // Determine resource mode to choose correct graph
-    const isDocumentMode = subjectResolver.getResourceMode(table as any) === 'document';
+    const isDocumentMode = this.uriResolver.getResourceMode(table as any) === 'document';
     
     if (isDocumentMode) {
       // Document Mode:

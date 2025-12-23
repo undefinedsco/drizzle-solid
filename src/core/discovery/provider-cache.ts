@@ -378,4 +378,3 @@ export class ProviderCache {
 }
 
 // 默认实例
-export const providerCache = new ProviderCache();

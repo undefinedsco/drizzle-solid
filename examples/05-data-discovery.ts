@@ -9,8 +9,41 @@
  * - 支持按 appId 或 Shape URL 选择使用哪个 Shape
  */
 
-import { drizzle, InteropDiscovery, type DataLocation, type ShapeInfo } from 'drizzle-solid';
+import { drizzle, solid, podTable, id, string, type DataLocation } from 'drizzle-solid';
 import { Session } from '@inrupt/solid-client-authn-node';
+import { config as loadEnv } from 'dotenv';
+
+loadEnv();
+loadEnv({ path: '.env.local', override: true });
+
+async function getAuthenticatedSession(): Promise<Session> {
+  const session = new Session();
+  const clientId = process.env.SOLID_CLIENT_ID;
+  const clientSecret = process.env.SOLID_CLIENT_SECRET;
+  const oidcIssuer = process.env.SOLID_OIDC_ISSUER || 'http://localhost:3000/';
+
+  if (!clientId || !clientSecret) {
+    throw new Error('Missing SOLID_CLIENT_ID or SOLID_CLIENT_SECRET');
+  }
+
+  await session.login({
+    clientId,
+    clientSecret,
+    oidcIssuer,
+    tokenType: 'DPoP'
+  });
+
+  if (!session.info.isLoggedIn) {
+    throw new Error('Login failed');
+  }
+
+  return session;
+}
+
+function getPodBaseUrl(session: Session): string {
+  if (!session.info.webId) throw new Error('No WebID');
+  return session.info.webId.split('profile')[0];
+}
 
 // ============================================================
 // 示例 1: 基础发现
@@ -21,7 +54,7 @@ export async function basicDiscovery(session: Session) {
   console.log('🔍 Discovering Person data locations...');
   
   // 发现所有 Person 类型的数据位置
-  const locations = await db.discover('https://schema.org/Person');
+  const locations = await db.discovery.discover('https://schema.org/Person');
 
   console.log(`Found ${locations.length} location(s):`);
   for (const loc of locations) {
@@ -38,6 +71,26 @@ export async function basicDiscovery(session: Session) {
   return locations;
 }
 
+async function initDiscovery(session: Session) {
+  const podBase = getPodBaseUrl(session);
+  const registryPath = `${podBase}registries/drizzle-solid/`;
+  const personContainer = `${podBase}data/persons-discovery/`;
+
+  const personTable = podTable('person-discovery', {
+    id: id(),
+    name: string('name').predicate('http://schema.org/name')
+  }, {
+    type: 'https://schema.org/Person',
+    containerPath: personContainer,
+    saiRegistryPath: registryPath
+  });
+
+  const db = drizzle(session);
+  await db.init(personTable);
+
+  return { db, personTable, personContainer, registryPath };
+}
+
 // ============================================================
 // 示例 2: 按应用过滤发现
 // ============================================================
@@ -47,12 +100,12 @@ export async function discoverByApp(session: Session, appId: string) {
   console.log(`🔍 Discovering data registered by ${appId}...`);
   
   // 方式 1: 使用 discover 的 appId 选项
-  const personLocations = await db.discover('https://schema.org/Person', {
+  const personLocations = await db.discovery.discover('https://schema.org/Person', {
     appId: appId
   });
 
   // 方式 2: 使用 discoverByApp 获取该应用的所有数据
-  const allAppData = await db.discoverByApp(appId);
+  const allAppData = await db.discovery.discoverByApp?.(appId) ?? [];
 
   console.log(`App ${appId} has ${allAppData.length} data registration(s)`);
   
@@ -67,7 +120,7 @@ export async function listAllRegistrations(session: Session) {
 
   console.log('📋 Listing all data registrations...');
   
-  const registrations = await db.discoverAll();
+  const registrations = await db.discovery.discoverAll?.() ?? [];
 
   for (const reg of registrations) {
     console.log(`\n  📦 ${reg.rdfClass}`);
@@ -155,16 +208,18 @@ export async function crossPodDiscovery(
 ) {
   console.log(`\n🌐 Discovering data shared by ${otherWebId}...`);
 
-  // 创建针对其他用户 Pod 的发现实例
-  // 使用我的 session.fetch（带我的认证）和我的 clientId
-  const discovery = new InteropDiscovery(
-    otherWebId,
-    mySession.fetch,
-    mySession.info.clientAppId  // 我的应用 ID
+  // 创建指向目标 WebID 的发现实例
+  // 使用我的 session.fetch（带我的认证）访问对方公开/授权的数据
+  const discoveryDb = drizzle(
+    solid({
+      webId: otherWebId,
+      fetch: mySession.fetch,
+      sessionId: mySession.info.sessionId ?? 'cross-pod-discovery'
+    })
   );
 
   // 发现对方分享给我的 Person 数据
-  const locations = await discovery.discover('https://schema.org/Person');
+  const locations = await discoveryDb.discovery.discover('https://schema.org/Person');
 
   console.log(`Found ${locations.length} shared location(s)`);
   for (const loc of locations) {
@@ -228,12 +283,13 @@ export async function run(providedSession?: Session) {
   if (providedSession) {
     session = providedSession;
   } else {
-    // 动态导入避免模块加载问题
-    const { getAuthenticatedSession } = await import('./utils/auth');
     session = await getAuthenticatedSession();
   }
 
   explainMultipleShapes();
+
+  // Init-first: 创建注册信息与容器
+  await initDiscovery(session);
 
   // 1. 基础发现
   const locations = await basicDiscovery(session);

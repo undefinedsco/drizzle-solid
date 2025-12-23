@@ -5,6 +5,8 @@
  */
 
 import type { PodColumnBase, PodTable, NamespaceConfig } from '../pod-table';
+import type { UriResolver } from '../uri';
+import { UriResolverImpl } from '../uri';
 import type {
   TripleBuilder,
   Triple,
@@ -29,6 +31,13 @@ export class TripleBuilderImpl implements TripleBuilder {
 
   /** 基础 URI */
   private baseUri?: string;
+
+  /** URI 解析器 */
+  private uriResolver: UriResolver;
+
+  constructor(uriResolver?: UriResolver) {
+    this.uriResolver = uriResolver ?? new UriResolverImpl();
+  }
 
   /**
    * 设置表注册表（用于 URI 引用自动补全）
@@ -57,6 +66,7 @@ export class TripleBuilderImpl implements TripleBuilder {
     return {
       resolveInlineChildUri: this.resolveInlineChildUri.bind(this),
       getNamespaceUri: this.getNamespaceUri.bind(this),
+      uriResolver: this.uriResolver,
       baseUri: this.baseUri,
       tableRegistry: this.tableRegistry,
       tableNameRegistry: this.tableNameRegistry,
@@ -394,4 +404,4 @@ export class TripleBuilderImpl implements TripleBuilder {
 }
 
 // 默认实例导出
-export const tripleBuilder = new TripleBuilderImpl();
+export const tripleBuilder = new TripleBuilderImpl(new UriResolverImpl());

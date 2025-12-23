@@ -1,9 +1,8 @@
 import { describe, it, expect, beforeEach } from 'vitest';
 import { ASTToSPARQLConverter } from '@src/core/ast-to-sparql';
 import { podTable, string } from '@src/core/pod-table';
-import { podTable, string } from '@src/core/pod-table';
 import { eq, and, inArray, isNull, regex as regexCond } from '@src/core/query-conditions';
-import { subjectResolver } from '@src/core/subject';
+import { UriResolverImpl } from '@src/core/uri';
 
 // Mock PodTable
 const mockTable = {
@@ -67,12 +66,12 @@ const mockTable = {
 
 describe('ASTToSPARQLConverter', () => {
   let converter: ASTToSPARQLConverter;
+  let resolver: UriResolverImpl;
   const podUrl = 'https://example.com';
 
   beforeEach(() => {
-    converter = new ASTToSPARQLConverter(podUrl);
-    // Ensure subjectResolver uses the same podUrl
-    subjectResolver.setPodUrl(podUrl);
+    resolver = new UriResolverImpl(podUrl);
+    converter = new ASTToSPARQLConverter(podUrl, undefined, resolver);
   });
 
   describe('convertSelectPlan', () => {

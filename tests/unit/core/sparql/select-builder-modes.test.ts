@@ -4,16 +4,17 @@
 import { describe, it, expect, beforeEach } from 'vitest';
 import { SelectBuilder } from '../../../../src/core/sparql/builder/select-builder';
 import { podTable, string, id } from '../../../../src/core/pod-table';
-import { subjectResolver, SubjectResolverImpl } from '../../../../src/core/subject';
+import { UriResolverImpl } from '../../../../src/core/uri';
 
 const ns = { prefix: 'schema', uri: 'https://schema.org/' };
 
 describe('SelectBuilder mode handling', () => {
   let builder: SelectBuilder;
+  let resolver: UriResolverImpl;
 
   beforeEach(() => {
-    builder = new SelectBuilder({ schema: 'https://schema.org/' });
-    (subjectResolver as SubjectResolverImpl).setPodUrl('https://pod.example');
+    resolver = new UriResolverImpl('https://pod.example');
+    builder = new SelectBuilder({ schema: 'https://schema.org/' }, resolver);
   });
 
   describe('fragment mode', () => {

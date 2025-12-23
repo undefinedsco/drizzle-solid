@@ -4,18 +4,20 @@ import { PodTable } from './pod-table';
 import { QueryCondition } from './query-conditions';
 import { BinaryExpression } from './expressions';
 import { ASTToSPARQLConverter, type SPARQLQuery } from './ast-to-sparql';
-import { ComunicaSPARQLExecutor, SolidSPARQLExecutor } from './sparql-executor';
+import { ComunicaSPARQLExecutor } from './sparql-executor';
 import { TypeIndexManager, TypeIndexEntry, TypeIndexConfig, DiscoveredTable } from './typeindex-manager';
-import { DataDiscovery, TypeIndexDiscovery, InteropDiscovery, CompositeDiscovery } from './discovery';
-import { LdpExecutor } from './execution/ldp-executor';
-import { ExecutionStrategyFactoryImpl, type ExecutionStrategy } from './execution';
-import { subjectResolver } from './subject/resolver';
+import { DataDiscovery } from './discovery';
+import type { ExecutionStrategy, ExecutionStrategyFactoryImpl, LdpExecutor } from './execution';
+import { PodExecutor } from './execution/pod-executor';
+import type { TableResourceDescriptor } from './execution/pod-executor-types';
+import { UriResolverImpl } from './uri';
 import type { SelectQueryPlan } from './select-plan';
 import type { InsertQueryPlan, UpdateQueryPlan, DeleteQueryPlan } from './pod-session';
-import { ShapeManager, DrizzleShapeManager } from './shape';
-import { resolvePodBase } from './utils/pod-root';
+import { ShapeManager } from './shape';
 import { isSameOrigin, getFetchForOrigin } from './utils/origin-auth';
-import { ResourceResolverFactoryImpl, type ResourceResolver } from './resource-resolver';
+import type { ResourceResolver, ResourceResolverFactoryImpl } from './resource-resolver';
+import { PodRuntime } from './runtime/pod-runtime';
+import { PodServices } from './services/pod-services';
 
 // 最小 Solid Session 接口定义
 export interface SolidAuthSession {
@@ -34,6 +36,7 @@ import type { ChannelType } from './notifications';
 export interface PodDialectConfig {
   session: SolidAuthSession;
   typeIndex?: TypeIndexConfig;
+  disableInteropDiscovery?: boolean;
   /** 
    * 通知通道偏好顺序，默认 ['streaming-http', 'websocket']
    * 会根据服务器支持的通道自动选择第一个匹配的
@@ -65,32 +68,23 @@ export interface PodOperation {
   distinct?: boolean;
 }
 
-type TableResourceDescriptor =
-  | {
-      mode: 'ldp';
-      containerUrl: string;
-      resourceUrl: string;
-    }
-  | {
-      mode: 'sparql';
-      endpoint: string;
-    };
-
 export class PodDialect {
   static readonly [entityKind] = 'PodDialect';
 
-  private session: SolidAuthSession;
+  private runtime: PodRuntime;
+  private services: PodServices;
   private podUrl: string;
   private webId: string;
-  private connected = false;
   private sparqlConverter: ASTToSPARQLConverter;
   private sparqlExecutor: ComunicaSPARQLExecutor;
   private ldpExecutor: LdpExecutor;
   private strategyFactory: ExecutionStrategyFactoryImpl;
+  private executor: PodExecutor;
   private typeIndexManager: TypeIndexManager;
   private discovery: DataDiscovery;
   private shapeManager: ShapeManager;
   private resolverFactory: ResourceResolverFactoryImpl;
+  private uriResolver: UriResolverImpl;
   public config: PodDialectConfig;
   private registeredTables: Set<string> = new Set();
   private preparedContainers: Set<string> = new Set();
@@ -98,60 +92,70 @@ export class PodDialect {
 
   constructor(config: PodDialectConfig) {
     this.config = config;
-    this.session = config.session;
-    
-    // 从session中获取webId和podUrl
-    const webId = this.session.info.webId;
-    const clientId = (this.session.info as any).clientId || (this.session.info as any).client_id || process.env.SOLID_CLIENT_ID; 
+    const session = config.session;
+
+    // 从session中获取webId
+    const webId = session.info.webId;
+    const clientId = (session.info as any).clientId || (session.info as any).client_id || process.env.SOLID_CLIENT_ID; 
 
     if (!webId) {
       throw new Error('Session中未找到webId');
     }
-    this.webId = webId;
-    
-    // 从 webId (可带用户段) 推导 podUrl
-    this.podUrl = resolvePodBase({ webId: this.webId, podUrl: (config as any).podUrl });
-    
-    // 设置 subjectResolver 的 Pod URL
-    subjectResolver.setPodUrl(this.podUrl);
-    
-    // 初始化 SPARQL 转换器和轻量级执行器
-    this.sparqlConverter = new ASTToSPARQLConverter(this.podUrl, this.webId);
-    this.sparqlExecutor = new SolidSPARQLExecutor({
-      sources: [this.podUrl],
-      fetch: this.session.fetch, // 使用session的认证fetch
-      logging: false
+
+    this.runtime = new PodRuntime({
+      session,
+      webId,
+      podUrl: (config as any).podUrl,
     });
-    
-    // 初始化 LDP Executor
-    this.ldpExecutor = new LdpExecutor(this.sparqlExecutor, this.session.fetch);
-    
-    // 初始化 TypeIndex 管理器
-    this.typeIndexManager = new TypeIndexManager(this.webId, this.podUrl, this.session.fetch);
-    
-    // 初始化发现策略
-    const typeIndexDiscovery = new TypeIndexDiscovery(this.typeIndexManager, this.podUrl);
-    const interopDiscovery = new InteropDiscovery(this.webId, this.session.fetch, clientId);
-    
-    // 使用组合策略，优先使用 TypeIndex
-    this.discovery = new CompositeDiscovery([typeIndexDiscovery, interopDiscovery]);
-    
-    this.shapeManager = new DrizzleShapeManager(this.podUrl, this.session.fetch);
+    this.webId = this.runtime.getWebId();
+    this.podUrl = this.runtime.getPodUrl();
 
-    // Initialize ResourceResolver factory
-    this.resolverFactory = new ResourceResolverFactoryImpl(this.podUrl);
-
-    // Initialize ExecutionStrategy factory
-    this.strategyFactory = new ExecutionStrategyFactoryImpl({
-      sparqlExecutor: this.sparqlExecutor,
-      sparqlConverter: this.sparqlConverter,
-      sessionFetch: this.session.fetch,
-      podUrl: this.podUrl,
-      ldpExecutor: this.ldpExecutor,
-      getResolver: (table) => this.getResolver(table),
+    this.services = new PodServices({
+      runtime: this.runtime,
+      clientId,
+      disableInteropDiscovery: config.disableInteropDiscovery,
       listContainerResources: (containerUrl) => this.listContainerResources(containerUrl),
       findSubjectsForCondition: (condition, table, resourceUrl) =>
-        this.findSubjectsForCondition(condition, table, resourceUrl)
+        this.findSubjectsForCondition(condition, table, resourceUrl),
+    });
+
+    this.uriResolver = this.services.getUriResolver();
+    this.sparqlConverter = this.services.getSparqlConverter();
+    this.sparqlExecutor = this.services.getSparqlExecutor();
+    this.ldpExecutor = this.services.getLdpExecutor();
+    this.typeIndexManager = this.services.getTypeIndexManager();
+    this.discovery = this.services.getDiscovery();
+    this.shapeManager = this.services.getShapeManager();
+    this.resolverFactory = this.services.getResolverFactory();
+    this.strategyFactory = this.services.getStrategyFactory();
+
+    this.executor = new PodExecutor({
+      ensureConnected: async () => {
+        if (!this.runtime.isConnected()) {
+          await this.connect();
+        }
+      },
+      ensureTableResourcePath: (table) => this.ensureTableResourcePath(table),
+      resolveTableResource: (table) => this.resolveTableResource(table),
+      resolveTableUrls: (table) => this.resolveTableUrls(table),
+      normalizeResourceUrl: (resourceUrl) => this.normalizeResourceUrl(resourceUrl),
+      normalizeContainerKey: (containerUrl) => this.normalizeContainerKey(containerUrl),
+      normalizeResourceKey: (resourceUrl) => this.normalizeResourceKey(resourceUrl),
+      ensureContainerExists: (containerUrl) => this.ensureContainerExists(containerUrl),
+      ensureResourceExists: (resourceUrl, options) => this.ensureResourceExists(resourceUrl, options),
+      ensureIdentifierCondition: (condition, table, resourceUrl) =>
+        this.ensureIdentifierCondition(condition, table, resourceUrl),
+      resourceExists: (resourceUrl) => this.resourceExists(resourceUrl),
+      getStrategy: (table) => this.getStrategy(table),
+      getLdpStrategy: () => this.strategyFactory.getLdpStrategy(),
+      preparedContainers: this.preparedContainers,
+      preparedResources: this.preparedResources,
+      sparqlConverter: this.sparqlConverter,
+      sparqlExecutor: this.sparqlExecutor,
+      isSelectPlan: (plan): plan is SelectQueryPlan => this.isSelectPlan(plan as PodOperation['plan']),
+      isInsertPlan: (plan): plan is InsertQueryPlan => this.isInsertPlan(plan as PodOperation['plan']),
+      isUpdatePlan: (plan): plan is UpdateQueryPlan => this.isUpdatePlan(plan as PodOperation['plan']),
+      isDeletePlan: (plan): plan is DeleteQueryPlan => this.isDeletePlan(plan as PodOperation['plan']),
     });
   }
 
@@ -173,7 +177,21 @@ export class PodDialect {
    * 获取 ShapeManager 实例
    */
   getShapeManager(): ShapeManager {
-    return this.shapeManager;
+    return this.services.getShapeManager();
+  }
+
+  /**
+   * 获取 UriResolver 实例
+   */
+  getUriResolver(): UriResolverImpl {
+    return this.services.getUriResolver();
+  }
+
+  /**
+   * 获取 DataDiscovery 实例
+   */
+  getDiscovery(): DataDiscovery {
+    return this.services.getDiscovery();
   }
 
   /**
@@ -208,6 +226,9 @@ export class PodDialect {
     
     this.ldpExecutor.setTableRegistry(tableRegistry, tableNameRegistry);
     this.ldpExecutor.setBaseUri(this.podUrl);
+    
+    // Also set table registry for SPARQL converter (for reference URI resolution in queries)
+    this.sparqlConverter.setTableRegistry(tableRegistry, tableNameRegistry, this.podUrl);
   }
 
   private async findSubjectsForCondition(
@@ -292,39 +313,15 @@ export class PodDialect {
   }
 
   async connect(): Promise<void> {
-    if (this.connected) return;
-    
-    try {
-      console.log(`Connecting to Solid Pod: ${this.podUrl}`);
-      console.log(`Using WebID: ${this.webId}`);
-      
-      // 验证 Pod 连接；某些 Pod 根可能返回 401/403 但子路径可访问
-      const response = await this.session.fetch(this.podUrl);
-      if (!response.ok) {
-        const status = response.status;
-        if (status === 401 || status === 403) {
-          console.warn(`Pod root returned ${status}, continuing (child resources may still be writable)`);
-        } else {
-          throw new Error(`Failed to connect to Pod: ${response.status} ${response.statusText}`);
-        }
-      } else {
-        console.log('Successfully connected to Solid Pod');
-      }
-      
-      this.connected = true;
-    } catch (error) {
-      console.error('Failed to connect to Pod:', error);
-      throw error;
-    }
+    await this.runtime.connect();
   }
 
   async disconnect(): Promise<void> {
-    this.connected = false;
-    console.log('Disconnected from Solid Pod');
+    await this.runtime.disconnect();
   }
 
   isConnected(): boolean {
-    return this.connected;
+    return this.runtime.isConnected();
   }
 
   // 从 webId 中提取用户路径
@@ -382,6 +379,20 @@ export class PodDialect {
 
     if (configuredResourcePath) {
       const absoluteResource = this.resolveAbsoluteUrl(configuredResourcePath);
+      
+      // Check if this is a container path (ends with /)
+      const isContainer = configuredResourcePath.endsWith('/');
+      
+      if (isContainer) {
+        // Container mode: resourceUrl IS the container
+        const containerUrl = absoluteResource.endsWith('/') ? absoluteResource : `${absoluteResource}/`;
+        return {
+          containerUrl,
+          resourceUrl: containerUrl
+        };
+      }
+      
+      // File mode: derive container from resource path
       const normalizedResource = this.normalizeResourceUrl(absoluteResource);
       const lastSlash = normalizedResource.lastIndexOf('/');
       const containerUrl =
@@ -472,7 +483,7 @@ export class PodDialect {
       const descriptor = this.resolveTableResource(table);
       if (descriptor.mode === 'ldp') {
         // Document mode: query the container, not a single file
-        const resourceMode = subjectResolver.getResourceMode(table);
+        const resourceMode = this.uriResolver.getResourceMode(table);
         const sourceUrl = resourceMode === 'document'
           ? descriptor.containerUrl
           : descriptor.resourceUrl;
@@ -500,7 +511,7 @@ export class PodDialect {
       return true;
     }
     try {
-      const response = await this.session.fetch(normalizedUrl, { method: 'HEAD' });
+      const response = await this.runtime.getFetch()(normalizedUrl, { method: 'HEAD' });
 
       if (response.ok || response.status === 409) {
         this.markResourcePrepared(normalizedUrl);
@@ -512,7 +523,7 @@ export class PodDialect {
       }
 
       if (response.status === 405) {
-        const getResponse = await this.session.fetch(normalizedUrl, {
+        const getResponse = await this.runtime.getFetch()(normalizedUrl, {
           method: 'GET',
           headers: { 'Accept': 'text/turtle' }
         });
@@ -533,7 +544,7 @@ export class PodDialect {
     } catch (error) {
       console.warn('[PodDialect] Failed to check resource existence via HEAD, falling back to GET', error);
       try {
-        const getResponse = await this.session.fetch(normalizedUrl, {
+        const getResponse = await this.runtime.getFetch()(normalizedUrl, {
           method: 'GET',
           headers: { 'Accept': 'text/turtle' }
         });
@@ -664,7 +675,7 @@ export class PodDialect {
 
     for (let i = 0; i < 3; i++) {
     try {
-      const response = await this.session.fetch(normalizedUrl, {
+      const response = await this.runtime.getFetch()(normalizedUrl, {
         method: 'PUT',
         headers: {
           'Content-Type': 'text/turtle'
@@ -719,7 +730,7 @@ export class PodDialect {
    * - Cross-origin endpoints: use unauthenticated fetch (standard SPARQL endpoint behavior)
    */
   private getFetchForEndpoint(endpoint: string): typeof fetch {
-    return getFetchForOrigin(endpoint, this.podUrl, this.session.fetch);
+    return getFetchForOrigin(endpoint, this.podUrl, this.runtime.getFetch());
   }
 
   private async executeOnSparqlEndpoint(endpoint: string, sparqlQuery: SPARQLQuery): Promise<any[]> {
@@ -836,278 +847,8 @@ export class PodDialect {
 
   // 核心查询方法 - 通过 ExecutionStrategy 执行
   async query(operation: PodOperation): Promise<unknown[]> {
-    if (!this.connected) {
-      await this.connect();
-    }
-
-    // 如果表没有指定 resourcePath，尝试从 TypeIndex 自动发现
-    await this.ensureTableResourcePath(operation.table);
-
-    const descriptor = this.resolveTableResource(operation.table);
-    
-    // 策略选择：
-    // - SELECT: 使用表配置的策略（可能是 SPARQL 或 LDP）
-    // - INSERT/UPDATE/DELETE: 强制使用 LDP 策略（SPARQL mode 仅用于查询增强）
-    const strategy = operation.type === 'select'
-      ? this.getStrategy(operation.table)
-      : this.strategyFactory.getLdpStrategy();
-    
-    // LDP container/resource URLs（物理存储位置）
-    const { containerUrl, resourceUrl } = this.resolveTableUrls(operation.table);
-    const normalizedResourceUrl = this.normalizeResourceUrl(resourceUrl);
-    
-    // SELECT 操作时，SPARQL 策略需要使用 endpoint URL
-    const selectResourceUrl = operation.type === 'select' && descriptor.mode === 'sparql'
-      ? descriptor.endpoint
-      : normalizedResourceUrl;
-
-    try {
-      switch (operation.type) {
-        case 'select':
-          return await this.executeSelect(operation, strategy, containerUrl, selectResourceUrl);
-
-        case 'insert':
-          return await this.executeInsert(operation, strategy, containerUrl, normalizedResourceUrl, descriptor);
-
-        case 'update':
-          return await this.executeUpdate(operation, strategy, containerUrl, normalizedResourceUrl, descriptor);
-
-        case 'delete':
-          return await this.executeDelete(operation, strategy, containerUrl, normalizedResourceUrl, descriptor);
-
-        default:
-          throw new Error(`Unsupported operation type: ${operation.type}`);
-      }
-    } catch (error) {
-      console.error(`${operation.type.toUpperCase()} operation failed:`, error);
-      throw error;
-    }
+    return this.executor.query(operation);
   }
-
-  /**
-   * Execute SELECT operation via ExecutionStrategy
-   */
-  private async executeSelect(
-    operation: PodOperation,
-    strategy: ExecutionStrategy,
-    containerUrl: string,
-    resourceUrl: string
-  ): Promise<unknown[]> {
-    // Build SelectQueryPlan
-    let plan: SelectQueryPlan;
-
-    if (operation.plan && this.isSelectPlan(operation.plan)) {
-      plan = operation.plan;
-    } else if (operation.plan && !this.isSelectPlan(operation.plan)) {
-      throw new Error('Invalid plan supplied for select operation');
-    } else {
-      // Create plan from simple options or SQL
-      const alias = operation.table.config.name ?? 'table';
-      const basePlan: SelectQueryPlan = {
-        baseTable: operation.table,
-        baseAlias: alias,
-        selectAll: true,
-        conditionTree: operation.where as QueryCondition | undefined,
-        limit: operation.limit,
-        offset: operation.offset,
-        distinct: operation.distinct,
-        aliasToTable: new Map([[alias, operation.table]]),
-        tableToAlias: new Map([[operation.table, alias]])
-      };
-
-      // Store the original operation for Strategy to use appropriate conversion
-      // Use type assertion to add internal properties
-      (basePlan as any)._simpleSelectOptions = !operation.sql ? {
-        table: operation.table,
-        where: operation.where as Record<string, unknown>,
-        limit: operation.limit,
-        offset: operation.offset,
-        orderBy: operation.orderBy,
-        distinct: operation.distinct
-      } : undefined;
-      (basePlan as any)._sql = operation.sql;
-
-      plan = basePlan;
-    }
-
-    const results = await strategy.executeSelect(plan, containerUrl, resourceUrl);
-    console.log(`SELECT operation completed, ${results.length} records affected`);
-    return results;
-  }
-
-  /**
-   * Execute INSERT operation via ExecutionStrategy
-   */
-  private async executeInsert(
-    operation: PodOperation,
-    strategy: ExecutionStrategy,
-    containerUrl: string,
-    resourceUrl: string,
-    descriptor: TableResourceDescriptor
-  ): Promise<unknown[]> {
-    const values = Array.isArray(operation.values) ? operation.values : [operation.values];
-    if (!values || values.length === 0) {
-      throw new Error('INSERT operation requires at least one value');
-    }
-
-    // LDP mode: ensure container and resource exist first
-    if (descriptor.mode === 'ldp') {
-      if (!this.preparedContainers.has(this.normalizeContainerKey(containerUrl))) {
-        await this.ensureContainerExists(containerUrl);
-      }
-      if (!this.preparedResources.has(this.normalizeResourceKey(resourceUrl))) {
-        await this.ensureResourceExists(resourceUrl, { createIfMissing: true });
-      }
-
-      // Pre-flight check for duplicates (Strategy: INSERT means NEW)
-      // 如果资源不存在（404），清除缓存以避免后续查询被缓存的 404 影响
-      for (const row of values) {
-        try {
-          const subject = this.sparqlConverter.generateSubjectUri(row, operation.table);
-          const askQuery = { type: 'ASK' as const, query: `ASK { <${subject}> ?p ?o }`, prefixes: {} };
-          const results = await this.sparqlExecutor.executeQueryWithSource(askQuery, resourceUrl);
-          if (results[0]?.result) {
-            throw new Error(`Duplicate primary key: ${subject} already exists.`);
-          }
-        } catch (e: any) {
-          if (e.message && e.message.includes('Duplicate primary key')) throw e;
-          // 资源可能不存在，清除缓存以避免影响后续 INSERT 和 SELECT
-          await this.sparqlExecutor.invalidateHttpCache(resourceUrl);
-        }
-      }
-    }
-
-    const insertPlan = this.isInsertPlan(operation.plan)
-      ? operation.plan
-      : { table: operation.table, rows: values };
-
-    const results = await strategy.executeInsert(insertPlan, containerUrl, resourceUrl);
-    console.log(`INSERT operation completed, ${results.length} records affected`);
-    return results;
-  }
-
-  /**
-   * Execute UPDATE operation via ExecutionStrategy
-   */
-  private async executeUpdate(
-    operation: PodOperation,
-    strategy: ExecutionStrategy,
-    containerUrl: string,
-    resourceUrl: string,
-    descriptor: TableResourceDescriptor
-  ): Promise<unknown[]> {
-    if (!operation.data) {
-      throw new Error('UPDATE operation requires data');
-    }
-    if (!operation.where || Object.keys(operation.where).length === 0) {
-      throw new Error('UPDATE operation requires where conditions to locate target resources');
-    }
-
-    // LDP mode: ensure container and resource exist first
-    if (descriptor.mode === 'ldp') {
-      if (!this.preparedContainers.has(this.normalizeContainerKey(containerUrl))) {
-        try {
-          await this.ensureContainerExists(containerUrl);
-        } catch (error) {
-          const message = error instanceof Error ? error.message : String(error);
-          if (message.includes('Failed to check container: 401') || message.includes('Failed to check container: 403')) {
-            console.warn(`[UPDATE] Skipping container existence check for ${containerUrl}: ${message}`);
-          } else {
-            throw error;
-          }
-        }
-      }
-
-      if (!this.preparedResources.has(this.normalizeResourceKey(resourceUrl))) {
-        await this.ensureResourceExists(resourceUrl, { createIfMissing: false });
-      }
-    }
-
-    const updatePlan = this.isUpdatePlan(operation.plan)
-      ? operation.plan
-      : {
-          table: operation.table,
-          data: operation.data as Record<string, any>,
-          where: operation.where as QueryCondition
-        };
-
-    // For SPARQL mode, ensure we have identifier condition
-    if (descriptor.mode === 'sparql') {
-      const ensuredCondition = await this.ensureIdentifierCondition(
-        updatePlan.where,
-        updatePlan.table,
-        resourceUrl
-      );
-
-      if (!ensuredCondition) {
-        console.warn('[UPDATE] No matching subjects found for provided condition, skipping update.');
-        return [];
-      }
-
-      updatePlan.where = ensuredCondition;
-    }
-
-    const results = await strategy.executeUpdate(updatePlan, containerUrl, resourceUrl);
-    return results;
-  }
-
-  /**
-   * Execute DELETE operation via ExecutionStrategy
-   */
-  private async executeDelete(
-    operation: PodOperation,
-    strategy: ExecutionStrategy,
-    containerUrl: string,
-    resourceUrl: string,
-    descriptor: TableResourceDescriptor
-  ): Promise<unknown[]> {
-    // LDP mode: ensure container exists and check resource
-    if (descriptor.mode === 'ldp') {
-      if (!this.preparedContainers.has(this.normalizeContainerKey(containerUrl))) {
-        await this.ensureContainerExists(containerUrl);
-      }
-
-      const hasResource = this.preparedResources.has(this.normalizeResourceKey(resourceUrl))
-        ? true
-        : await this.resourceExists(resourceUrl);
-      if (!hasResource) {
-        console.log('[DELETE] Target resource does not exist, skipping execution');
-        return [{
-          success: true,
-          source: resourceUrl,
-          status: 404
-        }];
-      }
-    }
-
-    const deletePlan = this.isDeletePlan(operation.plan)
-      ? operation.plan
-      : {
-          table: operation.table,
-          where: operation.where as QueryCondition | undefined
-        };
-
-    // For SPARQL mode with condition, ensure identifier condition
-    if (descriptor.mode === 'sparql' && deletePlan.where) {
-      const ensuredCondition = await this.ensureIdentifierCondition(
-        deletePlan.where,
-        deletePlan.table,
-        resourceUrl
-      );
-
-      if (!ensuredCondition) {
-        console.warn('[DELETE] No matching subjects found for provided condition, skipping delete.');
-        return [];
-      }
-
-      deletePlan.where = ensuredCondition;
-    }
-
-    const results = await strategy.executeDelete(deletePlan, containerUrl, resourceUrl);
-    console.log(`DELETE operation completed, ${results.length} records affected`);
-    return results;
-  }
-
 
   private buildIdInConditionFromSubjects(subjects: string[]): QueryCondition | undefined {
     if (!subjects || subjects.length === 0) {
@@ -1301,7 +1042,7 @@ export class PodDialect {
     return {
       podUrl: this.podUrl,
       webId: this.webId,
-      connected: this.connected
+      connected: this.runtime.isConnected()
     };
   }
 
@@ -1310,7 +1051,7 @@ export class PodDialect {
    * 用于需要认证访问的操作（如 Notifications）
    */
   getAuthenticatedFetch(): typeof fetch {
-    return this.session.fetch;
+    return this.runtime.getFetch();
   }
 
   // 获取 SPARQL 转换器（用于调试）
@@ -1324,14 +1065,14 @@ export class PodDialect {
   }
 
   getPodUrl(): string {
-    return this.podUrl;
+    return this.runtime.getPodUrl();
   }
 
   /**
    * 获取用户的 WebID
    */
   getWebId(): string {
-    return this.webId;
+    return this.runtime.getWebId();
   }
 
   /**
@@ -1418,21 +1159,21 @@ export class PodDialect {
 
   // 获取 Pod 元数据
   async getPodMetadata(): Promise<unknown> {
-    if (!this.connected) {
+    if (!this.runtime.isConnected()) {
       throw new Error('Not connected to Pod');
     }
     
     return {
       podUrl: this.podUrl,
       webId: this.webId,
-      connected: this.connected,
+      connected: this.runtime.isConnected(),
       sources: this.sparqlExecutor.getSources()
     };
   }
 
   // 直接执行 SPARQL 查询（高级用法）
   async executeSPARQL(query: string): Promise<unknown[]> {
-    if (!this.connected) {
+    if (!this.runtime.isConnected()) {
       throw new Error('Not connected to Pod');
     }
     
@@ -1513,7 +1254,9 @@ export class PodDialect {
     this.registeredTables.add(tableKey);
 
     // 委托给 DataDiscovery 进行注册
-    await this.discovery.register(table);
+    await this.discovery.register(table, {
+      registryPath: table.config.saiRegistryPath,
+    });
   }
 
   /**
@@ -1624,7 +1367,7 @@ export class PodDialect {
       console.log(`🔍 检查资源存在性: ${targetContainer}`);
 
       // 直接读取容器内容，检查是否包含我们要插入的资源
-      const response = await this.session.fetch(targetContainer, {
+      const response = await this.runtime.getFetch()(targetContainer, {
         method: 'GET',
         headers: {
           'Accept': 'text/turtle'
@@ -1672,7 +1415,7 @@ export class PodDialect {
         return;
       }
 
-      const checkResponse = await this.session.fetch(targetContainer, {
+      const checkResponse = await this.runtime.getFetch()(targetContainer, {
         method: 'HEAD'
       });
 
@@ -1692,7 +1435,7 @@ export class PodDialect {
 
         // 再创建当前容器
         console.log(`[Container] 创建容器: ${targetContainer}`);
-        const createResponse = await this.session.fetch(targetContainer, {
+        const createResponse = await this.runtime.getFetch()(targetContainer, {
           method: 'PUT',
           headers: {
             'Content-Type': 'text/turtle',
@@ -1790,7 +1533,7 @@ export class PodDialect {
     // If SPARQL returned nothing or errored, attempt a GET-based parse as a secondary path
     if (resources.length === 0) {
       try {
-        const response = await this.session.fetch(normalizedUrl, {
+        const response = await this.runtime.getFetch()(normalizedUrl, {
           method: 'GET',
           headers: { 'Accept': 'text/turtle' }
         });

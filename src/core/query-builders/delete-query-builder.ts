@@ -25,9 +25,28 @@ export class DeleteQueryBuilder<TTable extends PodTable<any> = PodTable<any>> {
       const simple = this.convertQueryConditionToSimple(conditions);
       this.whereConditions = Object.keys(simple).length > 0 ? simple : undefined;
     } else {
+      // Check for @id usage and reject
+      if (conditions && typeof conditions === 'object' && '@id' in conditions) {
+        throw new Error(
+          `Using '@id' in where() is not supported. ` +
+          `Use db.deleteByIri(table, iri) for IRI-based deletes, ` +
+          `or use { id: 'value' } for id-based deletes.`
+        );
+      }
       this.whereConditions = conditions;
       this.conditionTree = undefined;
     }
+    return this;
+  }
+
+  /**
+   * Internal method that allows @id in conditions.
+   * Used by *ByIri methods internally.
+   * @internal
+   */
+  whereByIri(iri: string) {
+    this.whereConditions = { '@id': iri };
+    this.conditionTree = undefined;
     return this;
   }
 

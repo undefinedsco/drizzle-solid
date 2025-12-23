@@ -4,6 +4,9 @@ import { PodTable } from '../pod-table';
  * 数据注册选项
  */
 export interface RegisterOptions {
+  /** RegistrySet 基础路径（用于自动创建 SAI registry） */
+  registryPath?: string;
+
   /** Shape URL - 如果提供，会在 ShapeTree 中引用此 Shape */
   shapeUrl?: string;
 

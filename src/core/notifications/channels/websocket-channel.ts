@@ -63,7 +63,6 @@ export class WebSocketChannel extends BaseChannel {
 
         this.ws.onclose = (event: CloseEvent) => {
           this._connected = false;
-          
           if (!event.wasClean && this.reconnectAttempts < this.maxReconnectAttempts) {
             // 尝试重连
             this.reconnectAttempts++;

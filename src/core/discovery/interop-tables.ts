@@ -1,10 +1,10 @@
-import { podTable, string, uri, id } from '../pod-table';
+import { solidSchema, string, uri, id } from '../pod-table';
 import { INTEROP } from './interop-types';
 
 const ns = { prefix: 'interop', uri: INTEROP.NS };
 
 // Registry Set (Entry point from Profile)
-export const registrySetTable = podTable('registrySet', {
+export const registrySetSchema = solidSchema('registrySet', {
   id: id(),
   hasDataRegistry: uri('hasDataRegistry').array().predicate(INTEROP.hasDataRegistry),
   hasAgentRegistry: uri('hasAgentRegistry').array().predicate('http://www.w3.org/ns/solid/interop#hasAgentRegistry'),
@@ -14,7 +14,7 @@ export const registrySetTable = podTable('registrySet', {
 });
 
 // Data Registry (Contains Data Registrations)
-export const dataRegistryTable = podTable('dataRegistry', {
+export const dataRegistrySchema = solidSchema('dataRegistry', {
   id: id(),
   hasDataRegistration: uri('hasDataRegistration').array().predicate(INTEROP.hasDataRegistration),
 }, {
@@ -23,7 +23,7 @@ export const dataRegistryTable = podTable('dataRegistry', {
 });
 
 // Data Registration (Links to actual data location)
-export const dataRegistrationTable = podTable('dataRegistration', {
+export const dataRegistrationSchema = solidSchema('dataRegistration', {
   id: id(),
   registeredShapeTree: uri('registeredShapeTree').predicate(INTEROP.registeredShapeTree),
   registeredBy: uri('registeredBy').predicate(INTEROP.registeredBy),
@@ -34,7 +34,7 @@ export const dataRegistrationTable = podTable('dataRegistration', {
 });
 
 // Application Registration (For an App to find its grants)
-export const applicationRegistrationTable = podTable('applicationRegistration', {
+export const applicationRegistrationSchema = solidSchema('applicationRegistration', {
   id: id(),
   registeredAgent: uri('registeredAgent').predicate('http://www.w3.org/ns/solid/interop#registeredAgent'),
   hasAccessGrant: uri('hasAccessGrant').predicate(INTEROP.hasAccessGrant),
@@ -44,7 +44,7 @@ export const applicationRegistrationTable = podTable('applicationRegistration', 
 });
 
 // Access Grant (Group of Data Grants)
-export const accessGrantTable = podTable('accessGrant', {
+export const accessGrantSchema = solidSchema('accessGrant', {
   id: id(),
   grantedBy: uri('grantedBy').predicate('http://www.w3.org/ns/solid/interop#grantedBy'),
   grantedAt: string('grantedAt').predicate('http://www.w3.org/ns/solid/interop#grantedAt'),
@@ -56,7 +56,7 @@ export const accessGrantTable = podTable('accessGrant', {
 });
 
 // Data Grant (Specific access to data)
-export const dataGrantTable = podTable('dataGrant', {
+export const dataGrantSchema = solidSchema('dataGrant', {
   id: id(),
   registeredShapeTree: uri('registeredShapeTree').predicate(INTEROP.registeredShapeTree),
   hasDataRegistration: uri('hasDataRegistration').predicate(INTEROP.hasDataRegistration),

@@ -7,6 +7,7 @@ import { podTable, string, int, boolean, uri, id } from '../../../src/core/pod-t
 import { INTEROP } from '../../../src/core/discovery/interop-types';
 
 const containerPath = `/shape-discovery-test/${Date.now()}/`;
+const nextRequestId = (prefix: string) => `${prefix}-${Date.now()}`;
 
 vi.setConfig({ testTimeout: 120_000 });
 
@@ -65,7 +66,10 @@ describe('CSS integration: Shape Discovery and Table Generation', () => {
       // Upload the shape file
       const putResponse = await session.fetch(shapeUrl, {
         method: 'PUT',
-        headers: { 'Content-Type': 'text/turtle' },
+        headers: {
+          'Content-Type': 'text/turtle',
+          'X-Request-ID': nextRequestId('shape-put'),
+        },
         body: shapeTurtle
       });
       expect(putResponse.ok).toBe(true);
@@ -173,7 +177,10 @@ describe('CSS integration: Shape Discovery and Table Generation', () => {
       // Upload the extended shape
       const putResponse = await session.fetch(shapeUrl, {
         method: 'PUT',
-        headers: { 'Content-Type': 'text/turtle' },
+        headers: {
+          'Content-Type': 'text/turtle',
+          'X-Request-ID': nextRequestId('shape-put'),
+        },
         body: shapeTurtle
       });
       expect(putResponse.ok).toBe(true);
@@ -236,7 +243,10 @@ describe('CSS integration: Shape Discovery and Table Generation', () => {
       
       const shapePut = await session.fetch(shapeUrl, {
         method: 'PUT',
-        headers: { 'Content-Type': 'text/turtle' },
+        headers: {
+          'Content-Type': 'text/turtle',
+          'X-Request-ID': nextRequestId('shape-put'),
+        },
         body: shapeTurtle
       });
       expect(shapePut.ok).toBe(true);
@@ -316,7 +326,10 @@ describe('CSS integration: Shape Discovery and Table Generation', () => {
       
       await session.fetch(shapeUrl, {
         method: 'PUT',
-        headers: { 'Content-Type': 'text/turtle' },
+        headers: {
+          'Content-Type': 'text/turtle',
+          'X-Request-ID': nextRequestId('shape-put'),
+        },
         body: shapeTurtle
       });
 

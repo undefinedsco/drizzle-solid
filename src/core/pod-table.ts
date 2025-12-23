@@ -473,6 +473,11 @@ export interface PodTableOptions {
   type: RdfTermInput;
   namespace?: NamespaceConfig;
   typeIndex?: 'private' | 'public';
+  /**
+   * SAI RegistrySet container path or URL used for SAI registration.
+   * When provided, `db.init()` will register this table with SAI as well.
+   */
+  saiRegistryPath?: string;
   subClassOf?: RdfTermInput | RdfTermInput[];
   subjectTemplate?: string;
   /**
@@ -483,13 +488,12 @@ export interface PodTableOptions {
    * - INSERT/UPDATE/DELETE: always uses LDP for Solid Notifications compatibility
    * 
    * Note: This is different from physical storage mode (fragment vs document),
-   * which is inferred from `subjectTemplate` by `subjectResolver.getResourceMode()`.
+   * which is inferred from `subjectTemplate` by `uriResolver.getResourceMode()`.
    * 
    * @future May be used for batch update optimization via SPARQL UPDATE
    */
   resourceMode?: 'ldp' | 'sparql';
   autoRegister?: boolean;
-  containerPath?: string;
 
   /**
    * Lifecycle hooks for table operations.
@@ -545,14 +549,14 @@ export type DiscoverFunction<TParent = any> = (parent: TParent) => string | stri
 
 export interface RelationDefinition {
   type: RelationKind;
-  /** 目标表或 schema（联邦查询时使用 PodSchema） */
-  table: PodTable<any> | PodSchema<any>;
+  /** 目标表或 schema（联邦查询时使用 SolidSchema） */
+  table: PodTable<any> | SolidSchema<any>;
   fields?: PodColumnBase[];
   references?: PodColumnBase[];
   relationName?: string;
   /** 联邦查询：发现函数，用于从父记录获取 WebID 进行数据发现 */
   discover?: DiscoverFunction;
-  /** 是否为联邦关系（目标是 PodSchema） */
+  /** 是否为联邦关系（目标是 SolidSchema） */
   isFederated?: boolean;
 }
 
@@ -816,23 +820,31 @@ export class PodArrayColumn<
 
 
 /**
- * PodSchema - 联邦查询用的 schema 定义
- * 
- * 只包含表的结构信息（列、类型、谓词映射），不包含 base
- * 用于 relations() 中的联邦查询，数据位置通过 discover 动态发现
+ * Schema 配置选项（不含 base）
  */
-export interface PodSchema<TColumns extends Record<string, PodColumnBase<any, any, any, any>> = Record<string, PodColumnBase<any, any, any, any>>> {
-  /** Schema 标识 */
-  readonly $kind: 'PodSchema';
-  
-  /** 表名 */
-  readonly name: string;
-  
-  /** RDF 类型 */
-  readonly type: string;
-  
-  /** 列定义 */
-  readonly columns: TColumns;
+export type SolidSchemaOptions = Omit<PodTableOptions, 'base'>;
+
+/**
+ * SolidSchema - 独立的 schema 定义类
+ * 
+ * 只包含表的结构信息（列、类型、谓词映射），不包含 base。
+ * 可以通过 .at(base) 方法绑定到具体位置，生成 PodTable。
+ * 
+ * @example
+ * // 定义 schema（不绑定位置）
+ * const profileSchema = solidSchema('profile', {
+ *   name: string('name').predicate(FOAF.name),
+ *   avatar: uri('avatar').predicate(FOAF.img),
+ * }, {
+ *   type: FOAF.Person,
+ * });
+ * 
+ * // 绑定到具体位置
+ * const myProfile = profileSchema.at('/profile/card.ttl');
+ * const aliceProfile = profileSchema.at('https://alice.pod/profile/card.ttl');
+ */
+export class SolidSchema<TColumns extends Record<string, PodColumnBase<any, any, any, any>> = Record<string, PodColumnBase<any, any, any, any>>> {
+  readonly $kind = 'SolidSchema' as const;
   
   /** 命名空间配置 */
   readonly namespace?: NamespaceConfig;
@@ -843,8 +855,120 @@ export interface PodSchema<TColumns extends Record<string, PodColumnBase<any, an
   /** 父类 */
   readonly subClassOf?: string[];
   
-  /** 原始表引用（用于类型推断） */
-  readonly _sourceTable: PodTable<TColumns>;
+  constructor(
+    public readonly name: string,
+    public readonly columns: TColumns,
+    public readonly options: SolidSchemaOptions
+  ) {
+    this.namespace = options.namespace;
+    this.subjectTemplate = options.subjectTemplate;
+    this.subClassOf = options.subClassOf 
+      ? (Array.isArray(options.subClassOf) 
+          ? options.subClassOf.map(resolveTermIri) 
+          : [resolveTermIri(options.subClassOf)])
+      : undefined;
+  }
+  
+  /**
+   * 绑定到具体位置，生成 PodTable
+   * 
+   * @param base 资源路径（相对路径或绝对 IRI）
+   * @example
+   * const myProfile = profileSchema.at('/profile/card.ttl');
+   * const aliceProfile = profileSchema.at('https://alice.pod/profile/card.ttl');
+   */
+  at(base: string): PodTable<TColumns> {
+    return new PodTable(this.name, this.columns, {
+      ...this.options,
+      base,
+    });
+  }
+  
+  /**
+   * 获取 RDF 类型
+   */
+  get type(): string {
+    return resolveTermIri(this.options.type);
+  }
+}
+
+/**
+ * 创建 SolidSchema（不绑定位置的 schema 定义）
+ * 
+ * @example
+ * const profileSchema = solidSchema('profile', {
+ *   name: string('name').predicate(FOAF.name),
+ * }, {
+ *   type: FOAF.Person,
+ * });
+ * 
+ * // 使用时绑定位置
+ * const myProfile = profileSchema.at('/profile/card.ttl');
+ */
+export function solidSchema<
+  TName extends string,
+  TColumns extends Record<string, ColumnInput>
+>(
+  name: TName,
+  columns: TColumns,
+  options: SolidSchemaOptions
+): SolidSchema<ResolvedColumns<TColumns>> {
+  // 复用 podTable 的列处理逻辑
+  const processedColumns: Partial<ResolvedColumns<TColumns>> = {};
+
+  for (const [key, value] of Object.entries(columns)) {
+    if (value instanceof PodColumnBase) {
+      processedColumns[key as keyof TColumns] = value as ResolveColumn<TColumns[typeof key & keyof TColumns]>;
+      continue;
+    }
+
+    let column: PodColumnBase<any, any, any, any>;
+    switch (value.dataType) {
+      case 'integer':
+        column = new PodIntegerColumn(value.name, value.options);
+        break;
+      case 'datetime':
+        column = new PodDateTimeColumn(value.name, value.options);
+        break;
+      case 'boolean':
+        column = new PodBooleanColumn(value.name, value.options);
+        break;
+      case 'json':
+        column = new PodJsonColumn(value.name, value.options);
+        break;
+      case 'object':
+        column = new PodObjectColumn(value.name, value.options);
+        break;
+      case 'array': {
+        const elementType = (value.elementType ?? value.options.baseType ?? 'string') as ColumnBuilderDataType;
+        column = new PodArrayColumn(value.name, elementType, value.options);
+        break;
+      }
+      case 'uri':
+        column = new PodUriColumn(value.name, value.options);
+        break;
+      case 'string':
+      default:
+        column = new PodStringColumn(value.name, value.options);
+        break;
+    }
+
+    const predicateUri = value.getPredicateUri();
+    if (predicateUri) {
+      column.predicate(predicateUri);
+    }
+
+    processedColumns[key as keyof TColumns] = column as ResolveColumn<TColumns[typeof key & keyof TColumns]>;
+  }
+
+  return new SolidSchema(name, processedColumns as ResolvedColumns<TColumns>, options);
+}
+
+/**
+ * 检查目标是否为 SolidSchema
+ */
+export function isSolidSchema(target: unknown): target is SolidSchema<any> {
+  return target instanceof SolidSchema || (target as any)?.$kind === 'SolidSchema';
 }
 
 
@@ -858,6 +982,7 @@ export class PodTable<TColumns extends Record<string, PodColumnBase<any, any, an
     type: string;
     namespace?: NamespaceConfig;
     typeIndex?: 'private' | 'public';
+    saiRegistryPath?: string;
     subClassOf?: string[];
     subjectTemplate: string;
     containerPath?: string;
@@ -910,7 +1035,7 @@ export class PodTable<TColumns extends Record<string, PodColumnBase<any, any, an
     if (typeIndexOption && !validTypeIndex) {
       console.warn(`Invalid typeIndex value "${typeIndexOption}", disabling TypeIndex registration.`);
     }
-    const baseConfig = this.resolveBase(options.base, name, options.containerPath);
+    const baseConfig = this.resolveBase(options.base, name);
     this.resourcePath = baseConfig.resourcePath;
     this.containerPath = baseConfig.containerPath;
     const subjectTemplateInfo = this.resolveSubjectTemplate(
@@ -932,6 +1057,7 @@ export class PodTable<TColumns extends Record<string, PodColumnBase<any, any, an
       type: resolveTermIri(typeInput),
       namespace: options.namespace,
       typeIndex: validTypeIndex ? typeIndexOption : undefined,
+      saiRegistryPath: options.saiRegistryPath,
       subjectTemplate: this.subjectTemplate,
       autoRegister: options.autoRegister,
       containerPath: baseConfig.containerPath,
@@ -1042,7 +1168,7 @@ export class PodTable<TColumns extends Record<string, PodColumnBase<any, any, an
   /**
    * 获取表的 schema 定义（用于联邦查询）
    * 
-   * 返回只包含结构信息的 PodSchema，不包含 base
+   * 返回只包含结构信息的 SolidSchema，不包含 base
    * 用于 relations() 中的联邦查询，数据位置通过 discover 动态发现
    * 
    * @example
@@ -1052,17 +1178,13 @@ export class PodTable<TColumns extends Record<string, PodColumnBase<any, any, an
    *   }),
    * }));
    */
-  get $schema(): PodSchema<TColumns> {
-    return {
-      $kind: 'PodSchema',
-      name: this.config.name,
+  get $schema(): SolidSchema<TColumns> {
+    return new SolidSchema(this.config.name, this.columns, {
       type: this.config.type,
-      columns: this.columns,
       namespace: this.config.namespace,
       subjectTemplate: this.subjectTemplate,
       subClassOf: this.parentClasses.length > 0 ? [...this.parentClasses] : undefined,
-      _sourceTable: this,
-    };
+    });
   }
 
   /**
@@ -1101,19 +1223,15 @@ export class PodTable<TColumns extends Record<string, PodColumnBase<any, any, an
     return `${normalizedContainer}${resolved}`;
   }
 
-  private resolveBase(base: string | undefined, tableName: string, containerPathHint?: string): { resourcePath: string; containerPath: string } {
+  private resolveBase(base: string | undefined, tableName: string): { resourcePath: string; containerPath: string } {
     if (!base || base.trim().length === 0) {
-      if (containerPathHint && containerPathHint.trim().length > 0) {
-        const normalizedContainerPath = this.ensureTrailingSlash(this.normalizeBaseInput(containerPathHint));
-        return {
-          resourcePath: `${normalizedContainerPath}${tableName}.ttl`,
-          containerPath: normalizedContainerPath
-        };
-      }
-      return {
-        resourcePath: '',
-        containerPath: '/data/'
-      };
+      throw new Error(
+        `podTable '${tableName}' requires a 'base' option.\n` +
+        `Examples:\n` +
+        `  base: '/data/${tableName}.ttl'  // relative path for your Pod\n` +
+        `  base: '/data/${tableName}/'     // container path\n` +
+        `  base: 'https://other.pod/data/${tableName}.ttl'  // absolute IRI for other Pods`
+      );
     }
 
     const normalizedInput = this.normalizeBaseInput(base);
@@ -1122,7 +1240,7 @@ export class PodTable<TColumns extends Record<string, PodColumnBase<any, any, an
     if (normalizedPath.endsWith('/')) {
       const containerPath = this.ensureTrailingSlash(normalizedPath);
       return {
-        resourcePath: `${containerPath}${tableName}.ttl`,
+        resourcePath: containerPath,
         containerPath
       };
     }
@@ -1543,17 +1661,17 @@ type ResolvedColumns<T extends Record<string, ColumnInput>> = {
 };
 
 type RelationBuilder = {
-  one: <T extends PodTable<any> | PodSchema<any>>(
+  one: <T extends PodTable<any> | SolidSchema<any>>(
     table: T,
     options?: RelationOptions<T>
   ) => RelationDefinition;
-  many: <T extends PodTable<any> | PodSchema<any>>(
+  many: <T extends PodTable<any> | SolidSchema<any>>(
     table: T,
     options?: RelationOptions<T>
   ) => RelationDefinition;
 };
 
-export interface RelationOptions<T = PodTable<any> | PodSchema<any>> {
+export interface RelationOptions<T = PodTable<any> | SolidSchema<any>> {
   fields?: PodColumnBase[];
   references?: PodColumnBase[];
   relationName?: string;
@@ -1633,7 +1751,7 @@ export function relations<TTable extends PodTable<any>>(
 ): Record<string, RelationDefinition> {
   const helpers: RelationBuilder = {
     one: (target, options = {}) => {
-      const isFederated = isPodSchema(target);
+      const isFederated = isSolidSchema(target);
       return {
         type: 'one',
         table: target,
@@ -1645,7 +1763,7 @@ export function relations<TTable extends PodTable<any>>(
       };
     },
     many: (target, options = {}) => {
-      const isFederated = isPodSchema(target);
+      const isFederated = isSolidSchema(target);
       return {
         type: 'many',
         table: target,
@@ -1661,13 +1779,6 @@ export function relations<TTable extends PodTable<any>>(
   const defs = builder(helpers);
   (table as any).relations = defs;
   return defs;
-}
-
-/**
- * 检查目标是否为 PodSchema（用于联邦查询）
- */
-function isPodSchema(target: PodTable<any> | PodSchema<any>): target is PodSchema<any> {
-  return (target as PodSchema<any>).$kind === 'PodSchema';
 }
 
 

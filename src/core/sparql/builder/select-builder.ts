@@ -4,18 +4,31 @@ import { SelectQueryPlan } from '../../select-plan';
 import { SPARQLQuery } from '../types';
 import { getPredicateForColumn, resolveColumn, formatValue } from '../helpers';
 import { AggregateExpression, isAggregateExpression } from '../../aggregates';
-import { subjectResolver } from '../../subject';
+import type { UriResolver } from '../../uri';
+import { UriResolverImpl } from '../../uri';
 import { ExpressionBuilder } from './expression-builder';
+import type { TableRegistryContext } from '../../ast-to-sparql';
 
 export class SelectBuilder {
   private generator: any;
   private prefixes: Record<string, string>;
   private expressionBuilder: ExpressionBuilder;
+  private tableContext?: TableRegistryContext;
+  private uriResolver: UriResolver;
 
-  constructor(prefixes: Record<string, string>) {
+  constructor(prefixes: Record<string, string>, uriResolver: UriResolver = new UriResolverImpl()) {
     this.generator = new (sparqljs as any).Generator();
     this.prefixes = prefixes;
-    this.expressionBuilder = new ExpressionBuilder();
+    this.uriResolver = uriResolver;
+    this.expressionBuilder = new ExpressionBuilder(uriResolver);
+  }
+
+  /**
+   * Set table context for URI reference resolution
+   */
+  setTableContext(context: TableRegistryContext): void {
+    this.tableContext = context;
+    this.expressionBuilder.setTableContext(context);
   }
 
   convertSelect(ast: any, table: PodTable, targetGraph?: string, fromSources?: string[], allowGraphVariable = true): SPARQLQuery {
@@ -330,7 +343,7 @@ export class SelectBuilder {
 
     // Only use GRAPH ?g if no explicit targetGraph AND no fromSources are provided.
     // If fromSources are provided, FROM clauses at query level define the sources.
-    if (allowGraphVariable && subjectResolver.getResourceMode(table) === 'document' && (!fromSources || fromSources.length === 0)) {
+    if (allowGraphVariable && this.uriResolver.getResourceMode(table) === 'document' && (!fromSources || fromSources.length === 0)) {
       return [{
         type: 'graph',
         name: { termType: 'Variable', value: 'g' },

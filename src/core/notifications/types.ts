@@ -116,19 +116,35 @@ export interface SubscribeOptions {
  * 表订阅选项（新接口，按类型分开）
  */
 export interface TableSubscribeOptions {
+  /** 
+   * 覆盖订阅目标的 IRI（用于订阅其他 Pod 的资源）
+   * 
+   * @example
+   * // 订阅自己的 profile（使用 table 的 base）
+   * db.subscribe(profileTable, { onUpdate: ... })
+   * 
+   * // 订阅 Alice 的 profile
+   * db.subscribe(profileTable, { 
+   *   iri: 'https://alice.pod/profile/card.ttl',
+   *   onUpdate: ... 
+   * })
+   */
+  iri?: string;
   /** 通道类型，默认 'streaming-http' (SSE) */
   channel?: ChannelType;
   /** 订阅特性 */
   features?: SubscriptionFeature[];
-  /** 资源创建时的回调 */
+  /** 原始通知回调（服务端通知的原始形态） */
+  onNotification?: (event: NotificationEvent) => void;
+  /** 资源创建时的回调（服务端通知按类型分发） */
   onCreate?: (activity: Activity) => void | Promise<void>;
-  /** 资源更新时的回调 */
+  /** 资源更新时的回调（服务端通知按类型分发） */
   onUpdate?: (activity: Activity) => void | Promise<void>;
-  /** 资源删除时的回调 */
+  /** 资源删除时的回调（服务端通知按类型分发） */
   onDelete?: (activity: Activity) => void | Promise<void>;
-  /** 添加到容器时的回调 */
+  /** 添加到容器时的回调（服务端通知按类型分发） */
   onAdd?: (activity: Activity) => void | Promise<void>;
-  /** 从容器移除时的回调 */
+  /** 从容器移除时的回调（服务端通知按类型分发） */
   onRemove?: (activity: Activity) => void | Promise<void>;
   /** 发生错误时的回调 */
   onError?: (error: Error) => void;
@@ -210,4 +226,22 @@ export interface ChannelConfig {
   onClose?: () => void;
   /** 认证 fetch 函数 */
   fetch?: typeof fetch;
+}
+
+/**
+ * 单体订阅选项（用于 subscribeByIri）
+ * 
+ * 与容器订阅不同，单体订阅没有 onCreate 回调（实体已存在）
+ */
+export interface EntitySubscribeOptions<TData = unknown> {
+  /** 通道类型，默认 'streaming-http' (SSE) */
+  channel?: ChannelType;
+  /** 订阅特性 */
+  features?: SubscriptionFeature[];
+  /** 数据更新时的回调（收到通知后自动重新获取数据） */
+  onUpdate: (data: TData) => void | Promise<void>;
+  /** 实体删除时的回调 */
+  onDelete?: () => void | Promise<void>;
+  /** 发生错误时的回调（如权限撤销、网络错误） */
+  onError?: (error: Error) => void;
 }

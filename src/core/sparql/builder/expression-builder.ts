@@ -1,13 +1,105 @@
 import { QueryCondition } from '../../query-conditions';
 import { BinaryExpression, LogicalExpression, UnaryExpression } from '../../expressions';
-import { PodTable } from '../../pod-table';
+import { PodTable, PodColumnBase } from '../../pod-table';
 import { formatValue, resolveColumn, getPredicateForColumn } from '../helpers';
-import { subjectResolver } from '../../subject';
+import type { UriContext, UriResolver } from '../../uri';
+import { UriResolverImpl } from '../../uri';
+import type { TableRegistryContext } from '../../ast-to-sparql';
 
 export class ExpressionBuilder {
+  private tableContext?: TableRegistryContext;
+  private uriResolver: UriResolver;
+
+  constructor(uriResolver: UriResolver = new UriResolverImpl()) {
+    this.uriResolver = uriResolver;
+  }
+
+  /**
+   * Set table context for URI reference resolution
+   */
+  setTableContext(context: TableRegistryContext): void {
+    this.tableContext = context;
+  }
+
+  /**
+   * Convert TableRegistryContext to UriContext
+   */
+  private getUriContext(): UriContext | undefined {
+    if (!this.tableContext) return undefined;
+    return {
+      baseUri: this.tableContext.baseUri,
+      tableRegistry: this.tableContext.tableRegistry,
+      tableNameRegistry: this.tableContext.tableNameRegistry,
+    };
+  }
+
   buildWhereClause(condition: QueryCondition | any, table: PodTable): string {
     const expr = this.buildExpression(condition, table);
     return expr ? `FILTER(${expr})` : '';
+  }
+
+  /**
+   * Check if a column is a reference column that needs URI resolution
+   * Delegates to uriResolver for consistency
+   */
+  private isReferenceColumn(column: PodColumnBase | any): boolean {
+    return this.uriResolver.isReferenceColumn(column);
+  }
+
+  /**
+   * Format a value for a reference column, resolving URI if needed
+   * Uses uriResolver for consistent URI resolution
+   */
+  private formatReferenceValue(value: any, column: PodColumnBase | any, table: PodTable): string {
+    const str = String(value);
+    if (str.startsWith('<') && str.endsWith('>')) {
+      const inner = str.slice(1, -1);
+      if (this.uriResolver.isAbsoluteUri(inner)) {
+        return str;
+      }
+      const context = this.getUriContext();
+      try {
+        const resolved = this.uriResolver.resolveReference(inner, column, context);
+        return `<${resolved}>`;
+      } catch (error) {
+        const tableName = table.config?.name ?? 'unknown';
+        const columnName = column?.name ?? 'unknown';
+        throw new Error(`[ExpressionBuilder] Failed to resolve URI for ${tableName}.${columnName}: ${error}`);
+      }
+    }
+    if (str.startsWith('<')) return str;
+    
+    try {
+      // Pass context as parameter, not internal state
+      const context = this.getUriContext();
+      const resolved = this.uriResolver.resolveReference(str, column, context);
+      return `<${resolved}>`;
+    } catch (e) {
+      const tableName = table.config?.name ?? 'unknown';
+      const columnName = column?.name ?? 'unknown';
+      throw new Error(`[ExpressionBuilder] Failed to resolve URI for ${tableName}.${columnName}: ${e}`);
+    }
+  }
+
+  /**
+   * Format a subject comparison value, resolving UUID/relative IDs to full URIs.
+   */
+  private formatSubjectValue(value: any, table: PodTable, isVirtualId: boolean): string {
+    const raw = String(value ?? '');
+    if (raw.startsWith('<') && raw.endsWith('>')) {
+      const inner = raw.slice(1, -1);
+      if (this.uriResolver.isAbsoluteUri(inner)) {
+        return raw;
+      }
+      const normalizedInner = inner.startsWith('#') ? inner.slice(1) : inner;
+      const uri = this.uriResolver.resolveSubject(table, { id: normalizedInner });
+      return `<${uri}>`;
+    }
+    if (this.uriResolver.isAbsoluteUri(raw)) return `<${raw}>`;
+
+    const normalizedId = raw.startsWith('#') ? raw.slice(1) : raw;
+    const uri = this.uriResolver.resolveSubject(table, { id: normalizedId });
+    return `<${uri}>`;
   }
 
   private buildExpression(condition: QueryCondition | any, table: PodTable): string {
@@ -145,18 +237,23 @@ export class ExpressionBuilder {
       
       const variable = isSubject ? '?subject' : `?${colName}`;
 
+      // Check if this is a reference column
+      const isReference = this.isReferenceColumn(column);
+
       // Handle IN
       if (operator === 'IN' || operator === 'NOT IN') {
         if (!Array.isArray(valueChunk) || valueChunk.length === 0) {
           return operator === 'IN' ? 'false' : 'true';
         }
         const formattedValues = valueChunk.map((v: any) => {
-          if (isSubject && isVirtualId) {
-            // Convert id value to full URI
-            const uri = subjectResolver.resolve(table, { id: String(v) });
-            return `<${uri}>`;
+          if (isSubject) {
+            return this.formatSubjectValue(v, table, isVirtualId);
           }
-          return formatValue(v, column);
+          if (isReference) {
+            // Resolve reference URI
+            return this.formatReferenceValue(v, column, table);
+          }
+          return formatValue(v, column, this.uriResolver, this.getUriContext());
         }).join(', ');
         const expr = `${variable} IN(${formattedValues})`;
         return operator === 'NOT IN' ? `!(${expr})` : expr;
@@ -173,12 +270,13 @@ export class ExpressionBuilder {
 
       // Basic comparison
       let formattedValue: string;
-      if (isSubject && isVirtualId) {
-        // Convert id value to full URI for @id predicate
-        const uri = subjectResolver.resolve(table, { id: String(valueChunk) });
-        formattedValue = `<${uri}>`;
+      if (isSubject) {
+        formattedValue = this.formatSubjectValue(valueChunk, table, isVirtualId);
+      } else if (isReference) {
+        // Resolve reference URI
+        formattedValue = this.formatReferenceValue(valueChunk, column, table);
       } else {
-        formattedValue = formatValue(valueChunk, column) as string;
+        formattedValue = formatValue(valueChunk, column, this.uriResolver, this.getUriContext()) as string;
       }
       return `(${variable} ${operator} ${formattedValue})`;
     }
@@ -253,6 +351,9 @@ export class ExpressionBuilder {
     const isSubject = colName === 'subject' || colName === '@id' || isVirtualId;
     const variable = isSubject ? '?subject' : `?${colName}`;
 
+    // Check if this is a reference column
+    const isReference = this.isReferenceColumn(column);
+
     let value = condition.right;
 
     // Handle IN / NOT IN
@@ -261,15 +362,12 @@ export class ExpressionBuilder {
 
       const formattedValues = value.map((v: any) => {
          if (isSubject) {
-            // Convert id value to full URI
-            if (isVirtualId) {
-              const uri = subjectResolver.resolve(table, { id: String(v) });
-              return `<${uri}>`;
-            }
-            const str = String(v);
-            return str.startsWith('<') ? str : `<${str}>`;
+            return this.formatSubjectValue(v, table, isVirtualId);
          }
-         return formatValue(v, column);
+         if (isReference) {
+            return this.formatReferenceValue(v, column, table);
+         }
+         return formatValue(v, column, this.uriResolver, this.getUriContext());
       }).join(', ');
 
       const expr = `${variable} IN(${formattedValues})`;
@@ -304,8 +402,8 @@ export class ExpressionBuilder {
     if (condition.operator === 'BETWEEN' || condition.operator === 'NOT BETWEEN') {
       if (!Array.isArray(value) || value.length !== 2) return '';
       const [min, max] = value;
-      const left = formatValue(min, column);
-      const right = formatValue(max, column);
+      const left = formatValue(min, column, this.uriResolver, this.getUriContext());
+      const right = formatValue(max, column, this.uriResolver, this.getUriContext());
       const expr = `(${variable} >= ${left} && ${variable} <= ${right})`;
       return condition.operator === 'NOT BETWEEN' ? `!${expr}` : expr;
     }
@@ -314,16 +412,12 @@ export class ExpressionBuilder {
     let formattedValue;
 
     if (isSubject) {
-        // Convert id value to full URI for @id predicate
-        if (isVirtualId) {
-          const uri = subjectResolver.resolve(table, { id: String(value) });
-          formattedValue = `<${uri}>`;
-        } else {
-          const str = String(value);
-          formattedValue = str.startsWith('<') ? str : `<${str}>`;
-        }
+        formattedValue = this.formatSubjectValue(value, table, isVirtualId);
+    } else if (isReference) {
+        // Resolve reference URI
+        formattedValue = this.formatReferenceValue(value, column, table);
     } else {
-        formattedValue = formatValue(value, column);
+        formattedValue = formatValue(value, column, this.uriResolver, this.getUriContext());
     }
 
     return `(${variable} ${condition.operator} ${formattedValue})`;

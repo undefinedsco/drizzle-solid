@@ -15,6 +15,7 @@ import type { ExecutionStrategy, ExecutionStrategyFactory } from './types';
 import { LdpStrategy, type LdpStrategyDependencies } from './ldp-strategy';
 import { SparqlStrategy, type SparqlStrategyDependencies } from './sparql-strategy';
 import type { LdpExecutor } from './ldp-executor';
+import type { UriResolver } from '../uri';
 
 export interface StrategyFactoryDependencies {
   sparqlExecutor: ComunicaSPARQLExecutor;
@@ -22,6 +23,7 @@ export interface StrategyFactoryDependencies {
   sessionFetch: typeof fetch;
   podUrl: string;
   ldpExecutor: LdpExecutor;
+  uriResolver: UriResolver;
   getResolver: (table: PodTable) => ResourceResolver;
   listContainerResources: (containerUrl: string) => Promise<string[]>;
   findSubjectsForCondition: (
@@ -90,7 +92,8 @@ export class ExecutionStrategyFactoryImpl implements ExecutionStrategyFactory {
         sparqlExecutor: this.deps.sparqlExecutor,
         sparqlConverter: this.deps.sparqlConverter,
         sessionFetch: this.deps.sessionFetch,
-        podUrl: this.deps.podUrl
+        podUrl: this.deps.podUrl,
+        uriResolver: this.deps.uriResolver
       };
       this.sparqlStrategy = new SparqlStrategy(sparqlDeps);
     }

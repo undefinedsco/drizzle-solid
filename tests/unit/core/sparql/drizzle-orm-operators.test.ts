@@ -1,7 +1,7 @@
 import { describe, it, expect } from 'vitest';
 import { eq, and, or, gt, lt, gte, lte, inArray, isNull, isNotNull, ne } from 'drizzle-orm';
 import { ExpressionBuilder } from '@src/core/sparql/builder/expression-builder';
-import { podTable, string, int, id } from '@src/index';
+import { podTable, string, int, id, uri } from '@src/index';
 
 const table = podTable('users', {
   id: string('id').primaryKey().predicate('https://schema.org/identifier'),
@@ -27,9 +27,30 @@ const tableWithFragmentId = podTable('notes', {
   id: id(),
   content: string('content').predicate('https://schema.org/text'),
 }, {
-  base: 'http://localhost:3000/test/data/notes/',
+  base: 'http://localhost:3000/test/data/notes.ttl',  // fragment mode: single file
   subjectTemplate: '#{id}', // Explicit fragment mode
   type: 'https://schema.org/Note'
+});
+
+// Users table for reference target
+const usersTable = podTable('users_ref', {
+  id: id(),
+  name: string('name').predicate('https://schema.org/name'),
+}, {
+  base: 'http://localhost:3000/test/data/users/',
+  subjectTemplate: '{id}.ttl',
+  type: 'https://schema.org/Person'
+});
+
+// Posts table with reference column
+const postsTable = podTable('posts', {
+  id: id(),
+  title: string('title').predicate('https://schema.org/headline'),
+  authorId: uri('authorId').predicate('https://schema.org/author').reference(usersTable),
+}, {
+  base: 'http://localhost:3000/test/data/posts/',
+  subjectTemplate: '{id}.ttl',
+  type: 'https://schema.org/BlogPosting'
 });
 
 const builder = new ExpressionBuilder();
@@ -100,6 +121,26 @@ describe('ExpressionBuilder with drizzle-orm operators', () => {
     expect(result).toContain('IN');
   });
 
+  it('resolves reference UUIDs for eq() on uri columns', () => {
+    const uuid = '8f3c1b6a-2b4e-4b0a-9f2d-3c8f6dd9a111';
+    const condition = eq(postsTable.authorId, uuid);
+    const result = builder.buildWhereClause(condition, postsTable);
+
+    expect(result).toContain('?authorId');
+    expect(result).toContain(`<http://localhost:3000/test/data/users/${uuid}.ttl>`);
+    expect(result).not.toContain(`<${uuid}>`);
+  });
+
+  it('resolves reference UUIDs when already wrapped in angle brackets', () => {
+    const uuid = '5d3f1c6b-1a2e-4c3b-9f2d-3c8f6dd9a222';
+    const condition = eq(postsTable.authorId, `<${uuid}>`);
+    const result = builder.buildWhereClause(condition, postsTable);
+
+    expect(result).toContain('?authorId');
+    expect(result).toContain(`<http://localhost:3000/test/data/users/${uuid}.ttl>`);
+    expect(result).not.toContain(`<${uuid}>`);
+  });
+
   it('handles isNull() operator', () => {
     const condition = isNull(table.columns.name as any);
     const result = builder.buildWhereClause(condition, table);
@@ -135,7 +176,7 @@ describe('ExpressionBuilder with virtual id() column', () => {
     // Should use ?subject variable
     expect(result).toContain('?subject');
     // Should contain full URI with fragment
-    expect(result).toContain('<http://localhost:3000/test/data/notes/notes.ttl#note-123>');
+    expect(result).toContain('<http://localhost:3000/test/data/notes.ttl#note-123>');
     // Should NOT contain bare id
     expect(result).not.toContain('<note-123>');
   });

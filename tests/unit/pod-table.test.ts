@@ -61,6 +61,7 @@ describe('PodTable Tests', () => {
       podTable('bad_table', {
         name: string('name').predicate('http://example.org/name')
       }, {
+        base: '/data/bad_table.ttl',
         type: 'http://example.org/Test'
       });
     }).toThrow(/must have exactly one primary key/);
@@ -73,6 +74,7 @@ describe('PodTable Tests', () => {
         id2: string('id2').primaryKey().predicate('http://example.org/id2'),
         name: string('name').predicate('http://example.org/name')
       }, {
+        base: '/data/bad_table_multi.ttl',
         type: 'http://example.org/Test'
       });
     }).toThrow(/must have exactly one primary key/);

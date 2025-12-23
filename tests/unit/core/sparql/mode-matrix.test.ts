@@ -11,7 +11,7 @@ import { describe, it, expect, beforeEach } from 'vitest';
 import { SelectBuilder } from '../../../../src/core/sparql/builder/select-builder';
 import { UpdateBuilder } from '../../../../src/core/sparql/builder/update-builder';
 import { podTable, string, id } from '../../../../src/core/pod-table';
-import { subjectResolver, SubjectResolverImpl } from '../../../../src/core/subject';
+import { UriResolverImpl } from '../../../../src/core/uri';
 
 const ns = { prefix: 'schema', uri: 'https://schema.org/' };
 const prefixes = { schema: 'https://schema.org/' };
@@ -19,11 +19,12 @@ const prefixes = { schema: 'https://schema.org/' };
 describe('Mode Matrix - Complete Coverage', () => {
   let selectBuilder: SelectBuilder;
   let updateBuilder: UpdateBuilder;
+  let resolver: UriResolverImpl;
 
   beforeEach(() => {
-    selectBuilder = new SelectBuilder(prefixes);
-    updateBuilder = new UpdateBuilder(prefixes);
-    (subjectResolver as SubjectResolverImpl).setPodUrl('https://pod.example');
+    resolver = new UriResolverImpl('https://pod.example');
+    selectBuilder = new SelectBuilder(prefixes, resolver);
+    updateBuilder = new UpdateBuilder(prefixes, resolver);
   });
 
   // ==========================================

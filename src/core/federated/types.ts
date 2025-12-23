@@ -4,7 +4,7 @@
  * 联邦查询的类型定义
  */
 
-import type { PodSchema, PodTable } from '../pod-table';
+import type { SolidSchema, PodTable } from '../pod-table';
 
 /**
  * 联邦查询错误
@@ -80,7 +80,7 @@ export interface FederatedQueryContext {
   relationName: string;
   
   /** 目标 schema */
-  targetSchema: PodSchema<any>;
+  targetSchema: SolidSchema<any>;
   
   /** 发现到的位置列表 */
   locations: DiscoveredLocation[];

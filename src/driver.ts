@@ -14,6 +14,12 @@ export interface SolidDrizzleConfig<TSchema extends Record<string, unknown> = Re
     /** 通道偏好顺序，默认 ['streaming-http', 'websocket'] */
     preferredChannels?: ChannelType[];
   };
+  /** Disable Solid Interop discovery (optional) */
+  disableInteropDiscovery?: boolean;
+  /**
+   * 是否自动连接到 Pod（默认 false，按需延迟连接）
+   */
+  autoConnect?: boolean;
 }
 
 // 主要的 drizzle 函数 - 接受 Inrupt Session
@@ -30,11 +36,14 @@ export function drizzle<TSchema extends Record<string, unknown> = Record<string,
   const dialectConfig: PodDialectConfig = {
     session,
     preferredChannels: config?.notifications?.preferredChannels,
+    disableInteropDiscovery: config?.disableInteropDiscovery,
   };
   const dialect = new PodDialect(dialectConfig);
   
-  // 自动连接到Pod
-  dialect.connect().catch(console.error);
+  // 可选：自动连接到 Pod
+  if (config?.autoConnect) {
+    dialect.connect().catch(console.error);
+  }
   
   // 如果有 schema，设置表注册表（用于 URI 引用自动补全）
   if (config?.schema) {

@@ -10,10 +10,42 @@
  * 使其可被爬虫和其他应用发现。
  */
 
-import { drizzle, podTable, id, string, boolean, ProfileManager, eq } from '../src';
-import type { HookContext } from '../src';
-import { getAuthenticatedSession, getPodBaseUrl } from './utils/auth';
+import { drizzle, podTable, id, string, boolean, ProfileManager, eq } from 'drizzle-solid';
+import type { HookContext } from 'drizzle-solid';
 import { Session } from '@inrupt/solid-client-authn-node';
+import { config as loadEnv } from 'dotenv';
+
+loadEnv();
+loadEnv({ path: '.env.local', override: true });
+
+async function getAuthenticatedSession(): Promise<Session> {
+  const session = new Session();
+  const clientId = process.env.SOLID_CLIENT_ID;
+  const clientSecret = process.env.SOLID_CLIENT_SECRET;
+  const oidcIssuer = process.env.SOLID_OIDC_ISSUER || 'http://localhost:3000/';
+
+  if (!clientId || !clientSecret) {
+    throw new Error('Missing SOLID_CLIENT_ID or SOLID_CLIENT_SECRET');
+  }
+
+  await session.login({
+    clientId,
+    clientSecret,
+    oidcIssuer,
+    tokenType: 'DPoP'
+  });
+
+  if (!session.info.isLoggedIn) {
+    throw new Error('Login failed');
+  }
+
+  return session;
+}
+
+function getPodBaseUrl(session: Session): string {
+  if (!session.info.webId) throw new Error('No WebID');
+  return session.info.webId.split('profile')[0];
+}
 
 // FOAF:made 谓词 - 用于表示"某人创建了某物"
 const FOAF_MADE = 'http://xmlns.com/foaf/0.1/made';

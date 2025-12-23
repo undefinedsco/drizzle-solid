@@ -6,6 +6,7 @@ import { vi, describe, it, expect, beforeEach } from 'vitest';
 import { TypeIndexDiscovery } from '../../../../src/core/discovery';
 import { TypeIndexManager } from '../../../../src/core/typeindex-manager';
 import { podTable, string, id } from '../../../../src/core/pod-table';
+import { UriResolverImpl } from '../../../../src/core/uri';
 
 // Mock TypeIndexManager class (not the instance)
 vi.mock('../../../../src/core/typeindex-manager');
@@ -16,6 +17,7 @@ const ns = { prefix: 'schema', uri: 'https://schema.org/' };
 describe('TypeIndexDiscovery', () => {
   let discovery: TypeIndexDiscovery;
   let mockManager: any;
+  let resolver: UriResolverImpl;
 
   beforeEach(() => {
     vi.clearAllMocks();
@@ -28,9 +30,11 @@ describe('TypeIndexDiscovery', () => {
       createTypeIndex: vi.fn(),
     };
 
+    resolver = new UriResolverImpl('https://pod.example');
     discovery = new TypeIndexDiscovery(
       mockManager,
-      'https://pod.example'
+      'https://pod.example',
+      resolver
     );
   });
 

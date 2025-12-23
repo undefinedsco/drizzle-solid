@@ -1,5 +1,6 @@
 import { PodTable } from '../pod-table';
 import { DataDiscovery, DataLocation, DiscoverOptions, RegisterOptions, DataRegistrationInfo, ShapeInfo } from './types';
+import { InteropDiscovery } from './interop-discovery';
 
 /**
  * 按 container 合并多个 DataLocation
@@ -34,18 +35,25 @@ export class CompositeDiscovery implements DataDiscovery {
   constructor(private strategies: DataDiscovery[]) {}
 
   async register(table: PodTable, options?: RegisterOptions): Promise<void> {
-    // Register mainly with the first strategy (usually TypeIndex) as default
-    // or try all until one succeeds?
-    // For now, we use the first one that doesn't fail.
+    // Try registering with all strategies; succeed if any strategy succeeds.
+    const errors: unknown[] = [];
+    let registered = false;
     for (const strategy of this.strategies) {
+      if (strategy instanceof InteropDiscovery && !options?.registryPath) {
+        continue;
+      }
       try {
         await strategy.register(table, options);
-        return; // Success
+        registered = true;
       } catch (e) {
+        errors.push(e);
         console.warn('Registration failed with strategy, trying next:', e);
       }
     }
-    throw new Error('Failed to register table with any discovery strategy');
+    if (!registered) {
+      const message = errors.length > 0 ? ` Errors: ${errors.map(String).join('; ')}` : '';
+      throw new Error(`Failed to register table with any discovery strategy.${message}`);
+    }
   }
 
   async discover(rdfClass: string, options?: DiscoverOptions): Promise<DataLocation[]> {
