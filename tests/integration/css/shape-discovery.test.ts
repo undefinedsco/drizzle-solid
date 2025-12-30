@@ -259,7 +259,7 @@ describe('CSS integration: Shape Discovery and Table Generation', () => {
         priority: int('priority').predicate('http://example.org/priority')
       }, {
         type: testType,
-        containerPath: `${containerUrl}data/`,
+        base: `${containerUrl}data/`,
         typeIndex: 'private'
       });
 
@@ -341,7 +341,7 @@ describe('CSS integration: Shape Discovery and Table Generation', () => {
         inStock: boolean('inStock').predicate('http://schema.org/inStock')
       }, {
         type: testType,
-        containerPath: productsPath,
+        base: productsPath,
         typeIndex: 'private'
       });
 

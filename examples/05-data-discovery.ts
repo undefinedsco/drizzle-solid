@@ -81,6 +81,7 @@ async function initDiscovery(session: Session) {
     name: string('name').predicate('http://schema.org/name')
   }, {
     type: 'https://schema.org/Person',
+    base: personContainer,
     containerPath: personContainer,
     saiRegistryPath: registryPath
   });

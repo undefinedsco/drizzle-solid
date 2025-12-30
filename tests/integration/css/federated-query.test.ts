@@ -17,12 +17,14 @@ describe('CSS integration: Federated Query', () => {
   let bobPodBase: string;
 
   // Alice's posts table (schema only, for federated queries)
+  // Note: base is a placeholder - actual URL is discovered via TypeIndex at runtime
   const posts = podTable('posts', {
     id: id(),
     title: string('title').predicate('https://schema.org/headline'),
     content: string('content').predicate('https://schema.org/content'),
   }, {
     type: 'https://schema.org/BlogPosting',
+    base: '/federated-test/posts/', // Placeholder, will be overridden by discovery
     typeIndex: false,
   });
 
@@ -33,6 +35,7 @@ describe('CSS integration: Federated Query', () => {
     webId: string('webId').predicate('https://schema.org/identifier'),
   }, {
     type: 'https://schema.org/Person',
+    base: '/federated-test/friends/', // Placeholder
     typeIndex: false,
   });
 

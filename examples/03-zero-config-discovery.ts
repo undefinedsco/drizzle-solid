@@ -12,7 +12,7 @@ import { drizzle, podTable, string, datetime, uri, id } from 'drizzle-solid';
 import { Session } from '@inrupt/solid-client-authn-node';
 
 // 1. 定义 Schema
-// 注意：没有 'base' 属性！只有 'typeIndex: private'。
+// 注意：'base' 是占位路径，实际 URL 会在运行时通过 TypeIndex/SAI 发现。
 // 这告诉 Drizzle："去网络上找这个类型的数据，别问我在哪。"
 export const messageTable = podTable('message', {
   id: id(), // 必须有主键
@@ -21,8 +21,9 @@ export const messageTable = podTable('message', {
   createdAt: datetime('createdAt').predicate('http://schema.org/dateCreated')
 }, {
   type: 'http://schema.org/Message',
+  base: '/data/chat/',     // Placeholder path - actual location discovered via TypeIndex
   typeIndex: 'private', 
-  autoRegister: false   // 我们是访客，不注册到自己的索引
+  autoRegister: false      // 我们是访客，不注册到自己的索引
 });
 
 // 2. Bob 的视角

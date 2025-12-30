@@ -12,7 +12,7 @@ export const getSaiTables = (podBase: string) => {
   const registrySet = podTable('set', {
     id: id(),
     hasAgentRegistry: uri('hasAgentRegistry').array().predicate('http://www.w3.org/ns/solid/interop#hasAgentRegistry'),
-  }, { type: INTEROP.RegistrySet, containerPath: registriesPath });
+  }, { type: INTEROP.RegistrySet, base: registriesPath, containerPath: registriesPath });
 
   const dataGrant = podTable('data-grant', {
     id: id(),
@@ -56,6 +56,7 @@ export async function setupSaiForExample(
     id: id(),
   }, {
     type: rdfClass,
+    base: dataContainerUrl,
     containerPath: dataContainerUrl,
     saiRegistryPath: sai.registriesPath
   });

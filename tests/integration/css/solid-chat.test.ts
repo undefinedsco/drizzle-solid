@@ -3,7 +3,7 @@ import { drizzle } from '../../../src/driver';
 import { createTestSession, createSecondSessionInstance, ensureContainer, grantAccess } from './helpers';
 import { podTable, string, id, uri, datetime } from '../../../src/core/pod-table';
 import { INTEROP } from '../../../src/core/discovery/interop-types';
-import { getSolidDataset, getThing, setUrl, setThing, saveSolidDatasetAt, addUrl } from '@inrupt/solid-client';
+// getSolidDataset, getThing, setUrl, setThing, saveSolidDatasetAt, addUrl - no longer needed, using PATCH directly
 
 // --- 1. 定义 Schema ---
 
@@ -15,8 +15,7 @@ const messageTable = podTable('message', {
   createdAt: datetime('createdAt').predicate('http://schema.org/dateCreated')
 }, {
   type: 'http://schema.org/Message',
-  // 关键：我们不硬编码 containerPath，让 Bob 通过 Discovery 找到它
-  // Alice 初始化时会显式指定路径
+  base: '/data/chat/message.ttl',  // Fragment mode - all messages in one file
   autoRegister: false 
 });
 
@@ -26,13 +25,14 @@ const getSaiTables = (podBase: string) => {
   const registriesPath = `${podBase}registries/chat/`;
   const agentRegistryPath = `${registriesPath}agents/`;
   const appRegResource = `${agentRegistryPath}chat-app.ttl`; // 专用的 chat app 注册文件
+  const registrySetResource = `${registriesPath}set.ttl`; // Fragment mode - explicit file path
 
   const registrySet = podTable('set', {
     id: id(),
     hasAgentRegistry: uri('hasAgentRegistry').array().predicate('http://www.w3.org/ns/solid/interop#hasAgentRegistry'),
   }, {
     type: INTEROP.RegistrySet,
-    containerPath: registriesPath
+    base: registrySetResource  // Fragment mode: explicit file path
   });
 
   const applicationRegistration = podTable('app-reg', {
@@ -186,24 +186,28 @@ describe('Solid Chat App Integration (Alice & Bob)', () => {
     const aliceProfileResource = aliceWebId.split('#')[0];
     const targetRegistrySetUrlAlice = `${saiAlice.registriesPath}set.ttl#${setIdAlice}`;
     
+    // 先删除所有旧的 hasRegistrySet 链接，再添加新的
+    const patchBodyAliceDelete = `
+      @prefix solid: <http://www.w3.org/ns/solid/terms#>.
+      @prefix interop: <${INTEROP.NS}>.
+      _:patch a solid:InsertDeletePatch;
+        solid:where { <${aliceWebId}> interop:hasRegistrySet ?old . };
+        solid:deletes { <${aliceWebId}> interop:hasRegistrySet ?old . } .
+    `;
     try {
-        let profileDs = await getSolidDataset(aliceProfileResource, { fetch: aliceSession.fetch });
-        let profileThing = getThing(profileDs, aliceWebId);
-        if (profileThing) {
-            profileThing = setUrl(profileThing, INTEROP.hasRegistrySet, targetRegistrySetUrlAlice);
-            profileDs = setThing(profileDs, profileThing);
-            await saveSolidDatasetAt(aliceProfileResource, profileDs, { fetch: aliceSession.fetch });
-        }
+      await aliceSession.fetch(aliceProfileResource, { method: 'PATCH', headers: { 'Content-Type': 'text/n3' }, body: patchBodyAliceDelete });
     } catch (e) {
-        console.warn('Alice Profile update failed, trying Patch...');
-        const patchBody = `
-          @prefix solid: <http://www.w3.org/ns/solid/terms#>.
-          @prefix interop: <${INTEROP.NS}>.
-          _:patch a solid:InsertDeletePatch;
-            solid:inserts { <${aliceWebId}> interop:hasRegistrySet <${targetRegistrySetUrlAlice}> . } .
-        `;
-        await aliceSession.fetch(aliceProfileResource, { method: 'PATCH', headers: { 'Content-Type': 'text/n3' }, body: patchBody });
+      // 如果没有旧数据，删除可能失败，忽略
     }
+    
+    // 添加新的 hasRegistrySet 链接
+    const patchBodyAlice = `
+      @prefix solid: <http://www.w3.org/ns/solid/terms#>.
+      @prefix interop: <${INTEROP.NS}>.
+      _:patch a solid:InsertDeletePatch;
+        solid:inserts { <${aliceWebId}> interop:hasRegistrySet <${targetRegistrySetUrlAlice}> . } .
+    `;
+    await aliceSession.fetch(aliceProfileResource, { method: 'PATCH', headers: { 'Content-Type': 'text/n3' }, body: patchBodyAlice });
 
     // Alice: 创建 Data Grant (记录在案)
     // ... (省略 Alice 侧详细 Grant 创建，为了测试 Bob 的发现，关键是 Bob 侧)
@@ -235,7 +239,22 @@ describe('Solid Chat App Integration (Alice & Bob)', () => {
     const bobProfileResource = bobWebId.split('#')[0];
     const targetRegistrySetUrlBob = `${saiBob.registriesPath}set.ttl#${setIdBob}`;
     
-    // 使用 Patch 更新 Bob Profile (复用之前的逻辑)
+    // 先删除所有旧的 hasRegistrySet 链接，再添加新的
+    // 这样可以避免残留数据导致 Discovery 找到错误的路径
+    const patchBodyBobDelete = `
+      @prefix solid: <http://www.w3.org/ns/solid/terms#>.
+      @prefix interop: <${INTEROP.NS}>.
+      _:patch a solid:InsertDeletePatch;
+        solid:where { <${bobWebId}> interop:hasRegistrySet ?old . };
+        solid:deletes { <${bobWebId}> interop:hasRegistrySet ?old . } .
+    `;
+    try {
+      await bobSession.fetch(bobProfileResource, { method: 'PATCH', headers: { 'Content-Type': 'text/n3' }, body: patchBodyBobDelete });
+    } catch (e) {
+      // 如果没有旧数据，删除可能失败，忽略
+    }
+    
+    // 添加新的 hasRegistrySet 链接
     const patchBodyBob = `
       @prefix solid: <http://www.w3.org/ns/solid/terms#>.
       @prefix interop: <${INTEROP.NS}>.
@@ -285,6 +304,7 @@ describe('Solid Chat App Integration (Alice & Bob)', () => {
     // 注意：我们需要让 Bob 的 messageTable 启用 typeIndex 发现
     const bobChatTable = podTable('message', { ...messageTable.columns }, {
         type: 'http://schema.org/Message',
+        base: '/data/chat/message.ttl',  // Placeholder - will be overwritten by discovery
         typeIndex: 'private', // 开启发现
         autoRegister: false
     });
