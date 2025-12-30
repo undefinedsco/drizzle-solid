@@ -32,3 +32,13 @@ export const SHAPETREES = {
   expectsType: 'http://www.w3.org/ns/shapetrees#expectsType',
   shape: 'http://www.w3.org/ns/shapetrees#shape',
 } as const;
+
+/**
+ * Undefineds.co vocabulary extensions for Solid
+ */
+export const UDFS = {
+  NS: 'https://vocab.undefineds.co/',
+  
+  // Properties
+  subjectTemplate: 'https://vocab.undefineds.co/subjectTemplate',
+} as const;

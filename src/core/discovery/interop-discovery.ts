@@ -1,13 +1,14 @@
 import { PodTable } from '../pod-table';
 import { DataDiscovery, DataLocation, DiscoverOptions, DataRegistrationInfo, RegisterOptions, ShapeInfo } from './types';
-import { INTEROP, SHAPETREES } from './interop-types';
+import { INTEROP, SHAPETREES, UDFS } from './interop-types';
 import { registrySetSchema, dataRegistrySchema, dataRegistrationSchema, accessGrantSchema, dataGrantSchema, applicationRegistrationSchema } from './interop-tables';
 import { getPredicateForColumn } from '../sparql/helpers';
-import { getSolidDataset, getThing, getUrl, getUrlAll, getThingAll, createThing, setThing, addUrl, saveSolidDatasetAt, createContainerAt, setUrl, setDatetime, createSolidDataset } from '@inrupt/solid-client';
+import { getSolidDataset, getThing, getUrl, getUrlAll, getThingAll, createThing, setThing, addUrl, saveSolidDatasetAt, createContainerAt, setUrl, setDatetime, createSolidDataset, setStringNoLocale, getStringNoLocale } from '@inrupt/solid-client';
 
 // 内部类型：原始发现结果（未按 container 合并）
 interface RawDiscoveryResult {
   container: string;
+  subjectTemplate?: string;
   shape?: string;
   shapeTree?: string;
   registeredBy?: string;
@@ -215,6 +216,12 @@ export class InteropDiscovery implements DataDiscovery {
       registrationThing = setDatetime(registrationThing, 'http://www.w3.org/ns/solid/interop#registeredAt', new Date());
       registrationThing = setUrl(registrationThing, INTEROP.registeredShapeTree, shapeTreeUrl);
       
+      // Add subjectTemplate (UDFS extension)
+      const subjectTemplate = table.getSubjectTemplate();
+      if (subjectTemplate) {
+        registrationThing = setStringNoLocale(registrationThing, UDFS.subjectTemplate, subjectTemplate);
+      }
+      
       // 6. Save Registration Resource (contains both DataRegistration and ShapeTree)
       // First try to get existing dataset, otherwise create a new empty one via save
       let existingDataset;
@@ -235,12 +242,16 @@ export class InteropDiscovery implements DataDiscovery {
         let updatedRegistration = existingRegistration;
         const existingBy = getUrl(existingRegistration, INTEROP.registeredBy);
         const existingShapeTree = getUrl(existingRegistration, INTEROP.registeredShapeTree);
+        const existingSubjectTemplate = getStringNoLocale(existingRegistration, UDFS.subjectTemplate);
 
         if (!existingBy) {
           updatedRegistration = setUrl(updatedRegistration, INTEROP.registeredBy, registeredBy);
         }
         if (!existingShapeTree) {
           updatedRegistration = setUrl(updatedRegistration, INTEROP.registeredShapeTree, shapeTreeUrl);
+        }
+        if (!existingSubjectTemplate && subjectTemplate) {
+          updatedRegistration = setStringNoLocale(updatedRegistration, UDFS.subjectTemplate, subjectTemplate);
         }
         if (updatedRegistration !== existingRegistration) {
           datasetToSave = setThing(datasetToSave, updatedRegistration);
@@ -345,10 +356,15 @@ export class InteropDiscovery implements DataDiscovery {
         if (shapeInfo && !existing.shapes.some(s => s.url === shapeInfo.url)) {
           existing.shapes.push(shapeInfo);
         }
+        // Use subjectTemplate from first result that has it
+        if (!existing.subjectTemplate && raw.subjectTemplate) {
+          existing.subjectTemplate = raw.subjectTemplate;
+        }
       } else {
         // 新 container
         containerMap.set(raw.container, {
           container: raw.container,
+          subjectTemplate: raw.subjectTemplate,
           shapes: shapeInfo ? [shapeInfo] : [],
           source: raw.source
         });
@@ -396,6 +412,9 @@ export class InteropDiscovery implements DataDiscovery {
              const registeredByPred = getPredicateForColumn(dataRegistrationSchema.columns.registeredBy, dataRegistrationSchema);
              const registeredBy = getUrl(registrationThing, registeredByPred);
 
+             // Get subjectTemplate (UDFS extension)
+             const subjectTemplate = getStringNoLocale(registrationThing, UDFS.subjectTemplate) ?? undefined;
+
              // Filter by appId if specified
              if (options?.appId && registeredBy !== options.appId) {
                continue;
@@ -408,6 +427,7 @@ export class InteropDiscovery implements DataDiscovery {
                results.push({
                  container: registrationUrl, 
                  source: 'interop',
+                 subjectTemplate,
                  shapeTree: shapeTreeUrl,
                  shape: shapeTreeInfo?.shape,
                  registeredBy: registeredBy ?? undefined
@@ -632,6 +652,9 @@ export class InteropDiscovery implements DataDiscovery {
                   const registeredAtStr = getUrl(registrationThing, registeredAtPred);
                   const registeredAt = registeredAtStr ? new Date(registeredAtStr) : undefined;
 
+                  // Get subjectTemplate (UDFS extension)
+                  const subjectTemplate = getStringNoLocale(registrationThing, UDFS.subjectTemplate) ?? undefined;
+
                   const shapeTreeInfo = await this.resolveShapeTree(shapeTreeUrl);
 
                   registrations.push({
@@ -640,6 +663,7 @@ export class InteropDiscovery implements DataDiscovery {
                     rdfClass: shapeTreeInfo?.expectsType ?? '',
                     shapeTree: shapeTreeUrl,
                     shape: shapeTreeInfo?.shape,
+                    subjectTemplate,
                     registeredBy: registeredBy ?? undefined,
                     registeredAt
                   });

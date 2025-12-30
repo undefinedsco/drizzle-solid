@@ -44,8 +44,11 @@ export interface DataLocation {
   /** 数据容器 URL - 唯一标识数据位置 */
   container: string;
 
-  /** 主体 URI 模式 (可选) */
+  /** 主体 URI 模式 (可选) - deprecated, use subjectTemplate */
   subjectPattern?: string;
+
+  /** Subject URI 模板 (e.g., "{id}.ttl" for document mode, "#{id}" for fragment mode) */
+  subjectTemplate?: string;
 
   /** 可用的 Shape 列表（按注册顺序） */
   shapes: ShapeInfo[];
@@ -102,6 +105,9 @@ export interface DataRegistrationInfo {
 
   /** Shape URL - 实际的 SHACL Shape 定义 */
   shape?: string;
+
+  /** Subject URI 模板 (e.g., "{id}.ttl" for document mode, "#{id}" for fragment mode) */
+  subjectTemplate?: string;
 
   /** 注册此数据的应用/代理 */
   registeredBy?: string;

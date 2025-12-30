@@ -13,13 +13,13 @@ const getTestTables = (podBase: string) => {
   const registriesPath = `${podBase}registries/sai-clean/`;
   const agentRegistryPath = `${registriesPath}agents/`;
   
-  // Registry Set (separate file)
+  // Registry Set (separate file) - Fragment mode
   const registrySet = podTable('set', {
     id: id(),
     hasAgentRegistry: uri('hasAgentRegistry').array().predicate('http://www.w3.org/ns/solid/interop#hasAgentRegistry'),
   }, {
     type: INTEROP.RegistrySet,
-    containerPath: registriesPath
+    base: `${registriesPath}set.ttl`
   });
 
   // Shared resource for App Registration + Grants
@@ -62,6 +62,7 @@ const noteTable = podTable('note', {
   content: string('content').predicate('http://schema.org/text'),
 }, {
   type: 'http://schema.org/Note_SAI_Test',
+  base: '/data/notes/',  // Placeholder path - actual location discovered via TypeIndex/SAI
   typeIndex: 'private', // Enable discovery mechanism
   autoRegister: false // Disable TypeIndex registration to force Interop Discovery
 });
@@ -169,6 +170,7 @@ describe('SAI Interoperability (Dual User)', () => {
     
     // 4.1 Create RegistrySet
     await ensureContainer(bobSession, 'registries/');
+    await ensureContainer(bobSession, 'registries/sai-clean/');
     
     // Use FIXED ID to prevent profile pollution
     const setId = 'set-test-fixed';

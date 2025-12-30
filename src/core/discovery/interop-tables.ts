@@ -1,5 +1,5 @@
 import { solidSchema, string, uri, id } from '../pod-table';
-import { INTEROP } from './interop-types';
+import { INTEROP, UDFS } from './interop-types';
 
 const ns = { prefix: 'interop', uri: INTEROP.NS };
 
@@ -28,6 +28,8 @@ export const dataRegistrationSchema = solidSchema('dataRegistration', {
   registeredShapeTree: uri('registeredShapeTree').predicate(INTEROP.registeredShapeTree),
   registeredBy: uri('registeredBy').predicate(INTEROP.registeredBy),
   registeredAt: string('registeredAt').predicate('http://www.w3.org/ns/solid/interop#registeredAt'),
+  // UDFS extension: subject template for data instances
+  subjectTemplate: string('subjectTemplate').predicate(UDFS.subjectTemplate),
 }, {
   type: INTEROP.DataRegistration,
   namespace: ns

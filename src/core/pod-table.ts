@@ -1278,6 +1278,7 @@ export class PodTable<TColumns extends Record<string, PodColumnBase<any, any, an
     const normalizedPath = this.normalizeResourcePath(normalizedInput);
 
     if (normalizedPath.endsWith('/')) {
+      // Container/directory path - for Document mode
       const containerPath = this.ensureTrailingSlash(normalizedPath);
       return {
         resourcePath: containerPath,
@@ -1285,6 +1286,7 @@ export class PodTable<TColumns extends Record<string, PodColumnBase<any, any, an
       };
     }
 
+    // File path - for Fragment mode
     const containerPath = this.ensureTrailingSlash(this.deriveContainerPath(normalizedPath));
     return {
       resourcePath: normalizedPath,
@@ -1397,6 +1399,29 @@ export class PodTable<TColumns extends Record<string, PodColumnBase<any, any, an
       }
     }
     this.mapping = this.buildTableMapping();
+  }
+
+  /**
+   * 动态更新 subjectTemplate（SAI DataRegistration 自动发现等场景）
+   */
+  setSubjectTemplate(template: string): void {
+    this.subjectTemplate = template;
+    this.hasCustomSubjectTemplate = true;
+    this.config.subjectTemplate = template;
+    if ((this as any)._?.config) {
+      (this as any)._!.config.subjectTemplate = template;
+    }
+    this.mapping = this.buildTableMapping();
+  }
+
+  /**
+   * 动态设置 SPARQL endpoint（自动发现等场景）
+   */
+  setSparqlEndpoint(endpoint: string): void {
+    this.sparqlEndpoint = endpoint;
+    if (!this.resourceMode) {
+      this.resourceMode = 'sparql';
+    }
   }
 
   // 获取所有列
