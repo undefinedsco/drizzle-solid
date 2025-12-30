@@ -90,4 +90,43 @@ describe('PodTable Tests', () => {
     expect(typeof generated).toBe('string');
     expect(generated.length).toBeGreaterThan(10); // NanoID is usually ~21 chars
   });
+
+  test('setSubjectTemplate should update template and mark as custom', () => {
+    const table = podTable('products', {
+      id: id(),
+      name: string('name').predicate('http://schema.org/name'),
+    }, {
+      base: '/data/products/',
+      type: 'http://schema.org/Product'
+    });
+
+    // Initial template is auto-generated
+    const initialTemplate = table.getSubjectTemplate();
+    expect(initialTemplate).toBe('{id}.ttl'); // Document mode default
+
+    // Set custom template
+    table.setSubjectTemplate('product-{id}.ttl');
+    expect(table.getSubjectTemplate()).toBe('product-{id}.ttl');
+    
+    // Verify setBase doesn't override custom template
+    table.setBase('/data/new-products/');
+    expect(table.getSubjectTemplate()).toBe('product-{id}.ttl');
+  });
+
+  test('setSparqlEndpoint should set endpoint and enable sparql mode', () => {
+    const table = podTable('users', {
+      id: id(),
+      name: string('name').predicate('http://schema.org/name'),
+    }, {
+      base: '/data/users/',
+      type: 'http://schema.org/Person'
+    });
+
+    // Initially no SPARQL endpoint
+    expect(table.getSparqlEndpoint()).toBeUndefined();
+
+    // Set SPARQL endpoint
+    table.setSparqlEndpoint('/data/users/-/sparql');
+    expect(table.getSparqlEndpoint()).toBe('/data/users/-/sparql');
+  });
 });

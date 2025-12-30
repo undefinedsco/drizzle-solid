@@ -568,11 +568,6 @@ export class PodDatabase<TSchema extends Record<string, unknown> = Record<string
       return iriOverride;
     }
 
-    const config = this.dialect.getConfig();
-    const podUrl = config.webId
-      ? new URL(config.webId).origin
-      : config.podUrl;
-    
     const base = table.config.base || '';
     
     // 如果 base 已经是绝对 URL，直接使用
@@ -580,8 +575,13 @@ export class PodDatabase<TSchema extends Record<string, unknown> = Record<string
       return base;
     }
     
-    // 否则拼接到 podUrl
-    return `${podUrl}${base.startsWith('/') ? '' : '/'}${base}`;
+    // 使用 dialect.getPodUrl() 获取正确的 Pod 根路径
+    // 这确保与其他 URL 解析逻辑一致（如 TypeIndex、SPARQL endpoint 等）
+    const podUrl = this.dialect.getPodUrl();
+    const baseUrl = podUrl.endsWith('/') ? podUrl : `${podUrl}/`;
+    const relativeBase = base.startsWith('/') ? base.slice(1) : base;
+    
+    return `${baseUrl}${relativeBase}`;
   }
 
   // 获取连接配置

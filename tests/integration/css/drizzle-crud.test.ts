@@ -442,7 +442,26 @@ describe('CSS integration: drizzle CRUD', () => {
   });
 
   test('supports aggregate selections with count and numeric reducers', async () => {
-    await session.fetch(resourceUrl, { method: 'DELETE' }).catch(() => undefined);
+    // 使用独立的资源路径，避免与其他测试冲突
+    const isolatedResourceUrl = `${containerUrl}aggregate-test.ttl`;
+    // 清理旧数据
+    await session.fetch(isolatedResourceUrl, { method: 'DELETE' }).catch(() => undefined);
+    
+    // 从 containerUrl 推导相对路径 (containerUrl 已经包含了时间戳隔离)
+    const podBase = containerUrl.split('/').slice(0, 4).join('/') + '/'; // http://localhost:3000/test/
+    const relativePath = containerUrl.replace(podBase, '/') + 'aggregate-test.ttl';
+    
+    const isolatedTable = podTable('aggregate-profiles', {
+      id: string('id').primaryKey().predicate('https://schema.org/identifier'),
+      name: string('name').notNull().predicate('https://schema.org/name'),
+      age: int('age').predicate('https://schema.org/age'),
+      createdAt: date('createdAt').notNull().predicate('https://schema.org/dateCreated')
+    }, {
+      base: relativePath,
+      type: 'https://schema.org/Person',
+      namespace: schemaNamespace,
+      typeIndex: undefined
+    });
 
     const batchBase = `profile-summary-${Date.now()}`;
     const records = [
@@ -452,17 +471,17 @@ describe('CSS integration: drizzle CRUD', () => {
       { id: `${batchBase}-4`, name: 'Aggregate Missing', createdAt: new Date(Date.now() - 1_000) }
     ];
 
-    await db.insert(profileTable).values(records);
+    await db.insert(isolatedTable).values(records);
 
     const aggregates = await db
       .select({
         total: count(),
-        withAge: count(profileTable.age),
-        maxAge: max(profileTable.age),
-        avgAge: avg(profileTable.age)
+        withAge: count(isolatedTable.age),
+        maxAge: max(isolatedTable.age),
+        avgAge: avg(isolatedTable.age)
       })
-      .from(profileTable)
-      .where(like(profileTable.name, 'Aggregate%'));
+      .from(isolatedTable)
+      .where(like(isolatedTable.name, 'Aggregate%'));
 
     expect(aggregates).toHaveLength(1);
     const summary = aggregates[0];
@@ -472,7 +491,7 @@ describe('CSS integration: drizzle CRUD', () => {
     expect(Number(summary?.maxAge)).toBe(42);
     expect(Number(summary?.avgAge)).toBeCloseTo((21 + 29 + 42) / 3, 5);
 
-    await session.fetch(resourceUrl, { method: 'DELETE' }).catch(() => undefined);
+    await session.fetch(isolatedResourceUrl, { method: 'DELETE' }).catch(() => undefined);
   });
 
   test('supports joins across tables', async () => {

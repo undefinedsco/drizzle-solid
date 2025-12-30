@@ -175,6 +175,9 @@ export {
   lt,
   lte,
   like,
+  ilike,
+  between,
+  notBetween,
   regex,
   inArray,
   notInArray,
@@ -183,6 +186,8 @@ export {
   and,
   or,
   not,
+  exists,
+  notExists,
   conditions,
   type QueryCondition
 } from './core/query-conditions';

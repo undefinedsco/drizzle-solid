@@ -384,7 +384,8 @@ export class PodDialect {
       const isContainer = configuredResourcePath.endsWith('/');
       
       if (isContainer) {
-        // Container mode: resourceUrl IS the container
+        // Document mode: resourceUrl is the container
+        // Actual resource files are determined by subjectTemplate at query time
         const containerUrl = absoluteResource.endsWith('/') ? absoluteResource : `${absoluteResource}/`;
         return {
           containerUrl,
@@ -392,7 +393,7 @@ export class PodDialect {
         };
       }
       
-      // File mode: derive container from resource path
+      // File mode (Fragment mode or explicit file path): derive container from resource path
       const normalizedResource = this.normalizeResourceUrl(absoluteResource);
       const lastSlash = normalizedResource.lastIndexOf('/');
       const containerUrl =
@@ -768,7 +769,7 @@ export class PodDialect {
 
   /**
    * 确保表有 resourcePath，如果没有则从 TypeIndex 自动发现
-   * 如果已有 resourcePath，检查是否与 TypeIndex 冲突
+   * 如果设置了 typeIndex，优先使用发现的位置（覆盖配置的 base）
    */
   private async ensureTableResourcePath(table: PodTable): Promise<void> {
     const rdfClass = typeof table.config.type === 'string'
@@ -780,20 +781,21 @@ export class PodDialect {
       (typeof (table as any).getResourcePath === 'function' && (table as any).getResourcePath()) ||
       (table as any).config?.resourcePath;
 
-    if (configuredResourcePath && configuredResourcePath.trim().length > 0) {
-      // 已经有 resourcePath，无需 TypeIndex 检查，直接使用配置
-      return;
-    }
-
-    // 没有 resourcePath，且未要求使用 TypeIndex，直接使用默认容器
+    // 如果没有设置 typeIndex，使用配置的 resourcePath（如果有）
     if (!table.config.typeIndex) {
+      if (configuredResourcePath && configuredResourcePath.trim().length > 0) {
+        // 已经有 resourcePath，直接使用配置
+        return;
+      }
+      // 没有 resourcePath，使用默认容器
       console.log(`[AutoDiscover] Table ${table.config.name} has no resourcePath, using default container path`);
       (table as any).config.containerPath = '/data/';
       return;
     }
 
-    // 没有 resourcePath，从 TypeIndex 自动发现
-    console.log(`[AutoDiscover] Table ${table.config.name} has no resourcePath, discovering from TypeIndex...`);
+    // 设置了 typeIndex，尝试从 TypeIndex/SAI 发现位置
+    // 发现的位置会覆盖配置的 base，实现动态路由
+    console.log(`[AutoDiscover] Table ${table.config.name} has typeIndex enabled, discovering from TypeIndex/SAI...`);
 
     try {
       const locations = await this.discovery.discover(rdfClass);
@@ -810,20 +812,29 @@ export class PodDialect {
            containerPath += '/';
         }
 
-        // 推断 resourcePath
-        // 如果是 Document 模式，resourcePath = container + name.ttl
-        // 如果是 Fragment 模式，resourcePath = container (即文件本身)
-        // DataLocation 语义上 container 指的是"包含数据的容器"，
-        // 对于 Fragment 模式，它可能指向 .ttl 文件本身吗？
-        // 回看 TypeIndexDiscovery.discover，它返回的是 instanceContainer ?? containerPath
-        // TypeIndexEntry 中 instanceContainer 通常指目录。
-        // 如果是 instance (单文件模式)，我们目前 TypeIndexDiscovery 还没完美处理 instance 字段
-        // 但根据 TypeIndexDiscovery.ts 实现:
-        // locations.push({ container: entry.instanceContainer ?? entry.containerPath ... })
-        
-        const resourcePath = `${containerPath}${table.config.name}.ttl`;
+        // 如果发现了 subjectTemplate，应用到表配置
+        if (location.subjectTemplate && typeof (table as any).setSubjectTemplate === 'function') {
+          (table as any).setSubjectTemplate(location.subjectTemplate);
+          console.log(`[AutoDiscover] ✓ Applied subjectTemplate from discovery: ${location.subjectTemplate}`);
+        }
 
-        console.log(`[AutoDiscover] ✓ Found resource path from TypeIndex: ${resourcePath}`);
+        // 推断 resourcePath
+        // 根据资源模式决定 resourcePath:
+        // - Document 模式：resourcePath = containerPath (每条记录独立文件，查询扫描整个容器)
+        // - Fragment 模式：resourcePath = containerPath + tableName.ttl (所有记录在同一文件)
+        const resourceMode = this.uriResolver.getResourceMode(table);
+        let resourcePath: string;
+        
+        if (resourceMode === 'document') {
+          // Document 模式：resourcePath 就是容器本身
+          // SELECT 查询会扫描容器下的所有 .ttl 文件
+          resourcePath = containerPath;
+        } else {
+          // Fragment 模式：resourcePath 指向单个文件
+          resourcePath = `${containerPath}${table.config.name}.ttl`;
+        }
+
+        console.log(`[AutoDiscover] ✓ Found resource path from TypeIndex: ${resourcePath} (mode: ${resourceMode})`);
 
         // 动态注入到表配置中
         // 使用 setBase 更新内部状态和 config.base，确保 SubjectResolver 能获取到正确路径
@@ -835,13 +846,54 @@ export class PodDialect {
             (table as any).config.resourcePath = resourcePath;
             (table as any).config.base = resourcePath;
         }
+
+        // 尝试自动发现 SPARQL endpoint
+        await this.tryDiscoverSparqlEndpoint(table, containerPath);
       } else {
-        // Discovery failed - do NOT fallback to /data/
+        // Discovery 没有找到位置
+        if (configuredResourcePath && configuredResourcePath.trim().length > 0) {
+          // 有配置的 resourcePath，使用它作为 fallback
+          console.log(`[AutoDiscover] No discovery result, using configured path: ${configuredResourcePath}`);
+          return;
+        }
+        // 没有配置的 resourcePath，抛出错误
         throw new Error(`[AutoDiscover] No data location found for type ${rdfClass}. Please ensure the data is registered in TypeIndex or SAI Registry.`);
       }
     } catch (error) {
+      // 发现过程出错
+      if (configuredResourcePath && configuredResourcePath.trim().length > 0) {
+        // 有配置的 resourcePath，使用它作为 fallback
+        console.warn('[AutoDiscover] Discovery process failed, using configured path:', configuredResourcePath);
+        return;
+      }
       console.warn('[AutoDiscover] Discovery process failed:', error);
       throw error; // Re-throw
+    }
+  }
+
+  /**
+   * 尝试自动发现 SPARQL endpoint
+   * 按约定：${base}/-/sparql
+   */
+  private async tryDiscoverSparqlEndpoint(table: PodTable, base: string): Promise<void> {
+    // 如果表已经配置了 sparqlEndpoint，跳过
+    if (table.getSparqlEndpoint()) {
+      return;
+    }
+
+    // 构建约定的 endpoint URL
+    const potentialEndpoint = `${base.replace(/\/$/, '')}/-/sparql`;
+    
+    try {
+      const response = await this.runtime.getFetch()(potentialEndpoint, { method: 'HEAD' });
+      if (response.ok) {
+        console.log(`[AutoDiscover] ✓ Found SPARQL endpoint: ${potentialEndpoint}`);
+        if (typeof (table as any).setSparqlEndpoint === 'function') {
+          (table as any).setSparqlEndpoint(potentialEndpoint);
+        }
+      }
+    } catch {
+      // SPARQL endpoint 不存在，继续使用 LDP 模式
     }
   }
 
@@ -1220,14 +1272,7 @@ export class PodDialect {
       const descriptor = this.resolveTableResource(table);
 
       if (descriptor.mode === 'sparql') {
-        // Probe endpoint with a lightweight ASK
-        // 尝试不带 LIMIT 的标准 ASK 查询
-        const ask = 'ASK WHERE { ?s ?p ?o }';
-        try {
-          await this.sparqlExecutor.executeQueryWithSource({ type: 'ASK', query: ask, prefixes: {} }, descriptor.endpoint);
-        } catch (askError) {
-          throw new Error(`SPARQL endpoint probe failed for ${descriptor.endpoint}: ${askError instanceof Error ? askError.message : String(askError)}`);
-        }
+        // No probe needed - if endpoint fails, the actual query will report the error
       } else {
         await this.ensureContainerExists(descriptor.containerUrl);
 
@@ -1503,7 +1548,8 @@ export class PodDialect {
     const resources: string[] = [];
 
     try {
-      // Query the container for ldp:contains relationships
+      // Query the container for ldp:contains relationships via SPARQL
+      // This is more reliable than parsing Turtle as it handles all serialization formats
       const sparql = {
         type: 'SELECT' as const,
         query: `
@@ -1527,29 +1573,7 @@ export class PodDialect {
         }
       }
     } catch (e) {
-      console.warn('[listContainerResources] SPARQL query failed, falling back to GET:', e);
-    }
-
-    // If SPARQL returned nothing or errored, attempt a GET-based parse as a secondary path
-    if (resources.length === 0) {
-      try {
-        const response = await this.runtime.getFetch()(normalizedUrl, {
-          method: 'GET',
-          headers: { 'Accept': 'text/turtle' }
-        });
-
-        if (response.ok) {
-          const turtle = await response.text();
-          // Simple regex to extract ldp:contains objects
-          const containsRegex = /<http:\/\/www\.w3\.org\/ns\/ldp#contains>\s*<([^>]+)>/g;
-          let match;
-          while ((match = containsRegex.exec(turtle)) !== null) {
-            resources.push(match[1]);
-          }
-        }
-      } catch (fallbackError) {
-        console.warn('[listContainerResources] Fallback GET also failed:', fallbackError);
-      }
+      console.warn('[listContainerResources] SPARQL query failed:', e);
     }
 
     return resources;
