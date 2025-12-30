@@ -111,7 +111,15 @@ export class SparqlStrategy implements ExecutionStrategy {
     }
 
     console.log('DEBUG: Generated SPARQL Query for SELECT:', sparqlQuery.query);
+    console.log('DEBUG: resourceUrl =', resourceUrl);
 
+    // Fast path: Direct fetch to SPARQL endpoint (bypass Comunica for speed)
+    // This is much faster than Comunica which does extra processing
+    if (resourceUrl.includes('/-/sparql')) {
+      return await this.executeDirectSparqlSelect(resourceUrl, sparqlQuery, plan);
+    }
+
+    // Fallback to Comunica for non-endpoint sources
     if (isSameOrigin(resourceUrl, this.podUrl)) {
       return await this.sparqlExecutor.executeQueryWithSource(sparqlQuery, resourceUrl);
     } else {
@@ -123,6 +131,116 @@ export class SparqlStrategy implements ExecutionStrategy {
       });
       return await unauthExecutor.executeQueryWithSource(sparqlQuery, resourceUrl);
     }
+  }
+
+  /**
+   * Execute SPARQL SELECT directly via fetch (fast path, bypasses Comunica)
+   */
+  private async executeDirectSparqlSelect(
+    endpoint: string,
+    sparqlQuery: SPARQLQuery,
+    plan: SelectQueryPlan
+  ): Promise<any[]> {
+    const fetchFn = this.getFetchForEndpoint(endpoint);
+
+    console.log('[SparqlStrategy] Direct fetch to SPARQL endpoint:', endpoint);
+
+    const response = await fetchFn(endpoint, {
+      method: 'POST',
+      headers: {
+        'Content-Type': 'application/sparql-query',
+        'Accept': 'application/sparql-results+json'
+      },
+      body: sparqlQuery.query
+    });
+
+    if (!response.ok) {
+      const text = await response.text().catch(() => '');
+      throw new Error(`SPARQL SELECT failed: ${response.status} ${response.statusText} - ${text}`);
+    }
+
+    const json = await response.json();
+    return this.parseSparqlResultsJson(json, plan);
+  }
+
+  /**
+   * Parse SPARQL Results JSON format into row objects
+   */
+  private parseSparqlResultsJson(json: any, plan: SelectQueryPlan): any[] {
+    const bindings = json?.results?.bindings || [];
+    
+    return bindings.map((binding: Record<string, any>) => {
+      const row: Record<string, any> = {};
+      
+      for (const [varName, termObj] of Object.entries(binding)) {
+        if (!termObj) continue;
+        
+        // Convert SPARQL result term to JS value
+        row[varName] = this.convertSparqlTerm(termObj);
+      }
+      
+      // Extract ID from subject URI if present
+      if (row.subject && plan.baseTable) {
+        const subjectUri = row.subject as string;
+        // Extract ID from URI like "http://pod/path/file.ttl#id" -> "id"
+        const hashIndex = subjectUri.lastIndexOf('#');
+        if (hashIndex !== -1) {
+          row.id = subjectUri.substring(hashIndex + 1);
+        } else {
+          // Or from "http://pod/path/id.ttl" -> "id"
+          const lastSlash = subjectUri.lastIndexOf('/');
+          const filename = subjectUri.substring(lastSlash + 1);
+          if (filename.endsWith('.ttl')) {
+            row.id = filename.slice(0, -4);
+          }
+        }
+        delete row.subject;
+      }
+      
+      return row;
+    });
+  }
+
+  /**
+   * Convert a SPARQL result term to a JavaScript value
+   */
+  private convertSparqlTerm(term: { type: string; value: string; datatype?: string }): any {
+    if (!term || !term.type) return null;
+    
+    const { type, value, datatype } = term;
+    
+    if (type === 'uri') {
+      return value;
+    }
+    
+    if (type === 'bnode') {
+      return `_:${value}`;
+    }
+    
+    if (type === 'literal') {
+      // Handle typed literals
+      if (datatype) {
+        if (datatype === 'http://www.w3.org/2001/XMLSchema#integer' ||
+            datatype === 'http://www.w3.org/2001/XMLSchema#int') {
+          return parseInt(value, 10);
+        }
+        if (datatype === 'http://www.w3.org/2001/XMLSchema#decimal' ||
+            datatype === 'http://www.w3.org/2001/XMLSchema#float' ||
+            datatype === 'http://www.w3.org/2001/XMLSchema#double') {
+          return parseFloat(value);
+        }
+        if (datatype === 'http://www.w3.org/2001/XMLSchema#boolean') {
+          return value === 'true' || value === '1';
+        }
+        if (datatype === 'http://www.w3.org/2001/XMLSchema#dateTime' ||
+            datatype === 'http://www.w3.org/2001/XMLSchema#date') {
+          return new Date(value);
+        }
+      }
+      return value;
+    }
+    
+    return value;
   }
 
   /**

@@ -494,4 +494,64 @@ describe('ASTToSPARQLConverter', () => {
       expect(insert.query).not.toContain('<Thread Subject>');
     });
   });
+
+  describe('select column optimization', () => {
+    it('should only include selected columns in WHERE patterns', () => {
+      // When selecting only specific columns, the SPARQL should not include OPTIONAL patterns for unselected columns
+      const ast = {
+        select: {
+          name: mockTable.columns.name
+        },
+        where: undefined,
+        limit: undefined,
+        offset: undefined
+      };
+
+      const result = converter.convertSelect(ast, mockTable);
+      
+      // Should include ?name in the query
+      expect(result.query).toContain('?name');
+      // Should NOT include ?email (not selected)
+      expect(result.query).not.toContain('?email');
+      // Should NOT include ?organization (not selected)
+      expect(result.query).not.toContain('?organization');
+    });
+
+    it('should include columns referenced in WHERE conditions even if not selected', () => {
+      const condition = eq(mockTable.columns.email, 'test@example.com');
+      const ast = {
+        select: {
+          name: mockTable.columns.name
+        },
+        where: condition,
+        limit: undefined,
+        offset: undefined
+      };
+
+      const result = converter.convertSelect(ast, mockTable);
+      
+      // Should include ?name (selected)
+      expect(result.query).toContain('?name');
+      // Should include ?email (used in WHERE)
+      expect(result.query).toContain('?email');
+      // Should NOT include ?organization (not selected, not in WHERE)
+      expect(result.query).not.toContain('?organization');
+    });
+
+    it('should include all columns when no specific columns are selected', () => {
+      const ast = {
+        select: undefined,
+        columns: '*',
+        where: undefined,
+        limit: undefined,
+        offset: undefined
+      };
+
+      const result = converter.convertSelect(ast, mockTable);
+      
+      // Should include all columns
+      expect(result.query).toContain('?name');
+      expect(result.query).toContain('?email');
+    });
+  });
 });

@@ -64,13 +64,22 @@ export class SelectBuilder {
       }));
     }
 
+    // Add GROUP BY clause
+    if (Array.isArray(ast.groupBy) && ast.groupBy.length > 0) {
+      selectQuery.group = ast.groupBy.map((col: string) => ({
+        expression: { termType: 'Variable', value: col }
+      }));
+    }
+
     if (ast.distinct) {
       selectQuery.distinct = true;
     }
 
+    const query = this.generator.stringify(selectQuery);
+
     return {
       type: 'SELECT',
-      query: this.generator.stringify(selectQuery),
+      query,
       prefixes: this.prefixes
     };
   }
@@ -89,6 +98,9 @@ export class SelectBuilder {
       })
       .filter((value): value is { column: string; direction: 'asc' | 'desc' } => !!value);
 
+    // Convert groupBy ColumnReference[] to column names for ast
+    const groupByColumns = plan.groupBy?.map((ref) => ref.column);
+
     const ast: any = {
       select: plan.select,
       columns: plan.selectAll ? '*' : undefined,
@@ -96,6 +108,7 @@ export class SelectBuilder {
       limit: plan.limit,
       offset: plan.offset,
       orderBy: orderByDescriptors,
+      groupBy: groupByColumns,
       distinct: plan.distinct
     };
 
@@ -165,7 +178,21 @@ export class SelectBuilder {
   // 构建 SELECT 变量 - 使用 sparqljs 格式
   private buildSelectVariables(ast: any, table: PodTable): any[] {
     const selectFields = ast.select;
-    const variables: any[] = [{ termType: 'Variable', value: 'subject' }];
+    const hasGroupBy = Array.isArray(ast.groupBy) && ast.groupBy.length > 0;
+    
+    // Check if all select fields are aggregate expressions
+    // In this case, the query is an implicit aggregate and ?subject should not be included
+    let allAggregates = false;
+    if (selectFields && typeof selectFields === 'object' && Object.keys(selectFields).length > 0) {
+      const fieldValues = Object.values(selectFields);
+      allAggregates = fieldValues.length > 0 && fieldValues.every((f) => isAggregateExpression(f));
+    }
+    
+    // When GROUP BY is present, only include ?subject if it's in the GROUP BY clause
+    // When all fields are aggregates (implicit aggregation), also exclude ?subject
+    // Otherwise, SPARQL will reject the query with "Projection of ungrouped variable"
+    const includeSubject = !allAggregates && (!hasGroupBy || (hasGroupBy && ast.groupBy.includes('subject')));
+    const variables: any[] = includeSubject ? [{ termType: 'Variable', value: 'subject' }] : [];
 
     // Skip columns that use @id predicate (virtual, derived from subject in JS)
     const skipColumns = new Set(['subject']);
@@ -255,7 +282,99 @@ export class SelectBuilder {
     const requiredTriples: sparqljs.Triple[] = [];
     const optionalTriples: sparqljs.Triple[] = [];
 
+    // Determine which columns to include in WHERE patterns
+    // If ast.select specifies columns, only include those columns (plus any referenced in where/orderBy/groupBy)
+    const selectFields = ast.select;
+    let columnsToInclude: Set<string> | null = null;
+    
+    if (selectFields && typeof selectFields === 'object' && Object.keys(selectFields).length > 0) {
+      columnsToInclude = new Set<string>();
+      
+      // Helper to extract column name from various field types
+      const extractColumnName = (field: any): string | null => {
+        if (!field) return null;
+        if (typeof field === 'string') return field;
+        if (field.name) return field.name;
+        // Handle aggregate expressions (e.g., sum(column), avg(column))
+        if (isAggregateExpression(field)) {
+          if (field.column) {
+            return extractColumnName(field.column);
+          }
+          return null; // count(*) doesn't reference a specific column
+        }
+        return null;
+      };
+      
+      for (const [alias, field] of Object.entries(selectFields)) {
+        // Add the alias itself (it might match a column name)
+        columnsToInclude.add(alias);
+        // Extract actual column name from the field
+        const colName = extractColumnName(field);
+        if (colName) {
+          columnsToInclude.add(colName);
+        }
+      }
+      
+      // Include columns referenced in WHERE conditions
+      if (ast.where && typeof ast.where === 'object') {
+        const addWhereColumns = (condition: any) => {
+          if (!condition || !columnsToInclude) return;
+          if (typeof condition === 'object') {
+            // Check for column in BinaryExpression.left
+            if (condition.left) {
+              if (typeof condition.left === 'string') {
+                columnsToInclude.add(condition.left);
+              } else if (condition.left.name) {
+                // PodColumnBase has a name property
+                columnsToInclude.add(condition.left.name);
+              }
+            }
+            // Check for column in UnaryExpression.value (e.g., isNull, not)
+            if (condition.value) {
+              if (typeof condition.value === 'string') {
+                columnsToInclude.add(condition.value);
+              } else if (condition.value.name) {
+                columnsToInclude.add(condition.value.name);
+              } else if (typeof condition.value === 'object') {
+                // Recursively handle nested UnaryExpression (e.g., not(isNull(col)))
+                addWhereColumns(condition.value);
+              }
+            }
+            // Recursively check nested conditions (LogicalExpression like and/or)
+            if (condition.expressions && Array.isArray(condition.expressions)) {
+              condition.expressions.forEach(addWhereColumns);
+            }
+          }
+        };
+        addWhereColumns(ast.where);
+      }
+      
+      // Include columns referenced in ORDER BY
+      if (Array.isArray(ast.orderBy)) {
+        for (const order of ast.orderBy) {
+          if (order.column) {
+            columnsToInclude.add(order.column);
+          }
+        }
+      }
+      
+      // Include columns referenced in GROUP BY
+      if (Array.isArray(ast.groupBy)) {
+        for (const group of ast.groupBy) {
+          const colName = extractColumnName(group);
+          if (colName) {
+            columnsToInclude.add(colName);
+          }
+        }
+      }
+    }
+
     Object.entries(table.columns).forEach(([columnName, column]) => {
+      // Skip columns not in the select list (if column selection is active)
+      if (columnsToInclude && !columnsToInclude.has(columnName)) {
+        return;
+      }
+      
       const predicate = getPredicateForColumn(column, table);
 
       // Fix: Do not generate triple patterns for virtual @id predicate.

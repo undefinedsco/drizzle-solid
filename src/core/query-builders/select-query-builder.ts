@@ -537,10 +537,13 @@ export class SelectQueryBuilder<TTable extends PodTable<any> = PodTable<any>> {
   }
 
   private shouldUseAggregateFallback(): boolean {
+    // GROUP BY is handled at SPARQL level (both LDP/Comunica and SPARQL endpoint support it)
     if (this.groupByColumns.length > 0) {
-      return true;
+      return false;
     }
 
+    // For pure aggregate queries (no GROUP BY), Comunica seems to have issues with multiple aggregates
+    // So we use JS fallback for these cases
     if (!this.selectedFields) {
       return false;
     }
