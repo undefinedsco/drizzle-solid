@@ -64,9 +64,16 @@ export class LdpExecutor {
       const typeTriple = this.tripleBuilder.buildTypeTriple(subject, table.config.type as string);
       insertTriples.push(...this.tripleBuilder.toN3Strings([typeTriple]));
 
-      // 2. 处理所有列
+      // 2. 处理所有列（跳过纯主键列）
       Object.entries(table.columns ?? {}).forEach(([key, col]) => {
         if (row[key] === undefined || row[key] === null) return;
+        
+        // 跳过纯主键列（predicate 为 @id 的列）
+        // 这类列只用于生成 subject URI，不需要单独的三元组
+        // 但如果主键列有显式的 predicate（如 schema:identifier），则应该写入
+        if ((col as any)._virtualId) return;
+        const predicate = (col as any).options?.predicate || (col as any)._predicateUri;
+        if (predicate === '@id') return;
         
         const result = this.tripleBuilder.buildInsert(subject, col as any, row[key], table);
         insertTriples.push(...this.tripleBuilder.toN3Strings(result.triples));
@@ -100,6 +107,10 @@ export class LdpExecutor {
 
         Object.entries(table.columns ?? {}).forEach(([key, col]) => {
           if (row[key] === undefined || row[key] === null) return;
+          // 跳过纯主键列（predicate 为 @id 的列）
+          if ((col as any)._virtualId) return;
+          const predicate = (col as any).options?.predicate || (col as any)._predicateUri;
+          if (predicate === '@id') return;
           const result = this.tripleBuilder.buildInsert(subject, col as any, row[key], table);
           recordTriples.push(...this.tripleBuilder.toN3Strings(result.triples));
           if (result.childTriples && result.childTriples.length > 0) {
