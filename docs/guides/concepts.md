@@ -27,13 +27,166 @@ export const profiles = podTable('profiles', {
 
 ## Subject（Document vs Fragment）
 
-`subjectTemplate`（选填）用来决定“每行记录的 subject URI 形状”，也决定数据落在**一个文件**还是**多个文件**里：
+`subjectTemplate`（选填）用来决定"每行记录的 subject URI 形状"，也决定数据落在**一个文件**还是**多个文件**里：
 
 - **Document 模式**（每条记录一个文件）：`base` 是容器（以 `/` 结尾），默认 `subjectTemplate: '{id}.ttl'`，subject 形如 `.../users/alice.ttl`。
-  - 如果你希望区分“文档本身”和“文档描述的对象”，可以显式加 fragment：`subjectTemplate: '{id}.ttl#it'` → `.../users/alice.ttl#it`。
+  - 如果你希望区分"文档本身"和"文档描述的对象"，可以显式加 fragment：`subjectTemplate: '{id}.ttl#it'` → `.../users/alice.ttl#it`。
 - **Fragment 模式**（多条记录共享一个文件）：`base` 是具体资源（如 `.../tags.ttl`），默认 `subjectTemplate: '#{id}'`，subject 形如 `.../tags.ttl#tag-1`。
 
 这意味着：document 模式下 fragment 是**可选的**，完全由 `subjectTemplate` 控制（不需要额外的 fragment 配置项）。
+
+### 核心配置字段
+
+| 字段 | 说明 | 示例 |
+|------|------|------|
+| `base` | subjectTemplate 的基础路径，相对于 Pod 根目录 | `/data/chat/message.ttl` 或 `/data/users/` |
+| `subjectTemplate` | 主题 URI 生成模式 | `#{id}` (Fragment) 或 `{id}.ttl` (Document) |
+| `resourcePath` | 从 subject 推导的文件路径（内部使用） | 去掉 `#fragment` 后的部分 |
+| `containerPath` | resourcePath 的上级目录（内部使用） | Fragment 模式下是文件的父目录 |
+
+### 模式判断逻辑
+
+系统根据 **生成的 subject URI 是否包含 `#`** 来判断模式：
+
+```
+base + subjectTemplate → subject URI → 是否包含 # → 确定模式
+```
+
+| base | subjectTemplate | 生成的 subject | 模式 |
+|------|-----------------|---------------|------|
+| `/data/msg.ttl` | `#{id}` | `/data/msg.ttl#123` | Fragment |
+| `/data/users/` | `{id}.ttl` | `/data/users/123.ttl` | Document |
+
+### Fragment 模式详解
+
+多条记录存储在同一个文件中，适合消息列表、配置项等数据量较小的场景。
+
+```typescript
+const messageTable = podTable('message', {
+  id: id(),
+  content: string('content').predicate('http://schema.org/text'),
+  author: uri('author').predicate('http://schema.org/author'),
+}, {
+  base: '/data/chat/message.ttl',      // 必须是文件路径
+  subjectTemplate: '#{id}',            // 默认值，可省略
+  type: 'http://schema.org/Message'
+});
+
+// 生成的数据存储在 /data/chat/message.ttl 文件中：
+// <#msg-1> a schema:Message; schema:text "Hello"; schema:author <alice> .
+// <#msg-2> a schema:Message; schema:text "Hi"; schema:author <bob> .
+```
+
+**关键点**：
+- `base` 指向具体文件（如 `message.ttl`）
+- 生成的 subject 包含 `#`，如 `http://pod/data/chat/message.ttl#msg-1`
+- 所有记录存储在同一个 `.ttl` 文件中
+- 内部推导：`resourcePath` = 文件路径，`containerPath` = 上级目录
+
+### Document 模式详解
+
+每条记录独立存储在单独的文件中，适合用户资料、文档等需要独立访问控制的数据。
+
+```typescript
+const userTable = podTable('user', {
+  id: id(),
+  name: string('name').predicate('http://schema.org/name'),
+  email: string('email').predicate('http://schema.org/email'),
+}, {
+  base: '/data/users/',                // 必须是目录路径（以 / 结尾）
+  subjectTemplate: '{id}.ttl',         // 每条记录一个文件
+  type: 'http://schema.org/Person'
+});
+
+// 生成的数据存储在多个文件中：
+// /data/users/alice.ttl: <alice.ttl> a schema:Person; schema:name "Alice" .
+// /data/users/bob.ttl: <bob.ttl> a schema:Person; schema:name "Bob" .
+```
+
+**关键点**：
+- `base` 指向容器/目录（以 `/` 结尾）
+- 生成的 subject 不包含 `#`，如 `http://pod/data/users/alice.ttl`
+- 每条记录独立一个文件
+- 内部推导：`resourcePath` 动态取决于记录，`containerPath` = base 本身
+
+### 常见配置错误
+
+#### 错误 1：Fragment 模式使用目录路径
+
+```typescript
+// ❌ 错误：base 是目录，但 subjectTemplate 是 fragment
+const table = podTable('tags', { ... }, {
+  base: '/data/tags/',           // 目录路径
+  subjectTemplate: '#{id}'       // Fragment 模式
+});
+// 问题：会尝试 PATCH 目录而不是文件，导致操作失败
+```
+
+**正确写法**：
+
+```typescript
+// ✅ 正确：base 指向具体文件
+const table = podTable('tags', { ... }, {
+  base: '/data/tags/tags.ttl',   // 文件路径
+  subjectTemplate: '#{id}'
+});
+```
+
+#### 错误 2：Document 模式使用文件路径
+
+```typescript
+// ❌ 错误：base 是文件，但想要每条记录独立文件
+const table = podTable('users', { ... }, {
+  base: '/data/users.ttl',       // 文件路径
+  subjectTemplate: '{id}.ttl'    // Document 模式
+});
+// 问题：生成的路径会变成 /data/users.ttl/alice.ttl，不符合预期
+```
+
+**正确写法**：
+
+```typescript
+// ✅ 正确：base 指向目录
+const table = podTable('users', { ... }, {
+  base: '/data/users/',          // 目录路径
+  subjectTemplate: '{id}.ttl'
+});
+```
+
+#### 错误 3：SAI/TypeIndex 场景下的 base 配置
+
+在使用 SAI 或 TypeIndex 发现机制时，Fragment 模式的 `base` 必须是完整文件路径：
+
+```typescript
+// ❌ 错误：SAI RegistrySet 使用目录路径
+const registrySet = podTable('set', { ... }, {
+  type: INTEROP.RegistrySet,
+  base: '/registries/chat/',     // 目录路径，但默认 subjectTemplate 是 #{id}
+});
+// 问题：Discovery 找到的是目录，INSERT 时 PATCH 目录会失败
+```
+
+**正确写法**：
+
+```typescript
+// ✅ 正确：显式指定文件路径
+const registrySet = podTable('set', { ... }, {
+  type: INTEROP.RegistrySet,
+  base: '/registries/chat/set.ttl',  // 明确的文件路径
+});
+```
+
+### 内部字段推导规则
+
+用户只需配置 `base` 和 `subjectTemplate`，系统自动推导内部字段：
+
+**Fragment 模式** (`base: '/data/chat/message.ttl'`)：
+- `resourcePath` = `/data/chat/message.ttl`（文件本身）
+- `containerPath` = `/data/chat/`（上级目录）
+
+**Document 模式** (`base: '/data/users/'`)：
+- `resourcePath` = 动态，取决于具体记录的 subject（如 `/data/users/alice.ttl`）
+- `containerPath` = `/data/users/`（base 本身）
 
 ## WebID
 WebID 是用户在 Solid 生态中的唯一身份 URL，例如 `https://localhost:3001/alice/profile/card#me`。集成测试会在登录后的 `session.info.webId` 中暴露该地址。

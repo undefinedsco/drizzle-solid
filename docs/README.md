@@ -14,8 +14,11 @@
 
 ### Resource Mode（资源模式）
 
-- **Fragment Mode**: 单文件多资源（`/data/tags.ttl#tag-1`）
-- **Document Mode**: 多文件单资源（`/data/users/alice.ttl`）
+- [核心概念 - Subject（Document vs Fragment）](./guides/concepts.md#subjectdocument-vs-fragment) ⭐ **重要**
+  - Fragment 模式：单文件多资源（`/data/tags.ttl#tag-1`）
+  - Document 模式：多文件单资源（`/data/users/alice.ttl`）
+  - `base` 与 `subjectTemplate` 配置详解
+  - 常见配置错误与正确写法
 
 ### Execution Mode（执行策略）
 
