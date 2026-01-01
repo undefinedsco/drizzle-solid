@@ -92,13 +92,20 @@ jspm_packages/
 # DynamoDB Local files
 .dynamodb/ 
 
-# AI
+# AI & IDE config
 .codex
 .claude
 .cursor
+.codebuddy
 openspec
 .npm-cache
+.internal
+
+# Docker (not needed for library)
+docker/
 
 # Local convenience scripts (do not commit)
 codebuddy.sh
 codex.sh
+claude.sh
+gemini.sh

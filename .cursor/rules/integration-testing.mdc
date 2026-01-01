@@ -1,5 +1,0 @@
----
-alwaysApply: true
----
-使用本地的pod server进行测试，而不是mock功能进行测试。
-启动server时预设账号，使用预设的账号测试

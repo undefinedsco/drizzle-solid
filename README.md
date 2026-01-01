@@ -12,27 +12,40 @@
 
 ## 🔋 服务器支持
 
+drizzle-solid 支持两种 Solid 服务器：
+
+### 能力对比
+
+| 能力 | 原生 CSS | xpod |
+|------|----------|------|
+| **基础 CRUD** | ✅ LDP 模式 | ✅ LDP 模式 |
+| **SPARQL SELECT** | ❌ 不支持（Comunica 客户端执行） | ✅ 服务端索引下推 |
+| **SPARQL UPDATE** | ⚠️ 仅 BGP 写入 | ✅ 完整支持 |
+| **条件查询** (where) | Comunica 读文件到内存 | 索引下推（单 Pod） |
+| **聚合函数** (count/sum/avg) | Comunica 读文件到内存 | 索引下推（单 Pod） |
+| **GROUP BY / JOIN** | Comunica 读文件到内存 | 索引下推（单 Pod） |
+| **联邦查询** (跨 Pod) | Comunica 内存处理 | Comunica 内存处理 |
+| **SPARQL 端点** | ❌ 不支持 | ✅ `/-/sparql` Sidecar |
+| **SPARQL 1.1 覆盖率** | - | ~90% |
+
 ### 原生 Community Solid Server (CSS)
 
-drizzle-solid 完全兼容原生 CSS，使用 **LDP 模式**进行操作：
-- ✅ 基本的 CRUD 操作
-- ✅ 通过 Comunica 进行客户端查询
-- ⚠️ 复杂查询需要客户端处理（性能较低）
+原生 CSS **不支持 SPARQL SELECT**，drizzle-solid 通过 **Comunica 客户端**读取文件到内存后执行查询：
+- ✅ 基本的 CRUD 操作（LDP）
+- ⚠️ 写入仅支持 BGP（Basic Graph Pattern）
+- ⚠️ 所有查询由 Comunica 客户端在内存中执行
 
 ### xpod - 扩展的 CSS (推荐)
 
-**xpod** 是对 CSS 的增强实现，提供完整的 SPARQL 1.1 支持和智能混合存储：
+**xpod** 使用 **QuintStore**（五元组存储，GSPOV）替代文件存储，通过 6 组索引实现查询下推：
 
-- ✅ **SPARQL 1.1 Query & Update**：服务器端查询和聚合
-- ✅ **混合存储**：RDF 数据自动转为 Quadstore，非 RDF 文件保留原始格式
-- ✅ **跨文件查询**：一次查询获取多个资源数据
-- ✅ **原子性更新**：SPARQL UPDATE 保证事务一致性
-- ✅ **高性能**：索引化四元组存储，避免多次 HTTP 请求
-- ✅ **向后兼容**：完全支持 LDP 协议，无缝迁移
+- ✅ **SPARQL SELECT 服务端执行**：查询下推到 QuintStore 索引
+- ✅ **Sidecar API**：`/-/sparql` 端点，权限继承自资源路径
+- ✅ **混合存储**：RDF → QuintStore 索引，非 RDF → 文件系统
+- ⚠️ **联邦查询**：跨 Pod 查询仍需 Comunica 内存处理
+- ⚠️ **SPARQL 覆盖**：约 90% W3C SPARQL 1.1 测试通过
 
-**xpod 仓库**：https://github.com/undefinedsco/xpod
-
-**详细对比**：请参阅 [xpod 特性文档](./docs/xpod-features.md)
+**仓库**：https://github.com/undefinedsco/xpod | **详细对比**：[xpod 特性文档](./docs/xpod-features.md)
 
 ## 🚀 快速开始
 
@@ -133,39 +146,37 @@ await db.insert(sparqlTable).values({ id: 'post-1', title: 'Hello SPARQL' });
 
 我们提供了完整的示例来帮助您快速上手：
 
-### 🏗️ 示例1: 服务器设置和Pod创建
+### 🏗️ 示例1: 快速开始
 
 ```bash
-yarn example:setup
-```
-
-这个示例会：
-- 启动本地Community Solid Server（如果需要）
-- 引导您创建Solid Pod
-- 验证Pod创建成功
-- 获取WebID用于后续示例
-
-### 📖 示例2: 认证与 Session 复用
-
-```bash
-yarn example:auth
-```
-
-这个示例展示：
-- 如何使用 `@inrupt/solid-client-authn-node` 进行客户端凭证登录
-- 如何复用已存在的 session 凭证
-- 如何在命令行中检查访问令牌与 Pod 元数据
-
-### 🛠️ 示例3: 基础 CRUD 演练
-
-```bash
-yarn example:usage
+yarn example:quick
 ```
 
 这个示例展示：
 - 如何连接到 Solid Pod 并定义表结构
 - 使用 Drizzle 风格 API 执行插入、查询、更新、删除
-- 如何查看生成的 SPARQL 语句与本地回放逻辑
+
+### 📖 示例2: 关系查询
+
+```bash
+yarn example:query
+```
+
+这个示例展示：
+- 如何定义表之间的关系
+- 使用 `with` 进行关联查询
+- 嵌套数据的加载方式
+
+### 🛠️ 示例3: 零配置数据发现
+
+```bash
+yarn example:discovery
+```
+
+这个示例展示：
+- 如何使用 TypeIndex 自动发现数据位置
+- SAI (Solid Application Interoperability) 数据授权
+- 无需硬编码路径的数据访问
 
 ## 📖 详细文档
 
@@ -214,12 +225,13 @@ const users = await db.query.users.findMany({
   }
 });
 
-const alice = await db.query.users.findByIRI('https://pod.example/data/users.ttl#alice');
+// 通过 IRI 查找单条记录（推荐使用 db.findByIri）
+const alice = await db.findByIri(schema.users, 'https://pod.example/data/users.ttl#alice');
 ```
 
 - `findMany/findFirst/findById/count` 与 Drizzle ORM 行为一致，复用现有 `select` 管道。
 - `with` 支持基于 `reference(target)` 的引用外键（通过 `@id` 关联），结果会嵌套数组挂在相应键上。
-- `findByIRI` 可直接接受绝对 IRI 或 fragment（无协议时按 `id` 匹配）。
+- `db.findByIri(table, iri)` 可直接接受绝对 IRI 或 fragment（无协议时按 `id` 匹配），推荐使用此方法。
 - TypeIndex 注册策略：仅当表配置了 `typeIndex: 'private' | 'public'` 时才会尝试写入 TypeIndex；未配置则跳过。
 
 ### 支持的列类型
@@ -243,7 +255,7 @@ tinyint('tiny')    // 微整数 (MySQL)
 mediumint('medium') // 中等整数 (MySQL)
 serial('auto')     // 自增序列
 
-// 浮点数类型
+// 浮点数类型（内部映射为 xsd:decimal）
 real('price')      // 实数
 decimal('amount')  // 十进制数
 numeric('value')   // 数值
@@ -434,14 +446,16 @@ Drizzle Solid 使用组合策略 (`CompositeDiscovery`)：
 
 ## ✅ 当前 SQL 支持范围
 
-- 已实现：`select/insert/update/delete`、Drizzle 风格的 `where` 条件构建器（`eq/ne/lt/gte/like/in/not` 等）、`orderBy`、`limit/offset`、`distinct`、嵌套布尔组合，以及基于本地回放的 `count/sum/avg/min/max` 聚合、`JOIN` 和 `GROUP BY`。
-- 运行策略：聚合、`JOIN`、`GROUP BY` 会先获取符合条件的行，再在内存中完成聚合/联结，避免依赖当前 CSS (Comunica v2) 缺失的 SPARQL 1.1 聚合与联结实现；后续待 CSS 升级后可切回原生支持。
+- 已实现：`select/insert/update/delete`、Drizzle 风格的 `where` 条件构建器（`eq/ne/lt/gte/like/inArray/not` 等）、`orderBy`、`limit/offset`、`distinct`、嵌套布尔组合，以及 `count/sum/avg/min/max` 聚合、`leftJoin/innerJoin` 和 `GROUP BY`。
+- 运行策略：
+  - **xpod + 单 Pod**：查询下推到 QuintStore 索引执行
+  - **原生 CSS / 联邦查询**：Comunica 将数据读入内存后执行
+- 未实现：`rightJoin`/`fullJoin`（待评估 xpod 支持情况）
 - 未覆盖：`HAVING`、窗口函数、`UNION/UNION ALL`、子查询与跨容器联结；如需这些能力，请暂时改用手写 SPARQL 或拆分查询。
 
 ## 🗺️ Roadmap
 
-- **`rightJoin`/`fullJoin` 原生支持**: 完成查询构建器、SPARQL 转换与 fallback 扩展，详见[设计方案](docs/guides/right-full-join-sparql-design.md#1-支持-rightjoin--fulljoin)。
-- **SPARQL Endpoint 直连模式**: 为纯端点跳过 LDP 探测并持续支持 CRUD，详见[设计方案](docs/guides/right-full-join-sparql-design.md#2-纯-sparql-endpoint-直连模式)。
+- **`rightJoin`/`fullJoin` 支持**: 待评估 xpod SPARQL 能力后实现，详见[设计方案](docs/guides/right-full-join-sparql-design.md)。
 
 ## 🔧 配置
 
@@ -507,7 +521,7 @@ Drizzle Solid基于以下组件构建：
 
 ### Comunica CRUD 流程
 
-- 查询会经过 AST → SPARQL 转换；若 Comunica v2 无法执行带过滤器/聚合的 `UPDATE`/`DELETE`，方言会先通过 `SELECT` 拉取命中的 subject，再以 PATCH 方式回写，实现与 SQL 行级操作一致的语义。
+- 查询会经过 AST → SPARQL 转换；若 Comunica 无法执行带过滤器/聚合的 `UPDATE`/`DELETE`，方言会先通过 `SELECT` 拉取命中的 subject，再以 PATCH 方式回写，实现与 SQL 行级操作一致的语义。
 - `PodDialect` 会自动推导目标容器与 `.ttl` 资源文件路径，必要时发送 `HEAD`/`PUT` 请求确保容器和资源已经存在，再交由 Comunica 处理数据修改。
 - 插入会预先读取现有资源以检测重复 subject，避免重复写入；删除或更新只针对匹配的 subject 生成最小化补丁。
 - 对于 `JOIN`、`GROUP BY` 与聚合，选取的数据仍由 SPARQL 拉取，但结果会在内存中组合或聚合，直到 CSS 升级到支持完整 SPARQL 1.1 为止。
