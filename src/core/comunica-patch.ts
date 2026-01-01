@@ -68,16 +68,21 @@ const patchActionObserverHttp = (moduleName: string) => {
     }
     return false;
   } catch (error) {
-    console.warn(`[Patch] Failed to patch ActionObserverHttp in ${moduleName}:`, error);
+    // 静默忽略模块不存在的错误
     return false;
   }
 };
 
 // 修补所有可能的 ActionObserverHttp 实例
+// 包括顶层和 @comunica/query-sparql-solid 嵌套的 node_modules
 if (requireModule) {
   const modules = [
+    // 顶层模块
     '@comunica/actor-query-result-serialize-sparql-json',
-    '@comunica/actor-query-result-serialize-stats'
+    '@comunica/actor-query-result-serialize-stats',
+    // 嵌套在 @comunica/query-sparql-solid 下的模块 (Comunica v4)
+    '@comunica/query-sparql-solid/node_modules/@comunica/actor-query-result-serialize-sparql-json',
+    '@comunica/query-sparql-solid/node_modules/@comunica/actor-query-result-serialize-stats'
   ];
 
   modules.forEach(patchActionObserverHttp);
