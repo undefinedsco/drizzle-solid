@@ -1,6 +1,6 @@
 import { describe, it, expect, vi, beforeEach } from 'vitest';
 import { ProfileManager } from '../../../src/core/profile-manager';
-import type { SolidSession } from '../../../src/core/pod-table';
+import type { SolidSession } from '../../../src/core/schema';
 
 // Mock @inrupt/solid-client
 vi.mock('@inrupt/solid-client', () => ({

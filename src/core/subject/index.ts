@@ -18,7 +18,7 @@ export type { SubjectResolver } from './types';
 
 // 创建向后兼容的包装对象
 import { UriResolverImpl } from '../uri/resolver';
-import type { PodTable } from '../pod-table';
+import type { PodTable } from '../schema';
 
 /**
  * 向后兼容的 SubjectResolver 包装器

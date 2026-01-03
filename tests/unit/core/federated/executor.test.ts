@@ -5,7 +5,7 @@
 import { describe, it, expect, vi } from 'vitest';
 import { FederatedQueryExecutor } from '../../../../src/core/federated/executor';
 import { ProviderCache } from '../../../../src/core/discovery/provider-cache';
-import type { RelationDefinition } from '../../../../src/core/pod-table';
+import type { RelationDefinition } from '../../../../src/core/schema';
 
 describe('FederatedQueryExecutor', () => {
   // Mock Turtle data for a container with posts

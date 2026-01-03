@@ -1,5 +1,5 @@
 import { SQL } from 'drizzle-orm';
-import { PodTable } from './pod-table';
+import { PodTable } from './schema';
 import { SelectBuilder } from './sparql/builder/select-builder';
 import { UpdateBuilder } from './sparql/builder/update-builder';
 import { SPARQLQuery } from './sparql/types';

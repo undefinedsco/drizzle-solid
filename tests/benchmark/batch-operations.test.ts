@@ -11,7 +11,7 @@
 import { describe, it, expect, beforeAll, afterAll } from 'vitest';
 import { drizzle } from '../../src/driver';
 import { createTestSession, ensureContainer } from '../integration/css/helpers';
-import { podTable, string, id, int } from '../../src/core/pod-table';
+import { podTable, string, id, int } from '../../src/core/schema';
 import { eq, inArray, like, gt } from '../../src/core/query-conditions';
 
 interface BenchmarkResult {

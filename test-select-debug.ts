@@ -1,6 +1,6 @@
 import { createTestSession, ensureContainer } from './tests/integration/css/helpers';
 import { drizzle } from './src/driver';
-import { podTable, string, int, datetime } from './src/core/pod-table';
+import { podTable, string, int, datetime } from './src/core/schema';
 
 // Enable debug logging
 process.env.DEBUG_INLINE_PATCH = 'true';

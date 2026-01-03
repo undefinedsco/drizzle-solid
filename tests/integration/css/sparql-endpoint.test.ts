@@ -1,7 +1,7 @@
 import { describe, it, expect, beforeAll } from 'vitest';
 import { createTestSession, ensureContainer } from './helpers';
 import { drizzle } from '../../../src/driver';
-import { podTable, string } from '../../../src/core/pod-table';
+import { podTable, string } from '../../../src/core/schema';
 import { eq } from '../../../src/core/query-conditions';
 
 async function waitForValue<T>(

@@ -1,4 +1,4 @@
-import { PodColumnBase } from './pod-table';
+import { PodColumnBase } from './schema';
 
 // 定义一个宽松的列类型，接受任何 PodColumnBase 变体
 type AnyColumn = PodColumnBase<any, any, any, any>;

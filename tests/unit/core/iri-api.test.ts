@@ -5,7 +5,7 @@ import { PodAsyncSession } from '@src/core/pod-session';
 import { SelectQueryBuilder } from '@src/core/query-builders/select-query-builder';
 import { UpdateQueryBuilder } from '@src/core/query-builders/update-query-builder';
 import { DeleteQueryBuilder } from '@src/core/query-builders/delete-query-builder';
-import { podTable, string, id } from '@src/core/pod-table';
+import { podTable, string, id } from '@src/core/schema';
 
 const testTable = podTable('profiles', {
   id: id(),

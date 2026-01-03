@@ -3,7 +3,7 @@
  */
 
 import { SubjectResolverImpl } from '../../../../src/core/subject';
-import { podTable, string, id } from '../../../../src/core/pod-table';
+import { podTable, string, id } from '../../../../src/core/schema';
 
 // 测试用命名空间
 const ns = { prefix: 'schema', uri: 'https://schema.org/' };

@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest';
 import { ASTToSPARQLConverter } from '../../../src/core/ast-to-sparql';
-import { podTable, string, object } from '../../../src/core/pod-table';
+import { podTable, string, object } from '../../../src/core/schema';
 import { UriResolverImpl } from '../../../src/core/uri';
 
 const schemaNamespace = { uri: 'https://schema.org/', prefix: 'schema' };

@@ -1,6 +1,6 @@
 import { PodAsyncSession } from '../core/pod-session';
 import { PodDatabase } from '../core/pod-database';
-import { PodTable, type InferTableData } from '../core/pod-table';
+import { PodTable, type InferTableData } from '../core/schema';
 
 const isPodDatabase = (value: unknown): value is PodDatabase => {
   return !!value && typeof value === 'object' && 'session' in (value as Record<string, unknown>);

@@ -1,6 +1,6 @@
 import { QueryCondition } from '../query-conditions';
 import { BinaryExpression, LogicalExpression, UnaryExpression } from '../expressions';
-import { PodColumnBase } from '../pod-table';
+import { PodColumnBase } from '../schema';
 
 export function createLiteralCondition(
   alias: string | undefined,

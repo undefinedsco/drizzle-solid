@@ -4,7 +4,7 @@
  * 处理基本类型: string, integer, boolean, datetime
  */
 
-import type { PodColumnBase, PodTable } from '../../pod-table';
+import type { PodColumnBase, PodTable } from '../../schema';
 import type { ColumnHandler, RdfTerm, BuildResult, BuildContext } from '../types';
 
 const XSD = 'http://www.w3.org/2001/XMLSchema#';

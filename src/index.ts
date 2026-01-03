@@ -44,8 +44,6 @@ export {
   podObject,
   id,
   // 命名空间和常量
-  RDF_PREDICATES,
-  RDF_CLASSES,
   relations,
   // Schema（不绑定位置）
   solidSchema,
@@ -70,7 +68,7 @@ export {
   type TableHooks,
   type SolidSession,
   type CreateTableOptions,
-} from './core/pod-table';
+} from './core/schema';
 
 // Profile 管理（工具类，可在 hooks 中使用）
 export { ProfileManager } from './core/profile-manager';

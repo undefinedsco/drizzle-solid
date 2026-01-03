@@ -1,5 +1,5 @@
 import * as sparqljs from 'sparqljs';
-import { PodTable, PodColumnBase } from '../../pod-table';
+import { PodTable, PodColumnBase } from '../../schema';
 import { SelectQueryPlan } from '../../select-plan';
 import { SPARQLQuery } from '../types';
 import { getPredicateForColumn, resolveColumn, formatValue } from '../helpers';

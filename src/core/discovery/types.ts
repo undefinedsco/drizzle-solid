@@ -1,4 +1,4 @@
-import { PodTable } from '../pod-table';
+import { PodTable } from '../schema';
 
 /**
  * 数据注册选项

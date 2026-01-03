@@ -4,7 +4,7 @@
  * 处理数组类型列，为每个元素创建独立三元组
  */
 
-import type { PodColumnBase, PodTable } from '../../pod-table';
+import type { PodColumnBase, PodTable } from '../../schema';
 import type { ColumnHandler, RdfTerm, BuildResult, BuildContext, Triple } from '../types';
 
 const XSD = 'http://www.w3.org/2001/XMLSchema#';

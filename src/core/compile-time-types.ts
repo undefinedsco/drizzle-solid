@@ -1,8 +1,8 @@
 // 编译时类型推断系统
 // 使用 TypeScript 的编译时类型检查，而不是运行时推断
 
-import { podTable, string, int, boolean, date } from './pod-table';
-import { PodTable, PodTableOptions } from './pod-table';
+import { podTable, string, int, boolean, date } from './schema';
+import { PodTable, PodTableOptions } from './schema';
 
 // 类型安全的字段定义
 export interface TypedField<T extends string> {

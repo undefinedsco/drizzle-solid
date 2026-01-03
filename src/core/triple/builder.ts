@@ -4,7 +4,7 @@
  * 统一的三元组构建器，处理所有列类型
  */
 
-import type { PodColumnBase, PodTable, NamespaceConfig } from '../pod-table';
+import type { PodColumnBase, PodTable, NamespaceConfig } from '../schema';
 import type { UriResolver } from '../uri';
 import { UriResolverImpl } from '../uri';
 import type {

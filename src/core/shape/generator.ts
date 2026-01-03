@@ -4,7 +4,7 @@
  * 从 PodTable 生成 Shape 定义
  */
 
-import type { PodTable, PodColumnBase } from '../pod-table';
+import type { PodTable, PodColumnBase } from '../schema';
 import type { Shape, ShapeProperty } from './types';
 import { XSD } from './types';
 

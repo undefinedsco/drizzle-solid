@@ -10,7 +10,7 @@
 import { describe, it, expect, beforeAll } from 'vitest';
 import { createTestSession, ensureContainer } from './helpers';
 import { drizzle } from '../../../src/driver';
-import { podTable, string, timestamp, id } from '../../../src/core/pod-table';
+import { podTable, string, timestamp, id } from '../../../src/core/schema';
 
 describe('SPARQL Sidecar with Document Mode', () => {
   let session: any;

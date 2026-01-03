@@ -1,6 +1,6 @@
 import { describe, it, expect, beforeEach } from 'vitest';
 import { PodDatabase } from '@src/core/pod-database';
-import { PodTable, PodStringColumn } from '@src/core/pod-table';
+import { PodTable, PodStringColumn } from '@src/core/schema';
 import { SCHEMA_INRUPT as SCHEMA } from '@inrupt/vocab-common-rdf';
 
 const mockTable = new PodTable('users', {

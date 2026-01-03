@@ -1,4 +1,4 @@
-import { PodTable, PodColumnBase, podTable, string, integer, boolean, date, uri, json, object } from '../pod-table';
+import { PodTable, PodColumnBase, podTable, string, integer, boolean, date, uri, json, object } from '../schema';
 import { Shape, ShapeProperty, ShapeManager, ValidationResult, XSD, SHACL } from './types';
 import { getPredicateForColumn } from '../sparql/helpers';
 import { z } from 'zod';

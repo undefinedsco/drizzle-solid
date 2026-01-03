@@ -24,7 +24,7 @@ import {
   getUrlAll,
   createThing,
 } from '@inrupt/solid-client';
-import type { SolidSession } from './pod-table';
+import type { SolidSession } from './schema';
 
 /**
  * Manages links in the user's Profile document.

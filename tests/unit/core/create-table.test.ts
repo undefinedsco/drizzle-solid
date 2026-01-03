@@ -1,5 +1,5 @@
 import { describe, it, expect, vi } from 'vitest';
-import { solidSchema, id, string, boolean, HookContext } from '../../../src/core/pod-table';
+import { solidSchema, id, string, boolean, HookContext } from '../../../src/core/schema';
 import { PodDatabase } from '../../../src/core/pod-database';
 import { PodDialect } from '../../../src/core/pod-dialect';
 

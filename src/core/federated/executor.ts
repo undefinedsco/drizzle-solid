@@ -4,7 +4,7 @@
  * 执行跨 Pod 的联邦查询
  */
 
-import type { SolidSchema, PodTable, RelationDefinition, DiscoverFunction } from '../pod-table';
+import type { SolidSchema, PodTable, RelationDefinition, DiscoverFunction } from '../schema';
 import { ProviderCache, type WellKnownResponse } from '../discovery/provider-cache';
 import type { 
   FederatedResult, 

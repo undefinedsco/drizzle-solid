@@ -6,7 +6,7 @@
  * - INSERT/UPDATE/DELETE: Uses N3 Patch or PUT
  */
 
-import type { PodTable } from '../pod-table';
+import type { PodTable } from '../schema';
 import type { ComunicaSPARQLExecutor } from '../sparql-executor';
 import type { ASTToSPARQLConverter, SPARQLQuery } from '../ast-to-sparql';
 import type { ResourceResolver } from '../resource-resolver';

@@ -7,7 +7,7 @@
 import { describe, it, expect, beforeAll, afterAll } from 'vitest';
 import { drizzle } from '../../../src/driver';
 import { createTestSession, createSecondSessionInstance, ensureContainer, grantAccess } from './helpers';
-import { podTable, string, id } from '../../../src/core/pod-table';
+import { podTable, string, id } from '../../../src/core/schema';
 import { eq } from '../../../src/core/query-conditions';
 
 describe('CSS integration: Cross-Pod Access', () => {

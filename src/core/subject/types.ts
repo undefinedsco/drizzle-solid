@@ -4,7 +4,7 @@
  * 主体 URI 解析相关的类型定义
  */
 
-import type { PodTable } from '../pod-table';
+import type { PodTable } from '../schema';
 
 /**
  * 资源模式

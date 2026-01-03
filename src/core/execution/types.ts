@@ -4,7 +4,7 @@
  * Defines the interface for different execution modes (LDP, SPARQL)
  */
 
-import type { PodTable } from '../pod-table';
+import type { PodTable } from '../schema';
 import type { QueryCondition } from '../query-conditions';
 import type { SelectQueryPlan } from '../select-plan';
 

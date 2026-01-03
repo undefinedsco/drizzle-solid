@@ -1,5 +1,4 @@
 import { getSolidDataset, getThing, getUrl, getUrlAll, getStringNoLocale, saveSolidDatasetAt, createThing, buildThing, setThing, createSolidDataset, getThingAll } from '@inrupt/solid-client';
-import { RDF_PREDICATES } from './rdf-constants';
 import { resolvePodBase } from './utils/pod-root';
 
 export interface TypeIndexEntry {
@@ -133,7 +132,7 @@ export class TypeIndexManager {
         }
 
         // 4. 如果 profile 中没有，尝试从存储根目录查找
-        const storageUrls = getUrl(profile, RDF_PREDICATES.SOLID_STORAGE);
+        const storageUrls = getUrl(profile, 'http://www.w3.org/ns/pim/space#storage');
 
         if (storageUrls) {
           const storageUrl = Array.isArray(storageUrls) ? storageUrls[0] : storageUrls;
@@ -212,8 +211,8 @@ export class TypeIndexManager {
     try {
       // 1. 创建 TypeIndex 文档
       const typeIndexThing = buildThing(createThing({ url: typeIndexUrl }))
-        .addUrl(RDF_PREDICATES.RDF_TYPE, 'http://www.w3.org/ns/solid/terms#TypeIndex')
-        .addStringNoLocale(RDF_PREDICATES.FOAF_NAME, 'Private Type Index')
+        .addUrl('http://www.w3.org/1999/02/22-rdf-syntax-ns#type', 'http://www.w3.org/ns/solid/terms#TypeIndex')
+        .addStringNoLocale('http://xmlns.com/foaf/0.1/name', 'Private Type Index')
         .addStringNoLocale('http://purl.org/dc/terms/description', 'Private type index for this Pod')
         .build();
 
@@ -242,8 +241,8 @@ export class TypeIndexManager {
     try {
       // 1. 创建 TypeIndex 文档
       const typeIndexThing = buildThing(createThing({ url: typeIndexUrl }))
-        .addUrl(RDF_PREDICATES.RDF_TYPE, 'http://www.w3.org/ns/solid/terms#TypeIndex')
-        .addStringNoLocale(RDF_PREDICATES.FOAF_NAME, 'Public Type Index')
+        .addUrl('http://www.w3.org/1999/02/22-rdf-syntax-ns#type', 'http://www.w3.org/ns/solid/terms#TypeIndex')
+        .addStringNoLocale('http://xmlns.com/foaf/0.1/name', 'Public Type Index')
         .addStringNoLocale('http://purl.org/dc/terms/description', 'Public type index for this Pod')
         .build();
 
@@ -330,10 +329,10 @@ export class TypeIndexManager {
       // 创建类型注册条目
       const entryId = `#${entry.forClass.toLowerCase()}`;
       const entryThing = buildThing(createThing({ url: `${targetTypeIndexUrl}${entryId}` }))
-        .addUrl(RDF_PREDICATES.RDF_TYPE, 'http://www.w3.org/ns/solid/terms#TypeRegistration')
+        .addUrl('http://www.w3.org/1999/02/22-rdf-syntax-ns#type', 'http://www.w3.org/ns/solid/terms#TypeRegistration')
         .addUrl('http://www.w3.org/ns/solid/terms#forClass', entry.rdfClass)
         .addUrl('http://www.w3.org/ns/solid/terms#instanceContainer', instanceContainer)
-        .addStringNoLocale(RDF_PREDICATES.FOAF_NAME, entry.forClass)
+        .addStringNoLocale('http://xmlns.com/foaf/0.1/name', entry.forClass)
         .build();
 
       // 将条目添加到 TypeIndex
@@ -444,11 +443,11 @@ export class TypeIndexManager {
       console.log(`[TypeIndex] Discovery on ${targetTypeIndexUrl} found ${things.length} things.`);
       
       for (const thing of things) {
-        const type = getUrl(thing, RDF_PREDICATES.RDF_TYPE);
+        const type = getUrl(thing, 'http://www.w3.org/1999/02/22-rdf-syntax-ns#type');
         if (type === 'http://www.w3.org/ns/solid/terms#TypeRegistration') {
           const forClass = getUrl(thing, 'http://www.w3.org/ns/solid/terms#forClass');
           const instanceContainer = getUrl(thing, 'http://www.w3.org/ns/solid/terms#instanceContainer');
-          const name = getStringNoLocale(thing, RDF_PREDICATES.FOAF_NAME);
+          const name = getStringNoLocale(thing, 'http://xmlns.com/foaf/0.1/name');
           
           // Relaxed check: allow missing name if forClass is present (common issue with different vocabularies)
           if (forClass && instanceContainer) {
@@ -673,18 +672,18 @@ export class TypeIndexManager {
       }
 
       // 查找存储空间
-      const storageUrls = getUrl(profile, RDF_PREDICATES.SOLID_STORAGE);
+      const storageUrls = getUrl(profile, 'http://www.w3.org/ns/pim/space#storage');
       const entries: TypeIndexEntry[] = [];
 
       if (storageUrls) {
         const storageUrl = Array.isArray(storageUrls) ? storageUrls[0] : storageUrls;
         
-        // 发现容器并推断类型
+        // 发现容器并推推断类型
         const storageDataset = await getSolidDataset(storageUrl, { fetch: this.fetchFn });
         const storageThing = getThing(storageDataset, storageUrl);
 
         if (storageThing) {
-          const containedUrls = getUrl(storageThing, RDF_PREDICATES.LDP_CONTAINS);
+          const containedUrls = getUrl(storageThing, 'http://www.w3.org/ns/ldp#contains');
           
           if (containedUrls) {
             const urls = Array.isArray(containedUrls) ? containedUrls : [containedUrls];
@@ -696,7 +695,7 @@ export class TypeIndexManager {
                 
                 if (containerThing) {
                   // 尝试从容器元数据推断类型
-                  const name = getStringNoLocale(containerThing, RDF_PREDICATES.FOAF_NAME);
+                  const name = getStringNoLocale(containerThing, 'http://xmlns.com/foaf/0.1/name');
                   
                   if (name) {
                     // 基于容器名称推断 RDF 类型

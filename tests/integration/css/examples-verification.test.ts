@@ -6,7 +6,7 @@ import { runBobViewer } from '../../../examples/03-zero-config-discovery';
 import { run as runDataDiscovery, basicDiscovery, listAllRegistrations } from '../../../examples/05-data-discovery';
 import { setupSaiForExample } from '../../../examples/utils/sai-helpers';
 import { drizzle } from '../../../src/driver';
-import { podTable, string, datetime, uri, id } from '../../../src/core/pod-table';
+import { podTable, string, datetime, uri, id } from '../../../src/core/schema';
 
 // Mock process.env for the examples (which usually load from .env)
 const setupEnv = (session: any) => {

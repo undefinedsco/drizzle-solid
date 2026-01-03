@@ -1,5 +1,5 @@
 import { vi } from 'vitest';
-import { PodTable, PodStringColumn } from '../../../src/core/pod-table';
+import { PodTable, PodStringColumn } from '../../../src/core/schema';
 import { PodDialect } from '../../../src/core/pod-dialect';
 
 const queryContainerMock = vi.fn().mockResolvedValue([]);

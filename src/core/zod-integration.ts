@@ -1,5 +1,5 @@
 import { z } from 'zod';
-import { PodTable, InferTableData, InferInsertData, InferUpdateData, PodColumnBase } from './pod-table';
+import { PodTable, InferTableData, InferInsertData, InferUpdateData, PodColumnBase } from './schema';
 
 /**
  * 从 PodTable 生成 Zod 模式

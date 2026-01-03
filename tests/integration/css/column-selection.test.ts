@@ -5,7 +5,7 @@
 import { describe, it, expect, beforeAll, afterAll } from 'vitest';
 import { drizzle } from '../../../src/driver';
 import type { SolidDatabase } from '../../../src/driver';
-import { podTable, id, string, timestamp, boolean, integer } from '../../../src/core/pod-table';
+import { podTable, id, string, timestamp, boolean, integer } from '../../../src/core/schema';
 import { createTestSession, SOLID_IDP } from './helpers';
 
 // Define a test namespace

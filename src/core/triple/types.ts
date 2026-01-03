@@ -4,7 +4,7 @@
  * 三元组构建相关的类型定义
  */
 
-import type { PodColumnBase, PodTable } from '../pod-table';
+import type { PodColumnBase, PodTable } from '../schema';
 import type { UriResolver } from '../uri';
 
 /**

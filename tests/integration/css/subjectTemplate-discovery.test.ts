@@ -10,7 +10,7 @@
 import { describe, it, expect, beforeAll, afterAll } from 'vitest';
 import { drizzle } from '../../../src/driver';
 import { createTestSession, ensureContainer } from './helpers';
-import { podTable, string, id } from '../../../src/core/pod-table';
+import { podTable, string, id } from '../../../src/core/schema';
 import { InteropDiscovery } from '../../../src/core/discovery/interop-discovery';
 import { UDFS } from '../../../src/core/discovery/interop-types';
 import { getStringNoLocale, getSolidDataset, getThing } from '@inrupt/solid-client';

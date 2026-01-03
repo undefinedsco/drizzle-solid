@@ -83,7 +83,7 @@ const VAULT = {
  * - createdAt: 创建时间（自动设置）
  * - expiresAt: 过期时间（可选）
  */
-const secretSchema = solidSchema('secret', {
+const secretSchema = solidSchema({
   id: id(),
   name: string('name').notNull().predicate(VAULT.name),
   createdAt: datetime('createdAt').defaultNow().predicate(VAULT.createdAt),
@@ -108,7 +108,7 @@ console.log('');
  * - service: 关联的服务 URI
  * - active: 是否激活（默认 true）
  */
-const apiKeySchema = secretSchema.extend('apiKey', {
+const apiKeySchema = secretSchema.extend({
   apiKey: string('apiKey').notNull().predicate(VAULT.apiKey),
   service: uri('service').predicate(VAULT.service),
   active: boolean('active').default(true).predicate(VAULT.active),
@@ -129,7 +129,7 @@ console.log('');
  * - hash: 密码哈希值（必填）
  * - salt: 盐值（必填）
  */
-const passwordSchema = secretSchema.extend('password', {
+const passwordSchema = secretSchema.extend({
   hash: string('hash').notNull().predicate(VAULT.hash),
   salt: string('salt').notNull().predicate(VAULT.salt),
 }, {
@@ -150,7 +150,7 @@ console.log('');
  * - refreshToken: 刷新令牌（可选）
  * - scopes: 权限范围
  */
-const oauthTokenSchema = secretSchema.extend('oauthToken', {
+const oauthTokenSchema = secretSchema.extend({
   accessToken: string('accessToken').notNull().predicate(VAULT.accessToken),
   refreshToken: string('refreshToken').predicate(VAULT.refreshToken),
   scopes: string('scopes').predicate(VAULT.scopes),
@@ -178,10 +178,10 @@ async function run(providedSession?: Session) {
   // 2. 创建数据库实例
   const db = drizzle(session);
 
-  // 3. 绑定 schema 到具体位置
-  const apiKeys = apiKeySchema.at(`${podBase}data/vault/api-keys/`);
-  const passwords = passwordSchema.at(`${podBase}data/vault/passwords/`);
-  const oauthTokens = oauthTokenSchema.at(`${podBase}data/vault/oauth-tokens/`);
+  // 3. 实例化表
+  const apiKeys = apiKeySchema.table('apiKeys', { base: `${podBase}data/vault/api-keys/` });
+  const passwords = passwordSchema.table('passwords', { base: `${podBase}data/vault/passwords/` });
+  const oauthTokens = oauthTokenSchema.table('oauthTokens', { base: `${podBase}data/vault/oauth-tokens/` });
 
   console.log('\n绑定的表:');
   console.log('  - apiKeys base:', apiKeys.config.base);

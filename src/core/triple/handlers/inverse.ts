@@ -4,7 +4,7 @@
  * 处理逆向谓词列，交换 subject 和 object 位置
  */
 
-import type { PodColumnBase, PodTable } from '../../pod-table';
+import type { PodColumnBase, PodTable } from '../../schema';
 import type { ColumnHandler, RdfTerm, BuildResult, BuildContext } from '../types';
 
 const XSD = 'http://www.w3.org/2001/XMLSchema#';

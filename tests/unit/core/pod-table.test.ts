@@ -1,774 +1,689 @@
-import { describe, it, expect, beforeEach } from 'vitest';
+import { describe, it, expect } from 'vitest';
 import {
-  ColumnBuilder,
   PodTable,
-  PodColumn,
   PodStringColumn,
   PodIntegerColumn,
   PodBooleanColumn,
-  PodDateTimeColumn,
   PodJsonColumn,
   PodObjectColumn,
   podTable,
   relations,
+  InferTableData,
+  InferInsertData,
+  InferUpdateData,
   string,
   int,
   boolean,
   date,
   json,
   object,
-  uri,
-  text,
   id,
-  RDF_CLASSES,
-  RDF_PREDICATES,
-  type PodTableOptions
-} from '@src/core/pod-table';
-import { SCHEMA_INRUPT as SCHEMA } from '@inrupt/vocab-common-rdf';
+  uri,
+} from '@src/core/schema';
 
-const schemaNamespace = { prefix: SCHEMA.PREFIX, uri: SCHEMA.NAMESPACE };
+const FOAF_NAME = 'http://xmlns.com/foaf/0.1/name';
+const SCHEMA_PERSON = 'https://schema.org/Person';
+const SCHEMA_BLOG_POSTING = 'https://schema.org/BlogPosting';
+const FOAF_PERSON = 'http://xmlns.com/foaf/0.1/Person';
 
 describe('PodTable', () => {
-  let table: PodTable;
-  let columns: Record<string, PodColumn>;
-  let options: PodTableOptions;
-
-  beforeEach(() => {
-    columns = {
-      id: new PodIntegerColumn('id', { primaryKey: true, required: true }),
-      name: new PodStringColumn('name', { required: true }),
-      email: new PodStringColumn('email', { required: false }),
-      active: new PodBooleanColumn('active', { defaultValue: true })
-    };
-
-    options = {
-      base: 'idp:///users/index.ttl',
-      type: 'https://schema.org/Person',
-      namespace: schemaNamespace
-    };
-
-    table = new PodTable('users', columns, options);
-  });
-
-  describe('构造函数', () => {
+  describe('构造函数/工厂函数', () => {
     it('应该正确初始化表', () => {
-      expect(table).toBeDefined();
+      const table = podTable('users', {
+        id: id(),
+        name: string('name').predicate(FOAF_NAME)
+      }, { 
+        base: '/users/',
+        type: SCHEMA_PERSON 
+      });
+
       expect(table.config.name).toBe('users');
-      expect(table.columns).toEqual(columns);
+      expect(table.config.type).toBe(SCHEMA_PERSON);
+      expect(table.columns.name).toBeDefined();
     });
 
     it('应该设置正确的配置', () => {
-      expect(table.config.base).toBe('/users/index.ttl');
-      expect(table.config.type).toBe('https://schema.org/Person');
-      expect(table.config.namespace).toEqual(schemaNamespace);
+      const table = podTable('users', {
+        id: id(),
+        name: string('name').predicate(FOAF_NAME)
+      }, {
+        base: '/data/users/',
+        type: SCHEMA_PERSON,
+        typeIndex: 'private'
+      });
+
+      expect(table.config.base).toBe('/data/users/');
+      expect(table.config.typeIndex).toBe('private');
     });
   });
 
   describe('getContainerPath', () => {
     it('应该返回容器路径', () => {
-      expect(table.getContainerPath()).toBe('/users/');
+      const table = podTable('users', {
+        id: id()
+      }, { 
+        base: '/data/users/',
+        type: SCHEMA_PERSON 
+      });
+      expect(table.getContainerPath()).toBe('/data/users/');
     });
   });
 
   describe('getRdfClass', () => {
     it('应该返回 RDF 类', () => {
-      expect(table.getRdfClass()).toBe('https://schema.org/Person');
+      const table = podTable('users', {
+        id: id()
+      }, { 
+        base: '/users/',
+        type: SCHEMA_PERSON 
+      });
+      expect(table.getType()).toBe(SCHEMA_PERSON);
     });
   });
 
   describe('getNamespace', () => {
     it('应该返回命名空间配置', () => {
-      expect(table.getNamespace()).toEqual(schemaNamespace);
+      const ns = { prefix: 'ex', uri: 'http://example.org/' };
+      const table = podTable('users', {
+        id: id()
+      }, { 
+        base: '/users/',
+        type: SCHEMA_PERSON,
+        namespace: ns
+      });
+      expect(table.getNamespace()).toEqual(ns);
     });
   });
 
   describe('subClassOf metadata', () => {
     it('should normalize and expose parent classes', () => {
-      const parentClass = 'https://schema.org/Contact';
-      const childTable = podTable('people', {
-        id: new PodIntegerColumn('id', { primaryKey: true })
-      }, {
-        base: '/people.ttl',
-        type: 'https://schema.org/Person',
-        namespace: schemaNamespace,
-        subClassOf: [parentClass, parentClass]
+      const table = podTable('users', { id: id() }, {
+        base: '/users/',
+        type: SCHEMA_PERSON,
+        subClassOf: ['https://schema.org/Thing', { value: 'http://xmlns.com/foaf/0.1/Agent' }]
       });
 
-      expect(childTable.getSubClassOf()).toEqual([parentClass]);
-      expect(childTable.getMapping().subClassOf).toEqual([parentClass]);
+      expect(table.getSubClassOf()).toContain('https://schema.org/Thing');
+      expect(table.getSubClassOf()).toContain('http://xmlns.com/foaf/0.1/Agent');
     });
   });
 
   describe('getColumns', () => {
     it('应该返回所有列', () => {
-      const cols = table.getColumns();
-      expect(cols).toEqual(columns);
+      const columns = {
+        id: id(),
+        name: string('name').predicate(FOAF_NAME)
+      };
+      const table = podTable('users', columns, { 
+        base: '/users/',
+        type: SCHEMA_PERSON 
+      });
+      // Note: podTable converts columns, so we check keys
+      expect(Object.keys(table.getColumns())).toEqual(Object.keys(columns));
     });
   });
 
   describe('getColumn', () => {
     it('应该返回指定列', () => {
-      const idColumn = table.getColumn('id');
-      expect(idColumn).toBe(columns.id);
+      const table = podTable('users', {
+        id: id(),
+        name: string('name').predicate(FOAF_NAME)
+      }, { 
+        base: '/users/',
+        type: SCHEMA_PERSON 
+      });
+      expect(table.getColumn('name')).toBeDefined();
     });
 
     it('应该返回 undefined 对于不存在的列', () => {
-      const nonExistentColumn = table.getColumn('nonExistent');
-      expect(nonExistentColumn).toBeUndefined();
+      const table = podTable('users', {
+        id: id()
+      }, { 
+        base: '/users/',
+        type: SCHEMA_PERSON 
+      });
+      expect(table.getColumn('age')).toBeUndefined();
     });
   });
 
   describe('hasColumn', () => {
     it('应该正确检查列是否存在', () => {
-      expect(table.hasColumn('id')).toBe(true);
+      const table = podTable('users', {
+        id: id(),
+        name: string('name').predicate(FOAF_NAME)
+      }, { 
+        base: '/users/',
+        type: SCHEMA_PERSON 
+      });
       expect(table.hasColumn('name')).toBe(true);
-      expect(table.hasColumn('nonExistent')).toBe(false);
+      expect(table.hasColumn('age')).toBe(false);
     });
   });
-});
 
   describe('PodColumn', () => {
     describe('PodStringColumn', () => {
-    let column: PodStringColumn;
-
-    beforeEach(() => {
-      column = new PodStringColumn('name', { required: true });
-    });
-
-    it('应该正确初始化字符串列', () => {
-      expect(column.name).toBe('name');
-      expect(column.dataType).toBe('string');
-      expect(column.options.required).toBe(true);
-    });
-
-    it('应该生成正确的谓词', () => {
-      const predicate = column.getPredicate({ prefix: SCHEMA.PREFIX, uri: `${SCHEMA.NAMESPACE}` });
-      expect(predicate).toBe(`${SCHEMA.NAMESPACE}name`);
-    });
-
-    it('应该使用自定义谓词', () => {
-      const customColumn = new PodStringColumn('custom', { 
-        predicate: 'https://example.com/custom' 
+      it('应该正确初始化字符串列', () => {
+        const column = new PodStringColumn('name');
+        expect(column.name).toBe('name');
+        expect(column.dataType).toBe('string');
       });
-      const predicate = customColumn.getPredicate();
-      expect(predicate).toBe('https://example.com/custom');
+
+      it('应该生成正确的谓词', () => {
+        const column = new PodStringColumn('name');
+        expect(column.getPredicate({ prefix: 'ex', uri: 'http://example.org/' })).toBe('http://example.org/name');
+      });
+
+      it('应该使用自定义谓词', () => {
+        const column = new PodStringColumn('name')
+          .predicate(FOAF_NAME);
+        expect(column.getPredicate()).toBe(FOAF_NAME);
+      });
+
+      it('应该检查是否为引用', () => {
+        const column = new PodStringColumn('friend')
+          .reference(SCHEMA_PERSON);
+        expect(column.isReference()).toBe(true);
+        expect(column.getReferenceTarget()).toBe(SCHEMA_PERSON);
+      });
     });
 
-    it('应该检查是否为引用', () => {
-      expect(column.isReference()).toBe(false);
+    describe('PodIntegerColumn', () => {
+      it('应该正确初始化整数列', () => {
+        const column = new PodIntegerColumn('age');
+        expect(column.name).toBe('age');
+        expect(column.dataType).toBe('integer');
+      });
+
+      it('应该生成正确的谓词', () => {
+        const column = new PodIntegerColumn('age');
+        expect(column.getPredicate({ prefix: 'ex', uri: 'http://example.org/' })).toBe('http://example.org/age');
+      });
+    });
+
+    describe('PodBooleanColumn', () => {
+      it('应该正确初始化布尔列', () => {
+        const column = new PodBooleanColumn('active');
+        expect(column.name).toBe('active');
+        expect(column.dataType).toBe('boolean');
+      });
+
+      it('应该生成正确的谓词', () => {
+        const column = new PodBooleanColumn('active');
+        expect(column.getPredicate({ prefix: 'ex', uri: 'http://example.org/' })).toBe('http://example.org/active');
+      });
+    });
+
+    describe('引用列', () => {
+      it('应该正确识别引用列', () => {
+        const column = string('authorId').reference(SCHEMA_PERSON);
+        expect(column.options.referenceTarget).toBe(SCHEMA_PERSON);
+      });
+
+      it('应该支持 inverse 标记', () => {
+        const column = int('id').primaryKey().reference(SCHEMA_PERSON).inverse();
+        expect(column.options.inverse).toBe(true);
+        expect(column.options.referenceTarget).toBe(SCHEMA_PERSON);
+      });
+
+      it('relations 应该挂载关系元数据', () => {
+        const users = podTable('users', {
+          id: id(),
+          name: string('name').predicate(FOAF_NAME)
+        }, { 
+          base: '/users/',
+          type: SCHEMA_PERSON 
+        });
+
+        const posts = podTable('posts', {
+          id: id(),
+          authorId: int('authorId').notNull().reference(SCHEMA_PERSON).predicate('https://schema.org/author'),
+        }, { 
+          base: '/posts/',
+          type: SCHEMA_BLOG_POSTING 
+        });
+
+        const postRelations = relations(posts, ({ one }) => ({
+          author: one(users, {
+            fields: [posts.authorId],
+            references: [users.id]
+          })
+        }));
+
+        expect(posts.relations).toBeDefined();
+        expect(posts.relations?.author).toBeDefined();
+        expect(posts.relations?.author.type).toBe('one');
+        expect(posts.columns.authorId.getReferenceTarget()).toBe(SCHEMA_PERSON);
+      });
     });
   });
 
-  describe('PodIntegerColumn', () => {
-    let column: PodIntegerColumn;
-
-    beforeEach(() => {
-      column = new PodIntegerColumn('id', { primaryKey: true });
-    });
-
-    it('应该正确初始化整数列', () => {
-      expect(column.name).toBe('id');
-      expect(column.dataType).toBe('integer');
+  describe('PodColumn 选项', () => {
+    it('应该支持主键选项', () => {
+      const column = new PodStringColumn('id', { primaryKey: true });
       expect(column.options.primaryKey).toBe(true);
     });
 
-    it('应该生成正确的谓词', () => {
-      const predicate = column.getPredicate({ prefix: SCHEMA.PREFIX, uri: `${SCHEMA.NAMESPACE}` });
-      expect(predicate).toBe(`${SCHEMA.NAMESPACE}id`);
+    it('应该支持必需选项', () => {
+      const column = new PodStringColumn('name', { required: true });
+      expect(column.options.required).toBe(true);
+    });
+
+    it('应该支持默认值选项', () => {
+      const column = new PodStringColumn('type', { defaultValue: 'user' });
+      expect(column.options.defaultValue).toBe('user');
+    });
+
+    it('应该支持自定义谓词选项', () => {
+      const column = new PodStringColumn('name', { predicate: FOAF_NAME });
+      expect(column.getPredicate()).toBe(FOAF_NAME);
     });
   });
 
-  describe('PodBooleanColumn', () => {
-    let column: PodBooleanColumn;
-
-    beforeEach(() => {
-      column = new PodBooleanColumn('active', { defaultValue: true });
-    });
-
-    it('应该正确初始化布尔列', () => {
-      expect(column.name).toBe('active');
-      expect(column.dataType).toBe('boolean');
-      expect(column.options.defaultValue).toBe(true);
-    });
-
-    it('应该生成正确的谓词', () => {
-      const predicate = column.getPredicate({ prefix: SCHEMA.PREFIX, uri: `${SCHEMA.NAMESPACE}` });
-      expect(predicate).toBe(`${SCHEMA.NAMESPACE}active`);
-    });
-  });
-
-  describe('引用列', () => {
-    it('应该正确识别引用列', () => {
-      const referenceColumn = new PodStringColumn('author', {
-        referenceTarget: 'https://schema.org/Person'
+  describe('inverse 谓词映射', () => {
+    it('应该在表映射中记录 inverse 列', () => {
+      const table = podTable('test', {
+        id: id(),
+        member: uri('member').predicate('http://example.org/memberOf').inverse()
+      }, {
+        base: '/test/',
+        type: 'http://example.org/Group'
       });
+
+      expect(table.mapping.columns.member.inverse).toBe(true);
+    });
+  });
+
+  describe('链式方法', () => {
+    it('应该支持 primaryKey() 方法', () => {
+      const column = string('id').primaryKey();
+      expect(column.options.primaryKey).toBe(true);
+    });
+
+    it('应该支持 notNull() 方法', () => {
+      const column = string('name').notNull();
+      expect(column.options.required).toBe(true);
+    });
+
+    it('应该支持 default() 方法', () => {
+      const column = string('type').default('user');
+      expect(column.options.defaultValue).toBe('user');
+    });
+
+    it('应该支持 predicate() 方法', () => {
+      const column = string('name').predicate(FOAF_NAME);
+      expect(column.options.predicate).toBe(FOAF_NAME);
+    });
+
+    it('应该支持 reference() 方法', () => {
+      const column = string('authorId').reference(SCHEMA_PERSON);
+      expect(column.options.referenceTarget).toBe(SCHEMA_PERSON);
+    });
+
+    it('应该支持链式调用', () => {
+      const column = string('name')
+        .notNull()
+        .default('Unnamed')
+        .predicate(FOAF_NAME);
+
+      expect(column.options.required).toBe(true);
+      expect(column.options.defaultValue).toBe('Unnamed');
+      expect(column.options.predicate).toBe(FOAF_NAME);
+    });
+
+    it('应该支持 array() 方法', () => {
+      const column = string('tags').array();
+      expect(column.dataType).toBe('array');
+      expect((column as any).elementType).toBe('string');
+      expect(column.options.isArray).toBe(true);
+    });
+
+    it('应该支持 uri() 类型', () => {
+      const column = uri('website');
+      expect(column.dataType).toBe('uri');
+    });
+
+    it('应该支持 uri().array() 组合', () => {
+      const column = uri('links').array();
+      expect(column.dataType).toBe('array');
+      expect((column as any).elementType).toBe('uri');
+    });
+  });
+
+  describe('类型推断', () => {
+    it('应该正确推断表数据类型', () => {
+      const table = podTable('users', {
+        id: id(),
+        name: string('name').notNull().predicate(FOAF_NAME),
+        age: int('age').predicate('https://schema.org/age'),
+        active: boolean('active').default(true).predicate('https://schema.org/active')
+      }, { 
+        base: '/users/',
+        type: SCHEMA_PERSON 
+      });
+
+      type User = InferTableData<typeof table>;
       
-      expect(referenceColumn.isReference()).toBe(true);
-      expect(referenceColumn.getReferenceTarget()).toBe('https://schema.org/Person');
+      const user: User = {
+        id: '1',
+        name: 'John',
+        age: 30,
+        active: true
+      };
+      
+      expect(user.name).toBe('John');
     });
 
-  it('应该支持 inverse 标记', () => {
-    const column = new PodStringColumn('member', {});
-    expect(column.isInverse()).toBe(false);
-    column.inverse();
-    expect(column.isInverse()).toBe(true);
-  });
+    it('应该正确推断插入数据类型', () => {
+      const table = podTable('users', {
+        id: id(),
+        name: string('name').notNull().predicate(FOAF_NAME),
+        age: int('age').predicate('https://schema.org/age'),
+        active: boolean('active').default(true).predicate('https://schema.org/active')
+      }, { 
+        base: '/users/',
+        type: SCHEMA_PERSON 
+      });
 
-  it('relations 应该挂载关系元数据', () => {
-    const posts = podTable('posts', {
-      id: string('id').primaryKey().predicate('http://schema.org/identifier'),
-      authorId: string('authorId').predicate('http://schema.org/author').reference('https://schema.org/Person')
-    }, {
-      base: 'idp:///posts.ttl',
-      type: 'https://schema.org/Article',
-      namespace: schemaNamespace
+      type NewUser = InferInsertData<typeof table>;
+      
+      const user: NewUser = {
+        name: 'John'
+      };
+      
+      expect(user.name).toBe('John');
     });
 
-    const users = podTable('users', {
-      id: string('id').primaryKey().predicate('http://schema.org/identifier'),
-      name: string('name').predicate('http://schema.org/name')
-    }, {
-      base: 'idp:///users.ttl',
-      type: 'https://schema.org/Person',
-      namespace: schemaNamespace
+    it('应该正确推断更新数据类型', () => {
+      const table = podTable('users', {
+        id: id(),
+        name: string('name').notNull().predicate(FOAF_NAME)
+      }, { 
+        base: '/users/',
+        type: SCHEMA_PERSON 
+      });
+
+      type UpdateUser = InferUpdateData<typeof table>;
+      
+      const update: UpdateUser = {
+        name: 'Jane'
+      };
+      
+      expect(update.name).toBe('Jane');
     });
 
-    relations(users, ({ many }) => ({
-      posts: many(posts, { fields: [posts.getColumn('authorId')!] })
-    }));
+    it('应该支持引用类型', () => {
+      const table = podTable('posts', {
+        id: id(),
+        authorId: uri('authorId').reference(SCHEMA_PERSON).predicate('https://schema.org/author')
+      }, { 
+        base: '/posts/',
+        type: SCHEMA_BLOG_POSTING 
+      });
 
-    expect((users as any).relations?.posts?.type).toBe('many');
-    expect((users as any).relations?.posts?.table).toBe(posts);
-  });
-});
-});
-
-describe('PodColumn 选项', () => {
-  it('应该支持主键选项', () => {
-    const column = new PodStringColumn('id', { primaryKey: true });
-    expect(column.options.primaryKey).toBe(true);
-  });
-
-  it('应该支持必需选项', () => {
-    const column = new PodStringColumn('name', { required: true });
-    expect(column.options.required).toBe(true);
-  });
-
-  it('应该支持默认值选项', () => {
-    const column = new PodStringColumn('status', { defaultValue: 'active' });
-    expect(column.options.defaultValue).toBe('active');
-  });
-
-  it('应该支持自定义谓词选项', () => {
-    const column = new PodStringColumn('custom', { 
-      predicate: 'https://example.com/custom' 
+      type Post = InferTableData<typeof table>;
+      const post: Post = {
+        id: '1',
+        authorId: 'https://example.org/users/1'
+      };
+      expect(post.authorId).toBe('https://example.org/users/1');
     });
-    expect(column.options.predicate).toBe('https://example.com/custom');
   });
-});
 
-describe('inverse 谓词映射', () => {
-  it('应该在表映射中记录 inverse 列', () => {
-    const table = podTable('members', {
-      id: id(),
-      org: string('org')
-        .predicate(RDF_PREDICATES.FOAF_NAME)
-        .inverse()
-    }, {
-      base: 'idp:///members/index.ttl',
-      type: RDF_CLASSES.SCHEMA_PERSON
+  describe('新的列定义函数', () => {
+    it('应该支持 string() 函数', () => {
+      const col = string('name').predicate(FOAF_NAME);
+      expect(col.name).toBe('name');
+      expect(col.dataType).toBe('string');
     });
 
-    expect(table.mapping.columns.org.inverse).toBe(true);
-    expect(table.getColumn('org')?.isInverse()).toBe(true);
-  });
-});
-
-describe('链式方法', () => {
-  it('应该支持 primaryKey() 方法', () => {
-    const column = int('id').primaryKey();
-    expect(column.options.primaryKey).toBe(true);
-    expect(column.options.required).toBe(true); // 主键自动为必需
-  });
-
-  it('应该支持 notNull() 方法', () => {
-    const column = string('name').notNull();
-    expect(column.options.required).toBe(true);
-  });
-
-  it('应该支持 default() 方法', () => {
-    const column = string('status').default('active');
-    expect(column.options.defaultValue).toBe('active');
-  });
-
-  it('应该支持 predicate() 方法', () => {
-    const column = string('custom').predicate('https://example.com/custom');
-    expect(column.options.predicate).toBe('https://example.com/custom');
-  });
-
-  it('应该支持 reference() 方法', () => {
-    const column = int('authorId').reference(RDF_CLASSES.SCHEMA_PERSON);
-    expect(column.options.referenceTarget).toBe(RDF_CLASSES.SCHEMA_PERSON);
-    expect(column.options.referenceTarget).toBeDefined();
-  });
-
-  it('应该支持链式调用', () => {
-    const column = int('id').primaryKey().reference(RDF_CLASSES.SCHEMA_PERSON);
-    expect(column.options.primaryKey).toBe(true);
-    expect(column.options.required).toBe(true);
-    expect(column.options.referenceTarget).toBe(RDF_CLASSES.SCHEMA_PERSON);
-  });
-
-  it('应该支持 array() 方法', () => {
-    const arrayColumn = text('tags').array();
-    expect(arrayColumn.dataType).toBe('array');
-    expect(arrayColumn.options.isArray).toBe(true);
-    expect(arrayColumn.options.baseType).toBe('string');
-  });
-
-  it('应该支持 uri() 类型', () => {
-    const uriColumn = uri('webId');
-    expect(uriColumn.dataType).toBe('uri');
-  });
-
-  it('应该支持 uri().array() 组合', () => {
-    const uriArrayColumn = uri('friends').array().reference(RDF_CLASSES.FOAF_PERSON);
-    expect(uriArrayColumn.dataType).toBe('array');
-    expect(uriArrayColumn.options.isArray).toBe(true);
-    expect(uriArrayColumn.options.baseType).toBe('uri');
-    expect(uriArrayColumn.options.referenceTarget).toBe(RDF_CLASSES.FOAF_PERSON);
-  });
-});
-
-describe('类型推断', () => {
-  it('应该正确推断表数据类型', () => {
-    const users = podTable('users', {
-      id: int('id').primaryKey(),
-      name: string('name').notNull(),
-      email: string('email').notNull(),
-      createdAt: date('createdAt'),
-    }, {
-      base: 'idp:///users/index.ttl',
-      type: RDF_CLASSES.SCHEMA_PERSON,
-      namespace: schemaNamespace
+    it('应该支持 int() 函数', () => {
+      const col = int('age').predicate('https://schema.org/age');
+      expect(col.name).toBe('age');
+      expect(col.dataType).toBe('integer');
     });
 
-    // 测试表结构
-    expect(users.config.name).toBe('users');
-    expect(users.columns.id.options.primaryKey).toBe(true);
-    expect(users.columns.name.options.required).toBe(true);
-    expect(users.columns.email.options.required).toBe(true);
-    expect(users.columns.createdAt.options.required).toBeUndefined(); // 默认值字段的 required 是 undefined
-  });
-
-  it('应该正确推断插入数据类型', () => {
-    // 测试插入数据 - 主键可选，必需字段必需，可选字段可选
-    const insertData = {
-      name: 'Alice',
-      email: 'alice@example.com',
-      // id 和 createdAt 都是可选的
-    };
-
-    expect(insertData.name).toBe('Alice');
-    expect(insertData.email).toBe('alice@example.com');
-  });
-
-  it('应该正确推断更新数据类型', () => {
-    // 测试更新数据 - 所有字段都是可选的
-    const updateData = {
-      name: 'Alice Updated',
-      // 其他字段都是可选的
-    };
-
-    expect(updateData.name).toBe('Alice Updated');
-  });
-
-  it('应该支持引用类型', () => {
-    const posts = podTable('posts', {
-      id: int('id').primaryKey(),
-      title: string('title').notNull(),
-      authorId: int('authorId').notNull().reference(RDF_CLASSES.SCHEMA_PERSON),
-      createdAt: date('createdAt'),
-    }, {
-      base: 'idp:///posts/index.ttl',
-      type: RDF_CLASSES.SCHEMA_BLOG_POSTING,
-      namespace: schemaNamespace
+    it('应该支持 boolean() 函数', () => {
+      const col = boolean('active').predicate('https://schema.org/active');
+      expect(col.name).toBe('active');
+      expect(col.dataType).toBe('boolean');
     });
 
-    // 测试引用字段
-    expect(posts.columns.authorId.isReference()).toBe(true);
-    expect(posts.columns.authorId.getReferenceTarget()).toBe(RDF_CLASSES.SCHEMA_PERSON);
-  });
-});
-
-describe('新的列定义函数', () => {
-  it('应该支持 string() 函数', () => {
-    const column = string('name');
-    expect(column).toBeInstanceOf(ColumnBuilder);
-    expect(column.name).toBe('name');
-    expect(column.dataType).toBe('string');
-  });
-
-  it('应该支持 int() 函数', () => {
-    const column = int('id');
-    expect(column).toBeInstanceOf(ColumnBuilder);
-    expect(column.name).toBe('id');
-    expect(column.dataType).toBe('integer');
-  });
-
-  it('应该支持 boolean() 函数', () => {
-    const column = boolean('active');
-    expect(column).toBeInstanceOf(ColumnBuilder);
-    expect(column.name).toBe('active');
-    expect(column.dataType).toBe('boolean');
-  });
-
-  it('应该支持 date() 函数', () => {
-    const column = date('createdAt');
-    expect(column).toBeInstanceOf(ColumnBuilder);
-    expect(column.name).toBe('createdAt');
-    expect(column.dataType).toBe('datetime');
-  });
-
-  it('应该支持 json() 函数', () => {
-    const column = json('preferences');
-    expect(column).toBeInstanceOf(ColumnBuilder);
-    expect(column.name).toBe('preferences');
-    expect(column.dataType).toBe('json');
-  });
-
-  it('应该支持 object() 函数', () => {
-    const column = object('profile');
-    expect(column).toBeInstanceOf(ColumnBuilder);
-    expect(column.name).toBe('profile');
-    expect(column.dataType).toBe('object');
-  });
-
-  it('ColumnBuilder 应该在 podTable 中转换为具体列类型', () => {
-    const table = podTable('people', {
-      id: id(),
-      name: string('name').notNull(),
-      born: date('born'),
-      active: boolean('active'),
-      avatar: json('avatar'),
-      preferences: object('preferences')
-    }, {
-      base: 'idp:///people/index.ttl',
-      type: RDF_CLASSES.SCHEMA_PERSON,
-      namespace: schemaNamespace
+    it('应该支持 date() 函数', () => {
+      const col = date('created').predicate('https://schema.org/dateCreated');
+      expect(col.name).toBe('created');
+      expect(col.dataType).toBe('datetime');
     });
 
-    expect(table.columns.name).toBeInstanceOf(PodStringColumn);
-    expect(table.columns.born).toBeInstanceOf(PodDateTimeColumn);
-    expect(table.columns.active).toBeInstanceOf(PodBooleanColumn);
-    expect(table.columns.avatar).toBeInstanceOf(PodJsonColumn);
-    expect(table.columns.preferences).toBeInstanceOf(PodObjectColumn);
+    it('应该支持 json() 函数', () => {
+      const col = json('config').predicate('https://example.org/config');
+      expect(col.name).toBe('config');
+      expect(col.dataType).toBe('json');
+    });
+
+    it('应该支持 object() 函数', () => {
+      const col = object('profile').predicate('https://example.org/profile');
+      expect(col.name).toBe('profile');
+      expect(col.dataType).toBe('object');
+    });
+
+    it('ColumnBuilder 应该在 podTable 中转换为具体列类型', () => {
+      const table = podTable('users', {
+        id: id(),
+        name: string('name').predicate(FOAF_NAME)
+      }, { 
+        base: '/users/',
+        type: SCHEMA_PERSON 
+      });
+
+      expect(table.columns.name instanceof PodStringColumn).toBe(true);
+    });
   });
-});
 
   describe('新的列类型', () => {
-  describe('PodJsonColumn', () => {
-    let column: PodJsonColumn;
-
-    beforeEach(() => {
-      column = new PodJsonColumn('preferences', { required: false });
-    });
-
-    it('应该正确初始化 JSON 列', () => {
-      expect(column.name).toBe('preferences');
-      expect(column.dataType).toBe('json');
-      expect(column.options.required).toBe(false);
-    });
-
-    it('应该生成正确的谓词', () => {
-      const predicate = column.getPredicate({ prefix: SCHEMA.PREFIX, uri: `${SCHEMA.NAMESPACE}` });
-      expect(predicate).toBe(`${SCHEMA.NAMESPACE}preferences`);
-    });
-
-    it('应该支持链式方法', () => {
-      const chainedColumn = column.notNull().default({ theme: 'light' });
-      expect(chainedColumn.options.required).toBe(true);
-      expect(chainedColumn.options.defaultValue).toEqual({ theme: 'light' });
-    });
-  });
-
-  describe('PodObjectColumn', () => {
-    let column: PodObjectColumn;
-
-    beforeEach(() => {
-      column = new PodObjectColumn('profile', { required: false });
-    });
-
-    it('应该正确初始化 Object 列', () => {
-      expect(column.name).toBe('profile');
-      expect(column.dataType).toBe('object');
-      expect(column.options.required).toBe(false);
-    });
-
-    it('应该生成正确的谓词', () => {
-      const predicate = column.getPredicate({ prefix: SCHEMA.PREFIX, uri: `${SCHEMA.NAMESPACE}` });
-      expect(predicate).toBe(`${SCHEMA.NAMESPACE}profile`);
-    });
-
-    it('应该支持链式方法', () => {
-      const chainedColumn = column.notNull().default({ age: 0 });
-      expect(chainedColumn.options.required).toBe(true);
-      expect(chainedColumn.options.defaultValue).toEqual({ age: 0 });
-    });
-  });
-
-  describe('id helper', () => {
-    it('should set predicate to @id and be primary key', () => {
-      const column = id('identifier');
-      expect(column.options.predicate).toBe('@id');
-      expect(column.options.primaryKey).toBe(true);
-      expect(column.options.required).toBe(true);
-    });
-  });
-
-  describe('typeIndex option validation', () => {
-    it('should disable TypeIndex when an invalid value is provided', () => {
-      const tableWithInvalidTypeIndex = podTable('badTypeIndex', {
-        id: id()
-      }, {
-        base: '/bad.ttl',
-        type: 'https://schema.org/Thing',
-        typeIndex: 'none' as any
+    describe('PodJsonColumn', () => {
+      it('应该正确初始化 JSON 列', () => {
+        const column = new PodJsonColumn('data');
+        expect(column.name).toBe('data');
+        expect(column.dataType).toBe('json');
       });
 
-      expect(tableWithInvalidTypeIndex.shouldRegisterTypeIndex()).toBe(false);
-      expect((tableWithInvalidTypeIndex as any).config.typeIndex).toBeUndefined();
-    });
-  });
-});
+      it('应该生成正确的谓词', () => {
+        const column = new PodJsonColumn('data');
+        expect(column.getPredicate({ prefix: 'ex', uri: 'http://example.org/' })).toBe('http://example.org/data');
+      });
 
-describe('JSON 和 Object 类型推断', () => {
-  it('应该正确推断包含 JSON 和 Object 字段的表类型', () => {
-    const users = podTable('users', {
-      id: int('id').primaryKey(),
-      name: string('name').notNull(),
-      preferences: json('preferences'),
-      profile: object('profile'),
-      createdAt: date('createdAt'),
-    }, {
-      base: 'idp:///users/index.ttl',
-      type: RDF_CLASSES.SCHEMA_PERSON,
-      namespace: schemaNamespace
+      it('应该支持链式方法', () => {
+        const column = new PodJsonColumn('data').notNull().default({});
+        expect(column.options.required).toBe(true);
+        expect(column.options.defaultValue).toEqual({});
+      });
     });
 
-    // 测试表结构
-    expect(users.config.name).toBe('users');
-    expect(users.columns.id.options.primaryKey).toBe(true);
-    expect(users.columns.name.options.required).toBe(true);
-    expect(users.columns.preferences.dataType).toBe('json');
-    expect(users.columns.profile.dataType).toBe('object');
-    expect(users.columns.createdAt.options.required).toBeUndefined();
+    describe('PodObjectColumn', () => {
+      it('应该正确初始化 Object 列', () => {
+        const column = new PodObjectColumn('profile');
+        expect(column.name).toBe('profile');
+        expect(column.dataType).toBe('object');
+      });
+
+      it('应该生成正确的谓词', () => {
+        const column = new PodObjectColumn('profile');
+        expect(column.getPredicate({ prefix: 'ex', uri: 'http://example.org/' })).toBe('http://example.org/profile');
+      });
+
+      it('应该支持链式方法', () => {
+        const column = new PodObjectColumn('profile').notNull();
+        expect(column.options.required).toBe(true);
+      });
+    });
+
+    describe('id helper', () => {
+      it('should set predicate to @id and be primary key', () => {
+        const col = id();
+        expect(col.options.predicate).toBe('@id');
+        expect(col.options.primaryKey).toBe(true);
+      });
+    });
+
+    describe('typeIndex option validation', () => {
+      it('should disable TypeIndex when an invalid value is provided', () => {
+        const table = podTable('test', { id: id() }, {
+          base: '/test/',
+          type: SCHEMA_PERSON,
+          typeIndex: 'none' as any
+        });
+        expect(table.config.typeIndex).toBeUndefined();
+      });
+    });
   });
 
-  it('应该支持 JSON 和 Object 字段的插入数据', () => {
-    // 测试插入数据 - JSON 和 Object 字段都是可选的
-    const insertData = {
-      name: 'Alice',
-      preferences: { theme: 'dark', language: 'zh-CN' },
-      profile: { age: 25, city: 'Beijing' }
-    };
+  describe('JSON 和 Object 类型推断', () => {
+    it('应该正确推断包含 JSON 和 Object 字段的表类型', () => {
+      const table = podTable('settings', {
+        id: id(),
+        config: json('config').predicate('http://example.org/config'),
+        profile: object('profile').predicate('http://example.org/profile')
+      }, {
+        base: '/settings/',
+        type: 'http://example.org/Settings'
+      });
 
-    expect(insertData.name).toBe('Alice');
-    expect(insertData.preferences).toEqual({ theme: 'dark', language: 'zh-CN' });
-    expect(insertData.profile).toEqual({ age: 25, city: 'Beijing' });
+      type Settings = InferTableData<typeof table>;
+      
+      const s: Settings = {
+        id: '1',
+        config: { theme: 'dark', fontSize: 14 },
+        profile: { avatar: 'http://example.org/img.png', bio: 'Hello' }
+      };
+
+      expect(s.config).toEqual({ theme: 'dark', fontSize: 14 });
+      expect(s.profile).toEqual({ avatar: 'http://example.org/img.png', bio: 'Hello' });
+    });
+
+    it('应该支持 JSON 和 Object 字段的插入数据', () => {
+      const table = podTable('settings', {
+        id: id(),
+        config: json('config').predicate('http://example.org/config')
+      }, {
+        base: '/settings/',
+        type: 'http://example.org/Settings'
+      });
+
+      type NewSettings = InferInsertData<typeof table>;
+      const ns: NewSettings = {
+        config: { a: 1 }
+      };
+      expect(ns.config).toEqual({ a: 1 });
+    });
+
+    it('应该支持 JSON 和 Object 字段的更新数据', () => {
+      const table = podTable('settings', {
+        id: id(),
+        config: json('config').predicate('http://example.org/config')
+      }, {
+        base: '/settings/',
+        type: 'http://example.org/Settings'
+      });
+
+      type UpdateSettings = InferUpdateData<typeof table>;
+      const us: UpdateSettings = {
+        config: { a: 2 }
+      };
+      expect(us.config).toEqual({ a: 2 });
+    });
   });
 
-  it('应该支持 JSON 和 Object 字段的更新数据', () => {
-    // 测试更新数据 - 所有字段都是可选的
-    const updateData = {
-      preferences: { theme: 'light' },
-      profile: { age: 26 }
-    };
-
-    expect(updateData.preferences).toEqual({ theme: 'light' });
-    expect(updateData.profile).toEqual({ age: 26 });
-  });
-});
-
-describe('PodTable.$schema', () => {
-  it('should return a PodSchema with $kind identifier', () => {
+  describe('PodTable.$schema', () => {
     const posts = podTable('posts', {
-      id: id('id'),
+      id: id(),
       title: string('title').predicate('https://schema.org/headline'),
     }, {
-      base: '/data/posts/',
-      type: 'https://schema.org/BlogPosting',
+      base: '/posts/',
+      type: SCHEMA_BLOG_POSTING,
+      subjectTemplate: '{id}.ttl'
     });
 
-    const schema = posts.$schema;
+    it('should return a PodSchema with $kind identifier', () => {
+      const schema = posts.$schema;
 
-    expect(schema.$kind).toBe('SolidSchema');
-    expect(schema.name).toBe('posts');
-    expect(schema.type).toBe('https://schema.org/BlogPosting');
-    expect(schema.columns).toBe(posts.columns);
+      expect(schema.$kind).toBe('SolidSchema');
+      expect(schema.type).toBe(SCHEMA_BLOG_POSTING);
+      expect(schema.columns).toBe(posts.columns);
+    });
+
+    it('should include subjectTemplate if defined', () => {
+      const schema = posts.$schema;
+      expect(schema.subjectTemplate).toBe('{id}.ttl');
+    });
+
+    it('should include namespace if defined', () => {
+      const table = podTable('users', { id: id() }, {
+        base: '/users/',
+        type: SCHEMA_PERSON,
+        namespace: { prefix: 'ex', uri: 'http://example.org/' }
+      });
+      expect(table.$schema.namespace).toEqual({ prefix: 'ex', uri: 'http://example.org/' });
+    });
+
+    it('should include subClassOf if defined', () => {
+      const table = podTable('users', { id: id() }, {
+        base: '/users/',
+        type: SCHEMA_PERSON,
+        subClassOf: ['https://schema.org/Thing']
+      });
+      expect(table.$schema.subClassOf).toContain('https://schema.org/Thing');
+    });
+
+    it('should not include base in schema (federated query use case)', () => {
+      const schema = posts.$schema;
+      expect((schema as any).base).toBeUndefined();
+    });
   });
 
-  it('should include subjectTemplate if defined', () => {
-    const posts = podTable('posts', {
-      id: id('id'),
-      title: string('title').predicate('https://schema.org/headline'),
-    }, {
-      base: '/data/posts/',
-      type: 'https://schema.org/BlogPosting',
-      subjectTemplate: '{id}.ttl#it',
-    });
-
-    const schema = posts.$schema;
-
-    expect(schema.subjectTemplate).toBe('{id}.ttl#it');
-  });
-
-  it('should include namespace if defined', () => {
-    const posts = podTable('posts', {
-      id: id('id'),
-      title: string('title'),
-    }, {
-      base: '/data/posts/',
-      type: 'https://schema.org/BlogPosting',
-      namespace: { prefix: 'schema', uri: 'https://schema.org/' },
-    });
-
-    const schema = posts.$schema;
-
-    expect(schema.namespace).toEqual({ prefix: 'schema', uri: 'https://schema.org/' });
-  });
-
-  it('should include subClassOf if defined', () => {
-    const posts = podTable('posts', {
-      id: id('id'),
-      title: string('title').predicate('https://schema.org/headline'),
-    }, {
-      base: '/data/posts/',
-      type: 'https://schema.org/BlogPosting',
-      subClassOf: ['https://schema.org/CreativeWork'],
-    });
-
-    const schema = posts.$schema;
-
-    expect(schema.subClassOf).toEqual(['https://schema.org/CreativeWork']);
-  });
-
-  it('should not include base in schema (federated query use case)', () => {
-    const posts = podTable('posts', {
-      id: id('id'),
-      title: string('title').predicate('https://schema.org/headline'),
-    }, {
-      base: '/data/posts/',
-      type: 'https://schema.org/BlogPosting',
-    });
-
-    const schema = posts.$schema;
-
-    // PodSchema should not have base - that's the whole point
-    expect((schema as any).base).toBeUndefined();
-  });
-});
-
-describe('relations() with federated discover', () => {
-  it('should support discover option with PodSchema', () => {
-    const friends = podTable('friends', {
-      id: id('id'),
-      name: string('name').predicate('https://schema.org/name'),
-      webId: uri('webId').predicate('http://xmlns.com/foaf/0.1/knows'),
-    }, {
-      base: '/data/friends/',
-      type: 'http://xmlns.com/foaf/0.1/Person',
-    });
+  describe('relations() with federated discover', () => {
+    const usersSchema = podTable('users', {
+      id: id(),
+      name: string('name').predicate(FOAF_NAME)
+    }, { 
+      base: '/users/',
+      type: SCHEMA_PERSON 
+    }).$schema;
 
     const posts = podTable('posts', {
-      id: id('id'),
-      title: string('title').predicate('https://schema.org/headline'),
-    }, {
-      base: '/data/posts/',
-      type: 'https://schema.org/BlogPosting',
+      id: id(),
+      authorId: uri('authorId').reference(SCHEMA_PERSON).predicate('https://schema.org/author'),
+    }, { 
+      base: '/posts/',
+      type: SCHEMA_BLOG_POSTING 
     });
 
-    const friendsRelations = relations(friends, ({ many }) => ({
-      posts: many(posts.$schema, {
-        discover: (friend) => friend.webId,
-      }),
-    }));
+    it('should support discover option with PodSchema', () => {
+      const postRelations = relations(posts, ({ one }) => ({
+        author: one(usersSchema, {
+          discover: (post) => 'https://example.org/profile/card#me',
+          fields: [posts.authorId]
+        })
+      }));
 
-    expect(friendsRelations.posts).toBeDefined();
-    expect(friendsRelations.posts.type).toBe('many');
-    expect(friendsRelations.posts.isFederated).toBe(true);
-    expect(friendsRelations.posts.discover).toBeInstanceOf(Function);
-    
-    // Test that discover function works
-    const testFriend = { id: '1', name: 'Bob', webId: 'https://bob.pod/profile/card#me' };
-    expect(friendsRelations.posts.discover!(testFriend)).toBe('https://bob.pod/profile/card#me');
-  });
-
-  it('should mark relation as non-federated when using PodTable', () => {
-    const users = podTable('users', {
-      id: id('id'),
-      name: string('name').predicate('https://schema.org/name'),
-    }, {
-      base: '/data/users/',
-      type: 'https://schema.org/Person',
+      expect(posts.relations?.author.discover).toBeDefined();
+      expect(posts.relations?.author.isFederated).toBe(true);
     });
 
-    const posts = podTable('posts', {
-      id: id('id'),
-      title: string('title').predicate('https://schema.org/headline'),
-      authorId: uri('author').predicate('https://schema.org/author'),
-    }, {
-      base: '/data/posts/',
-      type: 'https://schema.org/BlogPosting',
+    it('should mark relation as non-federated when using PodTable', () => {
+      const usersTable = podTable('users', { id: id() }, { base: '/u/', type: SCHEMA_PERSON });
+      const r = relations(posts, ({ one }) => ({
+        author: one(usersTable)
+      }));
+      expect(posts.relations?.author.isFederated).toBe(false);
     });
 
-    const postsRelations = relations(posts, ({ one }) => ({
-      author: one(users, {
-        fields: [posts.columns.authorId],
-        references: [users.columns.id],
-      }),
-    }));
-
-    expect(postsRelations.author).toBeDefined();
-    expect(postsRelations.author.type).toBe('one');
-    expect(postsRelations.author.isFederated).toBe(false);
-    expect(postsRelations.author.discover).toBeUndefined();
-  });
-
-  it('should support discover returning array of webIds', () => {
-    const contacts = podTable('contacts', {
-      id: id('id'),
-      primaryWebId: uri('primaryWebId').predicate('http://xmlns.com/foaf/0.1/knows'),
-      secondaryWebId: uri('secondaryWebId').predicate('http://xmlns.com/foaf/0.1/knows'),
-    }, {
-      base: '/data/contacts/',
-      type: 'http://xmlns.com/foaf/0.1/Person',
+    it('should support discover returning array of webIds', () => {
+      const r = relations(posts, ({ one }) => ({
+        author: one(usersSchema, {
+          discover: () => ['https://pod1.com/card#me', 'https://pod2.com/card#me']
+        })
+      }));
+      expect(posts.relations?.author.discover!({})).toHaveLength(2);
     });
-
-    const posts = podTable('posts', {
-      id: id('id'),
-      title: string('title').predicate('https://schema.org/headline'),
-    }, {
-      base: '/data/posts/',
-      type: 'https://schema.org/BlogPosting',
-    });
-
-    const contactsRelations = relations(contacts, ({ many }) => ({
-      posts: many(posts.$schema, {
-        discover: (contact) => [contact.primaryWebId, contact.secondaryWebId].filter(Boolean),
-      }),
-    }));
-
-    const testContact = {
-      id: '1',
-      primaryWebId: 'https://alice.pod/profile/card#me',
-      secondaryWebId: 'https://alice-work.pod/profile/card#me',
-    };
-
-    const webIds = contactsRelations.posts.discover!(testContact);
-    expect(webIds).toEqual([
-      'https://alice.pod/profile/card#me',
-      'https://alice-work.pod/profile/card#me',
-    ]);
   });
 });

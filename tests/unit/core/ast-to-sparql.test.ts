@@ -1,6 +1,6 @@
 import { describe, it, expect, beforeEach } from 'vitest';
 import { ASTToSPARQLConverter } from '@src/core/ast-to-sparql';
-import { podTable, string } from '@src/core/pod-table';
+import { podTable, string } from '@src/core/schema';
 import { eq, and, inArray, isNull, regex as regexCond } from '@src/core/query-conditions';
 import { UriResolverImpl } from '@src/core/uri';
 

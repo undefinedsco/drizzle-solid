@@ -1,4 +1,4 @@
-import type { PodTable } from '../pod-table';
+import type { PodTable } from '../schema';
 import type { PodOperation } from '../pod-dialect';
 import type { QueryCondition } from '../query-conditions';
 import type { SelectQueryPlan } from '../select-plan';

@@ -5,7 +5,7 @@
  * Each record has a subject URI with a fragment identifier (e.g., tags.ttl#uuid)
  */
 
-import type { PodTable } from '../pod-table';
+import type { PodTable } from '../schema';
 import type { QueryCondition } from '../query-conditions';
 import { BaseResourceResolver } from './base-resolver';
 import { v4 as uuidv4 } from 'uuid';

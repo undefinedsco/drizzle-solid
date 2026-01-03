@@ -3,7 +3,7 @@
  * 提供类似 Drizzle 的查询条件函数
  */
 
-import { PodColumnBase } from './pod-table';
+import { PodColumnBase } from './schema';
 import { BinaryExpression, LogicalExpression, UnaryExpression, SPARQLExpression } from './expressions';
 
 // 导出新的类型

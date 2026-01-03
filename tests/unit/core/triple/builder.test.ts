@@ -3,7 +3,7 @@
  */
 
 import { tripleBuilder, TripleBuilderImpl } from '../../../../src/core/triple';
-import { podTable, string, int, boolean, datetime, uri, object } from '../../../../src/core/pod-table';
+import { podTable, string, int, boolean, datetime, uri, object } from '../../../../src/core/schema';
 
 describe('TripleBuilder', () => {
   // 测试用表定义

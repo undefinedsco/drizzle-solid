@@ -1,5 +1,5 @@
 import { entityKind, SQL } from 'drizzle-orm';
-import { PodTable, PodColumnBase, InferTableData } from '../pod-table';
+import { PodTable, PodColumnBase, InferTableData } from '../schema';
 import { QueryCondition, inArray } from '../query-conditions';
 import { AggregateExpression, isAggregateExpression } from '../aggregates';
 import { PodOperation } from '../pod-dialect';

@@ -1,6 +1,6 @@
 import { entityKind } from 'drizzle-orm';
 import { SQL } from 'drizzle-orm';
-import { PodTable } from './pod-table';
+import { PodTable } from './schema';
 import { QueryCondition } from './query-conditions';
 import { BinaryExpression } from './expressions';
 import { ASTToSPARQLConverter, type SPARQLQuery } from './ast-to-sparql';

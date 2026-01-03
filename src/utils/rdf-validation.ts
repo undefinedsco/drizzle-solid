@@ -1,4 +1,4 @@
-import { RDF_PREDICATES, RDF_NAMESPACES } from '../core/rdf-constants';
+import { RDF_NAMESPACES } from '../core/rdf-constants';
 
 export interface ValidationResult {
   isValid: boolean;
@@ -286,9 +286,8 @@ function isValidURI(uri: string): boolean {
 }
 
 function isValidPredicate(predicate: string): boolean {
-  // 检查是否是已知的谓词
-  return Object.values(RDF_PREDICATES).includes(predicate as any) ||
-         Object.values(RDF_NAMESPACES).some(ns => predicate.startsWith(ns));
+  // 检查是否是有效的 URI 或符合已知命名空间
+  return Object.values(RDF_NAMESPACES).some(ns => predicate.startsWith(ns));
 }
 
 function cleanURI(uri: string): string {

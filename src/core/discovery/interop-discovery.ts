@@ -1,4 +1,4 @@
-import { PodTable } from '../pod-table';
+import { PodTable } from '../schema';
 import { DataDiscovery, DataLocation, DiscoverOptions, DataRegistrationInfo, RegisterOptions, ShapeInfo } from './types';
 import { INTEROP, SHAPETREES, UDFS } from './interop-types';
 import { registrySetSchema, dataRegistrySchema, dataRegistrationSchema, accessGrantSchema, dataGrantSchema, applicationRegistrationSchema } from './interop-tables';

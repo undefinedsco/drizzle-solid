@@ -5,7 +5,7 @@
 import { vi, describe, it, expect, beforeEach } from 'vitest';
 import { TypeIndexDiscovery } from '../../../../src/core/discovery';
 import { TypeIndexManager } from '../../../../src/core/typeindex-manager';
-import { podTable, string, id } from '../../../../src/core/pod-table';
+import { podTable, string, id } from '../../../../src/core/schema';
 import { UriResolverImpl } from '../../../../src/core/uri';
 
 // Mock TypeIndexManager class (not the instance)

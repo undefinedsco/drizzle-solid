@@ -8,7 +8,7 @@ import {
   UpdateQueryBuilder,
   DeleteQueryBuilder
 } from './pod-session';
-import { PodTable, SolidSchema, isSolidSchema, type InferTableData, PodColumnBase, type RelationDefinition, type CreateTableOptions } from './pod-table';
+import { PodTable, SolidSchema, isSolidSchema, type InferTableData, PodColumnBase, type RelationDefinition, type CreateTableOptions } from './schema';
 import { QueryCondition } from './query-conditions';
 import { inArray } from './query-conditions';
 import { 
@@ -640,7 +640,7 @@ export class PodDatabase<TSchema extends Record<string, unknown> = Record<string
 
     // 3. 没有 Shape，使用基础表定义（仅 id 列）
     console.log(`[discoverTable] No shape available, creating basic table`);
-    const { podTable, string } = await import('./pod-table');
+    const { podTable, string } = await import('./schema');
     
     const tableName = this.extractClassName(rdfClass);
     const table = podTable(tableName, {
@@ -805,7 +805,7 @@ export class PodDatabase<TSchema extends Record<string, unknown> = Record<string
 
     // 3. 没有 Shape，返回仅含 id 的基础表
     console.log(`[locationToTable] No shape available, creating basic table for container: ${location.container}`);
-    const { podTable, string } = await import('./pod-table');
+    const { podTable, string } = await import('./schema');
     
     const tableName = this.extractContainerName(location.container);
     

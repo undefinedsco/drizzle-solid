@@ -4,7 +4,7 @@
  * RDF Shape (SHACL) 相关的类型定义
  */
 
-import type { PodTable } from '../pod-table';
+import type { PodTable } from '../schema';
 
 /**
  * Shape 属性定义

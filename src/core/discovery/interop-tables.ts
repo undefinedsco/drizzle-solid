@@ -1,4 +1,4 @@
-import { solidSchema, string, uri, id } from '../pod-table';
+import { solidSchema, string, uri, id } from '../schema';
 import { INTEROP, UDFS } from './interop-types';
 
 const ns = { prefix: 'interop', uri: INTEROP.NS };

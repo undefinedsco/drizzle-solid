@@ -1,7 +1,7 @@
 import { entityKind } from 'drizzle-orm';
 import { SQL } from 'drizzle-orm';
 import { PodDialect, type PodOperation } from './pod-dialect';
-import { PodTable, PodColumnBase, type InferTableData, type InferInsertData, type InferUpdateData } from './pod-table';
+import { PodTable, PodColumnBase, type InferTableData, type InferInsertData, type InferUpdateData } from './schema';
 import { QueryCondition, inArray } from './query-conditions';
 import { AggregateExpression, isAggregateExpression } from './aggregates';
 import type { SelectQueryPlan } from './select-plan';

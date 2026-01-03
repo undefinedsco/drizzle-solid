@@ -7,7 +7,7 @@
  * 设计原则：无状态，所有需要的上下文都通过参数传入
  */
 
-import type { PodTable, PodColumnBase } from '../pod-table';
+import type { PodTable, PodColumnBase } from '../schema';
 import type {
   UriResolver,
   UriContext,

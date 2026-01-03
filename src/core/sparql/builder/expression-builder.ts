@@ -1,6 +1,6 @@
 import { QueryCondition } from '../../query-conditions';
 import { BinaryExpression, LogicalExpression, UnaryExpression } from '../../expressions';
-import { PodTable, PodColumnBase } from '../../pod-table';
+import { PodTable, PodColumnBase } from '../../schema';
 import { formatValue, resolveColumn, getPredicateForColumn } from '../helpers';
 import type { UriContext, UriResolver } from '../../uri';
 import { UriResolverImpl } from '../../uri';

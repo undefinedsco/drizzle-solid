@@ -2,7 +2,7 @@
  * Base ResourceResolver with shared logic
  */
 
-import type { PodTable } from '../pod-table';
+import type { PodTable } from '../schema';
 import type { QueryCondition } from '../query-conditions';
 import type { ResourceResolver } from './types';
 

@@ -5,7 +5,7 @@
  * for resource URL resolution and listing.
  */
 
-import type { PodTable } from '../pod-table';
+import type { PodTable } from '../schema';
 import type { QueryCondition } from '../query-conditions';
 
 export interface ResourceResolver {

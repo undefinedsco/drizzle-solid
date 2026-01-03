@@ -1,4 +1,4 @@
-import { PodColumnBase, type InferInsertData, type InferUpdateData, PodTable } from '../pod-table';
+import { PodColumnBase, type InferInsertData, type InferUpdateData, PodTable } from '../schema';
 import { QueryCondition } from '../query-conditions';
 import { AggregateExpression } from '../aggregates';
 import { PodOperation } from '../pod-dialect';

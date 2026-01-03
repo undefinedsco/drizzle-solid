@@ -4,7 +4,7 @@
  * 处理内联对象类型列 (object/json)，创建嵌套三元组结构
  */
 
-import type { PodColumnBase, PodTable } from '../../pod-table';
+import type { PodColumnBase, PodTable } from '../../schema';
 import type { ColumnHandler, RdfTerm, BuildResult, BuildContext, Triple } from '../types';
 
 const XSD = 'http://www.w3.org/2001/XMLSchema#';

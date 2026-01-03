@@ -4,7 +4,7 @@
  * 联邦查询的类型定义
  */
 
-import type { SolidSchema, PodTable } from '../pod-table';
+import type { SolidSchema, PodTable } from '../schema';
 
 /**
  * 联邦查询错误

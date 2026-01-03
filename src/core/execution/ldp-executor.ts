@@ -4,7 +4,7 @@
  * 负责 LDP 模式下的写操作 (N3 Patch)，剥离自 PodDialect
  */
 
-import type { PodTable } from '../pod-table';
+import type { PodTable } from '../schema';
 import type { ComunicaSPARQLExecutor } from '../sparql-executor';
 import { TripleBuilderImpl } from '../triple/builder';
 import type { TripleBuilder } from '../triple/types';

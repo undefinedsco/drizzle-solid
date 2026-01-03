@@ -7,7 +7,7 @@
  * 使用统一的 UriResolver 进行 URI 解析
  */
 
-import type { PodColumnBase, PodTable } from '../../pod-table';
+import type { PodColumnBase, PodTable } from '../../schema';
 import type { ColumnHandler, RdfTerm, BuildResult, BuildContext } from '../types';
 import type { UriContext } from '../../uri';
 import { UriResolverImpl } from '../../uri';

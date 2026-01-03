@@ -1,4 +1,4 @@
-import { PodTable } from '../pod-table';
+import { PodTable } from '../schema';
 import { TypeIndexManager, TypeIndexEntry } from '../typeindex-manager';
 import { DataDiscovery, DataLocation, DiscoverOptions, RegisterOptions } from './types';
 import type { UriResolver } from '../uri';

@@ -7,7 +7,7 @@ import {
   uri,
   int,
   boolean,
-} from '@src/core/pod-table';
+} from '@src/core/schema';
 
 const VOCAB = {
   Secret: 'https://vocab.example/Secret',
@@ -27,7 +27,7 @@ const VOCAB = {
 
 describe('Schema Inheritance', () => {
   // 基础 schema 供测试使用
-  const secretSchema = solidSchema('secret', {
+  const secretSchema = solidSchema({
     id: id(),
     name: string('name').predicate(VOCAB.name),
     createdAt: datetime('createdAt').predicate(VOCAB.createdAt),
@@ -37,7 +37,7 @@ describe('Schema Inheritance', () => {
 
   describe('基本继承', () => {
     it('子类应该继承父类所有列', () => {
-      const apiKeySchema = secretSchema.extend('apiKey', {
+      const apiKeySchema = secretSchema.extend({
         apiKey: string('apiKey').notNull().predicate(VOCAB.apiKey),
       }, {
         type: VOCAB.APIKey,
@@ -52,7 +52,7 @@ describe('Schema Inheritance', () => {
     });
 
     it('子类应该能添加多个新属性', () => {
-      const passwordSchema = secretSchema.extend('password', {
+      const passwordSchema = secretSchema.extend({
         hash: string('hash').notNull().predicate(VOCAB.hash),
         salt: string('salt').notNull().predicate(VOCAB.salt),
       }, {
@@ -67,7 +67,7 @@ describe('Schema Inheritance', () => {
 
   describe('subClassOf 自动设置', () => {
     it('子类 subClassOf 应该自动包含父类 type', () => {
-      const apiKeySchema = secretSchema.extend('apiKey', {
+      const apiKeySchema = secretSchema.extend({
         apiKey: string('apiKey').predicate(VOCAB.apiKey),
       }, {
         type: VOCAB.APIKey,
@@ -79,14 +79,14 @@ describe('Schema Inheritance', () => {
 
     it('多级继承应该包含所有祖先类型', () => {
       // 第一级继承
-      const namedSecretSchema = secretSchema.extend('namedSecret', {
+      const namedSecretSchema = secretSchema.extend({
         displayName: string('displayName').predicate('https://vocab.example/displayName'),
       }, {
         type: 'https://vocab.example/NamedSecret',
       });
 
       // 第二级继承
-      const apiKeySchema = namedSecretSchema.extend('apiKey', {
+      const apiKeySchema = namedSecretSchema.extend({
         apiKey: string('apiKey').predicate(VOCAB.apiKey),
       }, {
         type: VOCAB.APIKey,
@@ -99,7 +99,7 @@ describe('Schema Inheritance', () => {
 
   describe('约束增强', () => {
     it('子类可以给继承的属性添加 notNull 约束', () => {
-      const strictSecretSchema = secretSchema.extend('strictSecret', {
+      const strictSecretSchema = secretSchema.extend({
         name: string('name').notNull(), // 添加 notNull
       }, {
         type: 'https://vocab.example/StrictSecret',
@@ -110,7 +110,7 @@ describe('Schema Inheritance', () => {
     });
 
     it('子类可以给继承的属性添加 default 约束', () => {
-      const defaultedSecretSchema = secretSchema.extend('defaultedSecret', {
+      const defaultedSecretSchema = secretSchema.extend({
         name: string('name').default('Unnamed'),
       }, {
         type: 'https://vocab.example/DefaultedSecret',
@@ -125,7 +125,7 @@ describe('Schema Inheritance', () => {
   describe('predicate 保护', () => {
     it('尝试修改 predicate 应该抛出错误', () => {
       expect(() => {
-        secretSchema.extend('badSchema', {
+        secretSchema.extend({
           name: string('name').predicate('https://different.example/name'), // 不同的 predicate
         }, {
           type: 'https://vocab.example/BadSchema',
@@ -135,7 +135,7 @@ describe('Schema Inheritance', () => {
 
     it('使用相同 predicate 不应抛出错误', () => {
       expect(() => {
-        secretSchema.extend('samePredicateSchema', {
+        secretSchema.extend({
           name: string('name').notNull().predicate(VOCAB.name), // 相同的 predicate + 新约束
         }, {
           type: 'https://vocab.example/SamePredicateSchema',
@@ -144,31 +144,32 @@ describe('Schema Inheritance', () => {
     });
   });
 
-  describe('at() 方法', () => {
-    it('继承的 schema 可以正常绑定位置', () => {
-      const apiKeySchema = secretSchema.extend('apiKey', {
+  describe('table() 方法', () => {
+    it('继承的 schema 可以正常实例化表', () => {
+      const apiKeySchema = secretSchema.extend({
         apiKey: string('apiKey').predicate(VOCAB.apiKey),
       }, {
         type: VOCAB.APIKey,
       });
 
-      const table = apiKeySchema.at('/vault/api-keys/');
+      const table = apiKeySchema.table('apiKeys', { base: '/vault/api-keys/' });
 
       expect(table).toBeDefined();
+      expect(table.config.name).toBe('apiKeys');
       expect(table.config.base).toBe('/vault/api-keys/');
       expect(table.columns.id).toBeDefined();
       expect(table.columns.name).toBeDefined();
       expect(table.columns.apiKey).toBeDefined();
     });
 
-    it('绑定后的表应该有正确的 subClassOf', () => {
-      const apiKeySchema = secretSchema.extend('apiKey', {
+    it('实例化后的表应该有正确的 subClassOf', () => {
+      const apiKeySchema = secretSchema.extend({
         apiKey: string('apiKey').predicate(VOCAB.apiKey),
       }, {
         type: VOCAB.APIKey,
       });
 
-      const table = apiKeySchema.at('/vault/api-keys/');
+      const table = apiKeySchema.table('apiKeys', { base: '/vault/api-keys/' });
 
       expect(table.config.subClassOf).toContain(VOCAB.Secret);
     });
@@ -176,14 +177,14 @@ describe('Schema Inheritance', () => {
 
   describe('类型推断', () => {
     it('$inferSelect 应该包含所有继承的字段', () => {
-      const apiKeySchema = secretSchema.extend('apiKey', {
+      const apiKeySchema = secretSchema.extend({
         apiKey: string('apiKey').predicate(VOCAB.apiKey),
         count: int('count').predicate(VOCAB.count),
       }, {
         type: VOCAB.APIKey,
       });
 
-      const table = apiKeySchema.at('/vault/api-keys/');
+      const table = apiKeySchema.table('apiKeys', { base: '/vault/api-keys/' });
 
       // 类型测试 - 这些应该编译通过
       type SelectType = typeof table.$inferSelect;
@@ -200,7 +201,7 @@ describe('Schema Inheritance', () => {
 
   describe('空继承', () => {
     it('不添加新列也可以继承', () => {
-      const aliasSchema = secretSchema.extend('secretAlias', {}, {
+      const aliasSchema = secretSchema.extend({}, {
         type: 'https://vocab.example/SecretAlias',
       });
 
@@ -211,7 +212,7 @@ describe('Schema Inheritance', () => {
 
   describe('复杂继承场景', () => {
     it('Secret -> APIKey 完整示例', () => {
-      const apiKeySchema = secretSchema.extend('apiKey', {
+      const apiKeySchema = secretSchema.extend({
         apiKey: string('apiKey').notNull().predicate(VOCAB.apiKey),
         service: uri('service').predicate(VOCAB.service),
         active: boolean('active').default(true).predicate(VOCAB.active),
@@ -220,7 +221,6 @@ describe('Schema Inheritance', () => {
       });
 
       // 验证结构
-      expect(apiKeySchema.name).toBe('apiKey');
       expect(apiKeySchema.type).toBe(VOCAB.APIKey);
       expect(apiKeySchema.subClassOf).toContain(VOCAB.Secret);
 

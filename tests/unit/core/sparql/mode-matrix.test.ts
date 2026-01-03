@@ -10,7 +10,7 @@
 import { describe, it, expect, beforeEach } from 'vitest';
 import { SelectBuilder } from '../../../../src/core/sparql/builder/select-builder';
 import { UpdateBuilder } from '../../../../src/core/sparql/builder/update-builder';
-import { podTable, string, id } from '../../../../src/core/pod-table';
+import { podTable, string, id } from '../../../../src/core/schema';
 import { UriResolverImpl } from '../../../../src/core/uri';
 
 const ns = { prefix: 'schema', uri: 'https://schema.org/' };

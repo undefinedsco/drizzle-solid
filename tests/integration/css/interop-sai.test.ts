@@ -1,7 +1,7 @@
 import { describe, it, expect, beforeAll, afterAll } from 'vitest';
 import { drizzle } from '../../../src/driver';
 import { createTestSession, createSecondSessionInstance, ensureContainer, grantAccess } from './helpers';
-import { podTable, string, id, uri } from '../../../src/core/pod-table';
+import { podTable, string, id, uri } from '../../../src/core/schema';
 import { eq } from '../../../src/core/query-conditions';
 import { INTEROP } from '../../../src/core/discovery/interop-types';
 import { getSolidDataset, getThing, setUrl, setThing, saveSolidDatasetAt, createThing, createContainerAt, addUrl, getUrlAll, getUrl } from '@inrupt/solid-client';

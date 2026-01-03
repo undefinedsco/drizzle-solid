@@ -1,4 +1,4 @@
-import { PodColumnBase } from './pod-table';
+import { PodColumnBase } from './schema';
 
 export type AggregateFunction = 'count' | 'sum' | 'avg' | 'min' | 'max';
 

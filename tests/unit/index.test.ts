@@ -21,9 +21,7 @@ describe('Index exports', () => {
       string,
       int,
       boolean,
-      date,
-      RDF_PREDICATES,
-      RDF_CLASSES
+      date
     } = await import('@src/index');
 
     expect(podTable).toBeDefined();
@@ -31,8 +29,6 @@ describe('Index exports', () => {
     expect(int).toBeDefined();
     expect(boolean).toBeDefined();
     expect(date).toBeDefined();
-    expect(RDF_PREDICATES).toBeDefined();
-    expect(RDF_CLASSES).toBeDefined();
   });
 
   it('应该导出工具函数', async () => {

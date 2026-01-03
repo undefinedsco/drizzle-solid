@@ -1,6 +1,6 @@
 import { describe, it, expect, vi } from 'vitest';
 import { PodAsyncSession } from '@src/core/pod-session';
-import { podTable, id, string } from '@src/core/pod-table';
+import { podTable, id, string } from '@src/core/schema';
 import { InsertQueryBuilder } from '@src/core/query-builders/insert-query-builder';
 
 describe('ID Generation', () => {

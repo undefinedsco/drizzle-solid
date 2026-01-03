@@ -6,7 +6,7 @@
 import { describe, it, expect, beforeAll, afterAll } from 'vitest';
 import { drizzle } from '../../src/driver';
 import { createTestSession } from '../integration/css/helpers';
-import { podTable, string, id, int } from '../../src/core/pod-table';
+import { podTable, string, id, int } from '../../src/core/schema';
 import { eq, gt } from '../../src/core/query-conditions';
 
 describe('Large Dataset Benchmark (10000 records)', () => {

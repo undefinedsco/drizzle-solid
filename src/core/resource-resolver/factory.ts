@@ -4,7 +4,7 @@
  * Creates the appropriate resolver based on table configuration
  */
 
-import type { PodTable } from '../pod-table';
+import type { PodTable } from '../schema';
 import type { ResourceResolver, ResourceResolverFactory } from './types';
 import { FragmentResourceResolver } from './fragment-resolver';
 import { DocumentResourceResolver } from './document-resolver';

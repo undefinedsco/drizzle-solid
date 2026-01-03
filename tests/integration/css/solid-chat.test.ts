@@ -1,7 +1,7 @@
 import { describe, it, expect, beforeAll } from 'vitest';
 import { drizzle } from '../../../src/driver';
 import { createTestSession, createSecondSessionInstance, ensureContainer, grantAccess } from './helpers';
-import { podTable, string, id, uri, datetime } from '../../../src/core/pod-table';
+import { podTable, string, id, uri, datetime } from '../../../src/core/schema';
 import { INTEROP } from '../../../src/core/discovery/interop-types';
 // getSolidDataset, getThing, setUrl, setThing, saveSolidDatasetAt, addUrl - no longer needed, using PATCH directly
 

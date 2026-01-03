@@ -4,7 +4,7 @@
  * 注册和管理所有列类型处理器
  */
 
-import type { PodColumnBase } from '../../pod-table';
+import type { PodColumnBase } from '../../schema';
 import type { ColumnHandler } from '../types';
 import { DefaultHandler } from './default';
 import { UriHandler } from './uri';

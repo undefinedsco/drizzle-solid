@@ -5,7 +5,7 @@
  * The subject URI is the document URL itself
  */
 
-import type { PodTable } from '../pod-table';
+import type { PodTable } from '../schema';
 import type { QueryCondition } from '../query-conditions';
 import { BaseResourceResolver } from './base-resolver';
 import { v4 as uuidv4 } from 'uuid';

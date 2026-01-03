@@ -1,5 +1,5 @@
 import { entityKind, SQL } from 'drizzle-orm';
-import { PodTable, PodColumnBase, InferUpdateData, HookContext } from '../pod-table';
+import { PodTable, PodColumnBase, InferUpdateData, HookContext } from '../schema';
 import { PodAsyncSession, PodOperation } from '../pod-session';
 import { QueryCondition } from '../query-conditions';
 import { UpdateQueryPlan } from './types';

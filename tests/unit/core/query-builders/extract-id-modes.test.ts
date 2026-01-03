@@ -2,7 +2,7 @@
  * Tests for extractIdFromSubject handling both document and fragment modes
  */
 import { describe, it, expect, beforeEach } from 'vitest';
-import { podTable, string, id } from '../../../../src/core/pod-table';
+import { podTable, string, id } from '../../../../src/core/schema';
 import { UriResolverImpl } from '../../../../src/core/uri';
 
 const ns = { prefix: 'schema', uri: 'https://schema.org/' };

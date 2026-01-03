@@ -1,7 +1,7 @@
 import { describe, it, expect, beforeEach, vi } from 'vitest';
 import { PodAsyncSession } from '@src/core/pod-session';
-import { PodTable } from '@src/core/pod-table';
-import { PodStringColumn, PodIntegerColumn } from '@src/core/pod-table';
+import { PodTable } from '@src/core/schema';
+import { PodStringColumn, PodIntegerColumn } from '@src/core/schema';
 // import { SQL } from 'drizzle-orm'; // Not used in tests
 
 // Mock PodDialect

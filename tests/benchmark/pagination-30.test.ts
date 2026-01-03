@@ -6,7 +6,7 @@
 import { describe, it, expect, beforeAll } from 'vitest';
 import { drizzle } from '../../src/driver';
 import { createTestSession } from '../integration/css/helpers';
-import { podTable, string, id, int } from '../../src/core/pod-table';
+import { podTable, string, id, int } from '../../src/core/schema';
 import { eq, gt, lt, and } from '../../src/core/query-conditions';
 
 describe('Pagination Benchmark (30 records per page)', () => {

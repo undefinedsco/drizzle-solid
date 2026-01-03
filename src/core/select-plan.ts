@@ -1,4 +1,4 @@
-import { PodTable, PodColumnBase } from './pod-table';
+import { PodTable, PodColumnBase } from './schema';
 import { AggregateExpression } from './aggregates';
 import { QueryCondition } from './query-conditions';
 

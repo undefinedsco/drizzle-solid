@@ -1,4 +1,4 @@
-import { PodTable } from '../pod-table';
+import { PodTable } from '../schema';
 import { DataDiscovery, DataLocation, DiscoverOptions, RegisterOptions, DataRegistrationInfo, ShapeInfo } from './types';
 import { InteropDiscovery } from './interop-discovery';
 

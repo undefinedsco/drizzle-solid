@@ -7,7 +7,7 @@ import { ResourceResolverFactoryImpl } from '../resource-resolver';
 import { ExecutionStrategyFactoryImpl } from '../execution';
 import { LdpExecutor } from '../execution/ldp-executor';
 import { UriResolverImpl } from '../uri';
-import type { PodTable } from '../pod-table';
+import type { PodTable } from '../schema';
 import type { QueryCondition } from '../query-conditions';
 import type { PodRuntime } from '../runtime/pod-runtime';
 

@@ -10,7 +10,7 @@ import {
   XSD,
   SHACL,
 } from '../../../../src/core/shape';
-import { podTable, string, int, boolean, id, uri } from '../../../../src/core/pod-table';
+import { podTable, string, int, boolean, id, uri } from '../../../../src/core/schema';
 
 // 测试用命名空间
 const ns = { prefix: 'schema', uri: 'https://schema.org/' };

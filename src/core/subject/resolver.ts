@@ -4,7 +4,7 @@
  * 统一的主体 URI 生成和解析
  */
 
-import type { PodTable } from '../pod-table';
+import type { PodTable } from '../schema';
 import type { SubjectResolver, ResourceMode, ParsedSubject, TimeContext } from './types';
 
 /**

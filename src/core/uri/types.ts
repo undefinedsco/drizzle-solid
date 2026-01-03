@@ -4,7 +4,7 @@
  * 统一的 URI 解析类型定义
  */
 
-import type { PodTable, PodColumnBase } from '../pod-table';
+import type { PodTable, PodColumnBase } from '../schema';
 
 /**
  * 资源模式

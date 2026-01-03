@@ -6,7 +6,7 @@
  * - Tables without sparqlEndpoint -> LdpStrategy
  */
 
-import type { PodTable } from '../pod-table';
+import type { PodTable } from '../schema';
 import type { ComunicaSPARQLExecutor } from '../sparql-executor';
 import type { ASTToSPARQLConverter } from '../ast-to-sparql';
 import type { ResourceResolver } from '../resource-resolver';

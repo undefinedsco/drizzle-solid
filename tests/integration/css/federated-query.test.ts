@@ -7,7 +7,7 @@
 import { describe, it, expect, beforeAll, afterAll } from 'vitest';
 import { drizzle } from '../../../src/driver';
 import { createTestSession, createSecondSessionInstance, ensureContainer, grantAccess } from './helpers';
-import { podTable, string, id, relations } from '../../../src/core/pod-table';
+import { podTable, string, id, relations } from '../../../src/core/schema';
 import { FederatedQueryExecutor } from '../../../src/core/federated';
 
 describe('CSS integration: Federated Query', () => {

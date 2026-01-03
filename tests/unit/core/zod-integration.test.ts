@@ -15,12 +15,12 @@ import {
   date,
   json,
   object,
-  id,
-  RDF_CLASSES
-} from '@src/core/pod-table';
+  id
+} from '@src/core/schema';
 import { SCHEMA_INRUPT as SCHEMA } from '@inrupt/vocab-common-rdf';
 
 const schemaNamespace = { prefix: SCHEMA.PREFIX, uri: SCHEMA.NAMESPACE };
+const SCHEMA_PERSON = 'https://schema.org/Person';
 
 describe('Zod 集成测试', () => {
   let usersTable: any; // Test table, using any for simplicity
@@ -37,7 +37,7 @@ describe('Zod 集成测试', () => {
       metadata: object('metadata')
     }, {
       base: 'idp:///users/index.ttl',
-      type: RDF_CLASSES.SCHEMA_PERSON,
+      type: SCHEMA_PERSON,
       namespace: schemaNamespace
     });
   });
@@ -307,7 +307,7 @@ describe('Zod 集成测试', () => {
         id: id()
       }, {
         base: 'idp:///empty/index.ttl',
-        type: RDF_CLASSES.SCHEMA_PERSON,
+        type: SCHEMA_PERSON,
         namespace: schemaNamespace
       });
 
@@ -321,7 +321,7 @@ describe('Zod 集成测试', () => {
         name: string('name').notNull()
       }, {
         base: 'idp:///invalid/index.ttl',
-        type: RDF_CLASSES.SCHEMA_PERSON,
+        type: SCHEMA_PERSON,
         namespace: schemaNamespace
       });
 

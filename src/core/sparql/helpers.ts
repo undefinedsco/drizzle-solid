@@ -1,4 +1,4 @@
-import { PodTable, PodColumnBase, SolidSchema } from '../pod-table';
+import { PodTable, PodColumnBase, SolidSchema } from '../schema';
 import type { UriContext, UriResolver } from '../uri';
 
 const XSD = 'http://www.w3.org/2001/XMLSchema#';

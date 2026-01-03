@@ -1,5 +1,5 @@
 import { describe, it, expect } from 'vitest';
-import { podTable, solidSchema, id, string, boolean, HookContext, TableHooks } from '../../../src/core/pod-table';
+import { podTable, solidSchema, id, string, boolean, HookContext, TableHooks } from '../../../src/core/schema';
 
 describe('TableHooks', () => {
   describe('hooks configuration', () => {

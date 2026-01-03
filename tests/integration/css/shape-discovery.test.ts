@@ -3,7 +3,7 @@ import { drizzle } from '../../../src/driver';
 import type { SolidDatabase } from '../../../src/driver';
 import type { Session } from '@inrupt/solid-client-authn-node';
 import { createTestSession, ensureContainer } from './helpers';
-import { podTable, string, int, boolean, uri, id } from '../../../src/core/pod-table';
+import { podTable, string, int, boolean, uri, id } from '../../../src/core/schema';
 import { INTEROP } from '../../../src/core/discovery/interop-types';
 
 const containerPath = `/shape-discovery-test/${Date.now()}/`;
