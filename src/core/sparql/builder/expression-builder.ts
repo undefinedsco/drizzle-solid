@@ -102,9 +102,24 @@ export class ExpressionBuilder {
     return `<${uri}>`;
   }
 
+  /**
+   * Check if value is a drizzle-orm SQL object
+   */
+  private isDrizzleSQL(value: any): boolean {
+    if (!value || typeof value !== 'object') return false;
+    // Check for drizzle-orm SQL class signature
+    const entityKind = value.constructor?.[Symbol.for('drizzle:entityKind')];
+    return entityKind === 'SQL' || (Array.isArray(value.queryChunks) && typeof value.getSQL === 'function');
+  }
+
   private buildExpression(condition: QueryCondition | any, table: PodTable): string {
     if (!condition || typeof condition !== 'object') {
       return '';
+    }
+
+    // Check if this is a drizzle-orm SQL object
+    if (this.isDrizzleSQL(condition)) {
+      throw new Error('Drizzle-ORM operators are not supported. Please use the operators provided by drizzle-solid.');
     }
 
     switch (condition.type) {
