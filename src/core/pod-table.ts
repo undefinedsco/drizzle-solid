@@ -1,5 +1,4 @@
 import { entityKind } from 'drizzle-orm';
-import { SQL } from 'drizzle-orm';
 
 // NanoID-like ID Generator (URL-friendly, cryptographically strong)
 const urlAlphabet = 'useandom-26T198340PX75pxJACKVERYMINDBUSHWOLF_GQZbfghjklqvwyzrict';
@@ -368,6 +367,23 @@ export type InferUpdateData<TTable extends PodTable<Record<string, PodColumnBase
   [K in keyof TTable['columns']]?: UpdateColumnValue<TTable['columns'][K]>
 }>;
 
+// ============ Schema 继承类型工具 ============
+
+/**
+ * 合并父类和子类的列定义
+ * 子类列覆盖同名父类列
+ */
+export type MergedColumns<
+  TParent extends Record<string, PodColumnBase<any, any, any, any>>,
+  TChild extends Record<string, PodColumnBase<any, any, any, any>>
+> = Simplify<{
+  [K in keyof TParent | keyof TChild]: K extends keyof TChild
+    ? TChild[K]
+    : K extends keyof TParent
+      ? TParent[K]
+      : never;
+}>;
+
 /**
  * Solid authentication session interface.
  * Compatible with @inrupt/solid-client-authn-browser Session.
@@ -595,14 +611,6 @@ export abstract class PodColumnBase<
   table?: PodTable<any>;
   relationName?: string;
 
-  // 添加 drizzle-zod 需要的 getSQL 方法
-  getSQL(): SQL {
-    return {
-      queryChunks: [{ value: this.name }],
-      params: [],
-    } as unknown as SQL;
-  }
-
   // 获取 RDF 谓词
   getPredicate(tableNamespace?: NamespaceConfig): string {
     if (this.options.predicate) {
@@ -754,6 +762,14 @@ export abstract class PodColumnBase<
 
 export type PodColumn = PodColumnBase<ColumnBuilderDataType>;
 
+/**
+ * PodTable with columns accessible as direct properties.
+ * This type combines PodTable with its column definitions,
+ * allowing `table.columnName` syntax in addition to `table.columns.columnName`.
+ */
+export type PodTableWithColumns<TColumns extends Record<string, PodColumnBase<any, any, any, any>>> = 
+  PodTable<TColumns> & TColumns;
+
 // 具体的列类型
 export class PodStringColumn<
   TNotNull extends boolean = false,
@@ -864,12 +880,81 @@ export interface CreateTableOptions {
   hooks?: TableHooks;
 }
 
+// ============ Schema 继承工具函数 ============
+
+/**
+ * 验证子类列不能修改父类的 predicate
+ * @internal
+ */
+function validateColumnOverride(
+  childColumn: ColumnBuilder<ColumnBuilderDataType, ColumnBuilderDataType | null, boolean, boolean>,
+  parentColumn: PodColumnBase<ColumnBuilderDataType, boolean, boolean, ColumnBuilderDataType | null>,
+  columnName: string,
+  childSchemaName: string,
+  parentSchemaName: string
+): void {
+  const childPredicate = childColumn.getPredicateUri?.() ?? childColumn.options?.predicate;
+  const parentPredicate = parentColumn.options?.predicate;
+
+  if (childPredicate && parentPredicate && childPredicate !== parentPredicate) {
+    throw new Error(
+      `Schema 继承错误: 不能修改 "${columnName}" 列的 predicate。` +
+      `父 schema "${parentSchemaName}" 定义为 "${parentPredicate}"，` +
+      `子 schema "${childSchemaName}" 尝试改为 "${childPredicate}"。` +
+      `子类只能添加约束（notNull, default），不能更改 predicate。`
+    );
+  }
+}
+
+/**
+ * 合并父子 schema 的列定义
+ * @internal
+ */
+function mergeSchemaColumns<TChildColumns extends Record<string, ColumnInput>>(
+  parentSchema: SolidSchema<Record<string, PodColumnBase<ColumnBuilderDataType, boolean, boolean, ColumnBuilderDataType | null>>>,
+  childColumns: TChildColumns,
+  childSchemaName: string
+): Record<string, PodColumnBase<ColumnBuilderDataType, boolean, boolean, ColumnBuilderDataType | null> | ColumnInput> {
+  const mergedColumns: Record<string, PodColumnBase<ColumnBuilderDataType, boolean, boolean, ColumnBuilderDataType | null> | ColumnInput> = {};
+
+  // 先复制父类所有列
+  for (const [name, col] of Object.entries(parentSchema.columns)) {
+    mergedColumns[name] = col;
+  }
+
+  // 处理子类列
+  for (const [name, childCol] of Object.entries(childColumns)) {
+    const parentCol = parentSchema.columns[name];
+
+    if (parentCol) {
+      // 覆盖父类列 - 验证 predicate 不变
+      if (!(childCol instanceof PodColumnBase)) {
+        validateColumnOverride(
+          childCol as ColumnBuilder<ColumnBuilderDataType, ColumnBuilderDataType | null, boolean, boolean>,
+          parentCol,
+          name,
+          childSchemaName,
+          parentSchema.name
+        );
+        // 继承父类的 predicate（如果子类没有指定）
+        const builder = childCol as ColumnBuilder<ColumnBuilderDataType, ColumnBuilderDataType | null, boolean, boolean>;
+        if (!builder.getPredicateUri?.() && !builder.options?.predicate) {
+          builder.options = { ...builder.options, predicate: parentCol.options?.predicate };
+        }
+      }
+    }
+    mergedColumns[name] = childCol;
+  }
+
+  return mergedColumns;
+}
+
 /**
  * SolidSchema - 独立的 schema 定义类
- * 
+ *
  * 只包含表的结构信息（列、类型、谓词映射），不包含 base。
  * 可以通过 .at(base) 方法绑定到具体位置，生成 PodTable。
- * 
+ *
  * @example
  * // 定义 schema（不绑定位置）
  * const profileSchema = solidSchema('profile', {
@@ -878,7 +963,7 @@ export interface CreateTableOptions {
  * }, {
  *   type: FOAF.Person,
  * });
- * 
+ *
  * // 绑定到具体位置
  * const myProfile = profileSchema.at('/profile/card.ttl');
  * const aliceProfile = profileSchema.at('https://alice.pod/profile/card.ttl');
@@ -917,13 +1002,76 @@ export class SolidSchema<TColumns extends Record<string, PodColumnBase<any, any,
    * const myProfile = profileSchema.at('/profile/card.ttl');
    * const aliceProfile = profileSchema.at('https://alice.pod/profile/card.ttl');
    */
-  at(base: string): PodTable<TColumns> {
+  at(base: string): PodTableWithColumns<TColumns> {
     return new PodTable(this.name, this.columns, {
       ...this.options,
       base,
-    });
+    }) as PodTableWithColumns<TColumns>;
   }
-  
+
+  /**
+   * 创建继承当前 schema 的子 schema
+   *
+   * 子类会继承父类的所有列，并可以：
+   * - 添加新的属性
+   * - 给继承的属性添加约束（如 notNull、default）
+   * - 但不能修改继承属性的 predicate
+   *
+   * @param name - 子 schema 名称
+   * @param columns - 子类新增或覆盖的列
+   * @param options - 子 schema 选项（必须提供 type）
+   * @returns 包含所有继承列和新列的子 schema
+   *
+   * @example
+   * const secretSchema = solidSchema('secret', {
+   *   id: id(),
+   *   name: string('name').predicate(VOCAB.name),
+   *   createdAt: datetime('createdAt').predicate(VOCAB.createdAt),
+   * }, {
+   *   type: 'https://vocab.example/Secret',
+   * });
+   *
+   * // 创建子 schema
+   * const apiKeySchema = secretSchema.extend('apiKey', {
+   *   // 新增属性
+   *   apiKey: string('apiKey').notNull().predicate(VOCAB.apiKey),
+   *   // 增强父类属性（添加约束，但不能改 predicate）
+   *   name: string('name').notNull(),
+   * }, {
+   *   type: 'https://vocab.example/APIKey',
+   * });
+   *
+   * // apiKeySchema 包含: id, name(notNull), createdAt, apiKey
+   * // apiKeySchema.subClassOf 自动包含 'https://vocab.example/Secret'
+   */
+  extend<
+    TChildName extends string,
+    TChildColumns extends Record<string, ColumnInput>
+  >(
+    name: TChildName,
+    columns: TChildColumns,
+    options: Omit<SolidSchemaOptions, 'subClassOf'>
+  ): SolidSchema<MergedColumns<TColumns, ResolvedColumns<TChildColumns>>> {
+    // 合并列
+    const mergedColumnDefs = mergeSchemaColumns(
+      this as SolidSchema<Record<string, PodColumnBase<ColumnBuilderDataType, boolean, boolean, ColumnBuilderDataType | null>>>,
+      columns,
+      name
+    );
+
+    // 处理 subClassOf - 自动包含父类 type
+    const subClassOf: string[] = [this.type];
+    if (this.subClassOf) {
+      subClassOf.push(...this.subClassOf);
+    }
+
+    // 创建子 schema（使用 solidSchema 函数处理列转换）
+    return solidSchema(name, mergedColumnDefs as TChildColumns, {
+      ...options,
+      subClassOf,
+    }) as unknown as SolidSchema<MergedColumns<TColumns, ResolvedColumns<TChildColumns>>>;
+  }
+
   /**
    * 获取 RDF 类型
    */
@@ -1154,14 +1302,6 @@ export class PodTable<TColumns extends Record<string, PodColumnBase<any, any, an
     };
 
     this.mapping = this.buildTableMapping();
-  }
-
-  // 添加 drizzle-zod 需要的 getSQL 方法
-  getSQL(): SQL {
-    return {
-      queryChunks: [this.config.name],
-      params: []
-    } as unknown as SQL;
   }
 
   // 获取容器路径
@@ -1759,7 +1899,7 @@ export function podTable<
   name: TName,
   columns: TColumns,
   options: PodTableOptions
-): PodTable<ResolvedColumns<TColumns>> {
+): PodTableWithColumns<ResolvedColumns<TColumns>> {
   const processedColumns: Partial<ResolvedColumns<TColumns>> = {};
 
   for (const [key, value] of Object.entries(columns)) {
@@ -1807,7 +1947,7 @@ export function podTable<
     processedColumns[key as keyof TColumns] = column as ResolveColumn<TColumns[typeof key & keyof TColumns]>;
   }
 
-  return new PodTable(name, processedColumns as ResolvedColumns<TColumns>, options);
+  return new PodTable(name, processedColumns as ResolvedColumns<TColumns>, options) as PodTableWithColumns<ResolvedColumns<TColumns>>;
 }
 
 export function relations<TTable extends PodTable<any>>(

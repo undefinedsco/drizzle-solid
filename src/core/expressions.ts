@@ -1,21 +1,21 @@
-import { SQL, SQLWrapper } from 'drizzle-orm';
 import { PodColumnBase } from './pod-table';
 
-export abstract class SPARQLExpression implements SQLWrapper {
-  getSQL(): SQL {
-    // Minimal implementation to satisfy SQLWrapper interface
-    // In a real Drizzle adapter, this would construct the SQL query chunks
-    return {
-      queryChunks: [], 
-      params: []
-    } as unknown as SQL;
-  }
+// 定义一个宽松的列类型，接受任何 PodColumnBase 变体
+type AnyColumn = PodColumnBase<any, any, any, any>;
+
+/**
+ * SPARQL 表达式基类
+ * 不再实现 drizzle-orm 的 SQLWrapper 接口，避免假 SQL 对象导致的问题
+ */
+export abstract class SPARQLExpression {
+  // 表达式标识符，用于类型检查
+  readonly [Symbol.toStringTag] = 'SPARQLExpression';
 }
 
 export class BinaryExpression extends SPARQLExpression {
   public readonly type = 'binary_expr';
   constructor(
-    public left: PodColumnBase | SPARQLExpression | string,
+    public left: AnyColumn | SPARQLExpression | string,
     public operator: string,
     public right: any
   ) {
