@@ -1,5 +1,5 @@
 import { describe, it, expect } from 'vitest';
-import { eq, and, or, gt, lt, gte, lte, inArray, isNull, isNotNull, ne } from 'drizzle-orm';
+import { eq, and, or, gt, lt, gte, lte, inArray, isNull, isNotNull, ne } from '@src/core/query-conditions';
 import { ExpressionBuilder } from '@src/core/sparql/builder/expression-builder';
 import { podTable, string, int, id, uri } from '@src/index';
 
@@ -55,17 +55,25 @@ const postsTable = podTable('posts', {
 
 const builder = new ExpressionBuilder();
 
-describe('ExpressionBuilder with drizzle-orm operators', () => {
+describe('ExpressionBuilder with query operators', () => {
   it('handles eq() operator', () => {
-    const condition = eq(table.columns.name as any, 'John');
+    const condition = eq(table.name, 'John');
     const result = builder.buildWhereClause(condition, table);
     expect(result).toContain('?name');
     expect(result).toContain('=');
     expect(result).toContain('"John"');
   });
 
+  it('handles ne() operator', () => {
+    const condition = ne(table.name, 'John');
+    const result = builder.buildWhereClause(condition, table);
+    expect(result).toContain('?name');
+    expect(result).toContain('!=');
+    expect(result).toContain('"John"');
+  });
+
   it('handles gt() operator', () => {
-    const condition = gt(table.columns.age as any, 18);
+    const condition = gt(table.age, 18);
     const result = builder.buildWhereClause(condition, table);
     expect(result).toContain('?age');
     expect(result).toContain('>');
@@ -73,7 +81,7 @@ describe('ExpressionBuilder with drizzle-orm operators', () => {
   });
 
   it('handles lt() operator', () => {
-    const condition = lt(table.columns.age as any, 65);
+    const condition = lt(table.age, 65);
     const result = builder.buildWhereClause(condition, table);
     expect(result).toContain('?age');
     expect(result).toContain('<');
@@ -81,14 +89,14 @@ describe('ExpressionBuilder with drizzle-orm operators', () => {
   });
 
   it('handles gte() operator', () => {
-    const condition = gte(table.columns.age as any, 21);
+    const condition = gte(table.age, 21);
     const result = builder.buildWhereClause(condition, table);
     expect(result).toContain('?age');
     expect(result).toContain('>=');
   });
 
   it('handles lte() operator', () => {
-    const condition = lte(table.columns.age as any, 30);
+    const condition = lte(table.age, 30);
     const result = builder.buildWhereClause(condition, table);
     expect(result).toContain('?age');
     expect(result).toContain('<=');
@@ -96,8 +104,8 @@ describe('ExpressionBuilder with drizzle-orm operators', () => {
 
   it('handles and() with multiple conditions', () => {
     const condition = and(
-      eq(table.columns.name as any, 'John'),
-      gt(table.columns.age as any, 18)
+      eq(table.name, 'John'),
+      gt(table.age, 18)
     );
     const result = builder.buildWhereClause(condition, table);
     expect(result).toContain('&&');
@@ -107,15 +115,15 @@ describe('ExpressionBuilder with drizzle-orm operators', () => {
 
   it('handles or() with multiple conditions', () => {
     const condition = or(
-      eq(table.columns.name as any, 'John'),
-      eq(table.columns.name as any, 'Jane')
+      eq(table.name, 'John'),
+      eq(table.name, 'Jane')
     );
     const result = builder.buildWhereClause(condition, table);
     expect(result).toContain('||');
   });
 
   it('handles inArray() operator', () => {
-    const condition = inArray(table.columns.age as any, [18, 21, 25]);
+    const condition = inArray(table.age, [18, 21, 25]);
     const result = builder.buildWhereClause(condition, table);
     expect(result).toContain('?age');
     expect(result).toContain('IN');
@@ -142,14 +150,14 @@ describe('ExpressionBuilder with drizzle-orm operators', () => {
   });
 
   it('handles isNull() operator', () => {
-    const condition = isNull(table.columns.name as any);
+    const condition = isNull(table.name);
     const result = builder.buildWhereClause(condition, table);
     expect(result).toContain('BOUND');
     expect(result).toContain('?name');
   });
 
   it('handles isNotNull() operator', () => {
-    const condition = isNotNull(table.columns.age as any);
+    const condition = isNotNull(table.age);
     const result = builder.buildWhereClause(condition, table);
     expect(result).toContain('BOUND');
     expect(result).toContain('?age');

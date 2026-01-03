@@ -651,7 +651,7 @@ export class PodDatabase<TSchema extends Record<string, unknown> = Record<string
     });
 
     await this.init(table);
-    return table;
+    return table as unknown as PodTable;
   }
 
   /**
@@ -817,7 +817,7 @@ export class PodDatabase<TSchema extends Record<string, unknown> = Record<string
     });
 
     await this.init(table);
-    return table;
+    return table as unknown as PodTable;
   }
 
   /**
