@@ -1,7 +1,8 @@
 import { 
-  NamespaceConfig, SolidSchemaOptions, InstantiateTableOptions, resolveTermIri 
+  NamespaceConfig, SolidSchemaOptions, InstantiateTableOptions, resolveTermIri,
+  ColumnBuilderDataType
 } from './defs';
-import { PodColumnBase, PodIntegerColumn, PodDateTimeColumn, PodBooleanColumn, PodJsonColumn, PodObjectColumn, PodArrayColumn, PodUriColumn, PodStringColumn, ColumnBuilderDataType } from './columns';
+import { PodColumnBase, PodIntegerColumn, PodDateTimeColumn, PodBooleanColumn, PodJsonColumn, PodObjectColumn, PodArrayColumn, PodUriColumn, PodStringColumn } from './columns';
 import { ColumnInput, MergedColumns, ResolvedColumns, ResolveColumn } from './types';
 import { mergeSchemaColumns } from './utils';
 import { PodTable, PodTableWithColumns } from './pod-table';

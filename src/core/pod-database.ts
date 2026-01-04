@@ -8,7 +8,7 @@ import {
   UpdateQueryBuilder,
   DeleteQueryBuilder
 } from './pod-session';
-import { PodTable, SolidSchema, isSolidSchema, type InferTableData, PodColumnBase, type RelationDefinition, type CreateTableOptions } from './schema';
+import { PodTable, SolidSchema, isSolidSchema, type InferTableData, PodColumnBase, type RelationDefinition, type InstantiateTableOptions } from './schema';
 import { QueryCondition } from './query-conditions';
 import { inArray } from './query-conditions';
 import { 
@@ -133,10 +133,10 @@ export class PodDatabase<TSchema extends Record<string, unknown> = Record<string
    */
   createTable<TColumns extends Record<string, PodColumnBase<any, any, any, any>>>(
     schema: SolidSchema<TColumns>,
-    options: CreateTableOptions
+    options: InstantiateTableOptions
   ): PodTable<TColumns> {
-    // Create table using schema.at() with the base path
-    const table = schema.at(options.base);
+    // Create table using schema.table() with the base path
+    const table = schema.table('default', options);
     
     // Attach hooks if provided
     if (options.hooks) {
@@ -213,8 +213,8 @@ export class PodDatabase<TSchema extends Record<string, unknown> = Record<string
     // 解析文档 URL（去掉 fragment）
     const { documentUrl } = this.parseIri(iri);
     
-    // 用 schema.at(documentUrl) 创建指向目标位置的表
-    const targetTable = table.$schema.at(documentUrl);
+    // 用 schema.table(documentUrl) 创建指向目标位置的表
+    const targetTable = table.$schema.table('target', { base: documentUrl });
     
     // 使用 whereByIri 内部方法
     const rows = await this.session
@@ -354,8 +354,8 @@ export class PodDatabase<TSchema extends Record<string, unknown> = Record<string
     // 解析文档 URL
     const { documentUrl } = this.parseIri(iri);
     
-    // 用 schema.at(documentUrl) 创建指向目标位置的表
-    const targetTable = table.$schema.at(documentUrl);
+    // 用 schema.table(documentUrl) 创建指向目标位置的表
+    const targetTable = table.$schema.table('target', { base: documentUrl });
 
     // 使用 whereByIri 内部方法进行更新
     await this.session
@@ -403,8 +403,8 @@ export class PodDatabase<TSchema extends Record<string, unknown> = Record<string
     // 解析文档 URL
     const { documentUrl } = this.parseIri(iri);
     
-    // 用 schema.at(documentUrl) 创建指向目标位置的表
-    const targetTable = table.$schema.at(documentUrl);
+    // 用 schema.table(documentUrl) 创建指向目标位置的表
+    const targetTable = table.$schema.table('target', { base: documentUrl });
 
     // 使用 whereByIri 内部方法进行删除
     await this.session

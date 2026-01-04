@@ -59,7 +59,7 @@ function getPodBaseUrl(session: Session): string {
  * 定义 Schema（纯数据结构，不含 base）
  * 
  * Schema 可以复用于查询任意 Pod 的数据，
- * 通过 db.createTable 或 schema.at() 绑定到具体位置
+ * 通过 db.createTable 或 schema.table() 绑定到具体位置
  */
 const profileSchema = solidSchema('profile', {
   id: id(),
