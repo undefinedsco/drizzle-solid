@@ -1,6 +1,5 @@
-import { 
-  ColumnBuilderDataType, ColumnBuilder, PodColumnBase 
-} from './columns';
+import { ColumnBuilderDataType } from './defs';
+import { ColumnBuilder, PodColumnBase } from './columns';
 import { ColumnInput } from './types';
 import type { SolidSchema } from './solid-schema';
 

@@ -35,13 +35,6 @@ export {
   float,
   double,
   jsonb,
-  // 传统的 Pod 列定义（向后兼容）
-  podString,
-  podInteger,
-  podBoolean,
-  podDateTime,
-  podJson,
-  podObject,
   id,
   // 命名空间和常量
   relations,
@@ -50,7 +43,7 @@ export {
   SolidSchema,
   isSolidSchema,
   // 类型
-  type PodColumn,
+  type PodColumnBase as PodColumn,
   type PodTable,
   type SolidSchemaOptions,
   type NamespaceConfig,
@@ -67,7 +60,6 @@ export {
   type HookContext,
   type TableHooks,
   type SolidSession,
-  type CreateTableOptions,
 } from './core/schema';
 
 // Profile 管理（工具类，可在 hooks 中使用）

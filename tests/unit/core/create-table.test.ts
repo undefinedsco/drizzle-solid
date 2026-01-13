@@ -1,9 +1,9 @@
 import { describe, it, expect, vi } from 'vitest';
-import { solidSchema, id, string, boolean, HookContext } from '../../../src/core/schema';
+import { podTable, id, string, boolean, HookContext } from '../../../src/core/schema';
 import { PodDatabase } from '../../../src/core/pod-database';
 import { PodDialect } from '../../../src/core/pod-dialect';
 
-describe('db.createTable()', () => {
+describe('podTable() with hooks', () => {
   // Mock dialect and session for testing
   const createMockDb = () => {
     const mockFetch = vi.fn();
@@ -41,19 +41,16 @@ describe('db.createTable()', () => {
   };
 
   describe('basic usage', () => {
-    it('should create table from schema with base', () => {
+    it('should create table with base', () => {
       const db = createMockDb();
       
-      const userSchema = solidSchema('users', {
+      const userTable = podTable('users', {
         id: id(),
         name: string('name').predicate('https://schema.org/name'),
         email: string('email').predicate('https://schema.org/email'),
       }, {
-        type: 'https://schema.org/Person',
-      });
-
-      const userTable = db.createTable(userSchema, {
         base: '/data/users/',
+        type: 'https://schema.org/Person',
       });
 
       expect(userTable.config.name).toBe('users');
@@ -67,19 +64,16 @@ describe('db.createTable()', () => {
     it('should create table with hooks', () => {
       const db = createMockDb();
       
-      const userSchema = solidSchema('users', {
-        id: id(),
-        name: string('name').predicate('https://schema.org/name'),
-      }, {
-        type: 'https://schema.org/Person',
-      });
-
       const afterInsertFn = vi.fn();
       const afterUpdateFn = vi.fn();
       const afterDeleteFn = vi.fn();
 
-      const userTable = db.createTable(userSchema, {
+      const userTable = podTable('users', {
+        id: id(),
+        name: string('name').predicate('https://schema.org/name'),
+      }, {
         base: '/data/users/',
+        type: 'https://schema.org/Person',
         hooks: {
           afterInsert: afterInsertFn,
           afterUpdate: afterUpdateFn,
@@ -93,22 +87,19 @@ describe('db.createTable()', () => {
       expect(userTable.config.hooks?.afterDelete).toBe(afterDeleteFn);
     });
 
-    it('should store db reference in table for hook context', () => {
+    it('should work without hooks', () => {
       const db = createMockDb();
       
-      const userSchema = solidSchema('users', {
+      const agents = podTable('agents', {
         id: id(),
         name: string('name').predicate('https://schema.org/name'),
+        public: boolean('public').predicate('https://schema.org/isPublic'),
       }, {
-        type: 'https://schema.org/Person',
+        base: '/data/agents.ttl',
+        type: 'https://vocab.ai/Agent',
       });
 
-      const userTable = db.createTable(userSchema, {
-        base: '/data/users/',
-      });
-
-      // The _db reference should be set
-      expect((userTable as any)._db).toBe(db);
+      expect(agents.config.hooks).toBeUndefined();
     });
   });
 
@@ -116,57 +107,48 @@ describe('db.createTable()', () => {
     it('should allow hooks to access db in context', () => {
       const db = createMockDb();
       
-      const userSchema = solidSchema('users', {
+      let capturedDb: any = null;
+
+      const userTable = podTable('users', {
         id: id(),
         name: string('name').predicate('https://schema.org/name'),
       }, {
-        type: 'https://schema.org/Person',
-      });
-
-      let capturedDb: any = null;
-
-      const userTable = db.createTable(userSchema, {
         base: '/data/users/',
+        type: 'https://schema.org/Person',
         hooks: {
           afterInsert: async (ctx: HookContext, record) => {
-            // Capture the db from context
+            // Capture db from context
             capturedDb = ctx.db;
           },
         },
       });
 
-      // The hook is configured with access to db
+      // The hook is configured
       expect(userTable.config.hooks?.afterInsert).toBeDefined();
-      // The _db is stored on the table
-      expect((userTable as any)._db).toBe(db);
+      // Note: _db is not automatically set by podTable
+      // User can manually set table._db = db if needed
     });
 
     it('should support cross-table operations in hooks', () => {
       const db = createMockDb();
       
-      // First schema/table for audit logs
-      const auditSchema = solidSchema('audit_logs', {
+      // First table for audit logs
+      const auditTable = podTable('audit_logs', {
         id: id(),
         action: string('action').predicate('https://example.org/action'),
         entityId: string('entityId').predicate('https://example.org/entityId'),
       }, {
+        base: '/data/audit/',
         type: 'https://example.org/AuditLog',
       });
 
-      const auditTable = db.createTable(auditSchema, {
-        base: '/data/audit/',
-      });
-
-      // User schema with hooks that reference audit table
-      const userSchema = solidSchema('users', {
+      // User table with hooks that reference audit table
+      const userTable = podTable('users', {
         id: id(),
         name: string('name').predicate('https://schema.org/name'),
       }, {
-        type: 'https://schema.org/Person',
-      });
-
-      const userTable = db.createTable(userSchema, {
         base: '/data/users/',
+        type: 'https://schema.org/Person',
         hooks: {
           afterInsert: async (ctx: HookContext, record) => {
             // This demonstrates the pattern: hooks can use ctx.db
@@ -183,24 +165,20 @@ describe('db.createTable()', () => {
       });
 
       expect(userTable.config.hooks?.afterInsert).toBeDefined();
-      expect((userTable as any)._db).toBe(db);
     });
   });
 
   describe('type inference', () => {
-    it('should preserve column types from schema', () => {
+    it('should preserve column types', () => {
       const db = createMockDb();
       
-      const userSchema = solidSchema('users', {
+      const userTable = podTable('users', {
         id: id(),
         name: string('name').predicate('https://schema.org/name'),
         active: boolean('active').predicate('https://schema.org/isActive'),
       }, {
-        type: 'https://schema.org/Person',
-      });
-
-      const userTable = db.createTable(userSchema, {
         base: '/data/users/',
+        type: 'https://schema.org/Person',
       });
 
       // Type inference should work
@@ -211,22 +189,23 @@ describe('db.createTable()', () => {
   });
 
   describe('schema reusability', () => {
-    it('should allow same schema to create multiple tables with different bases', () => {
+    it('should allow same schema structure with different bases', () => {
       const db = createMockDb();
       
-      const userSchema = solidSchema('users', {
+      const localUsers = podTable('users', {
         id: id(),
         name: string('name').predicate('https://schema.org/name'),
       }, {
+        base: '/data/users/',
         type: 'https://schema.org/Person',
       });
 
-      const localUsers = db.createTable(userSchema, {
-        base: '/data/users/',
-      });
-
-      const archivedUsers = db.createTable(userSchema, {
+      const archivedUsers = podTable('users', {
+        id: id(),
+        name: string('name').predicate('https://schema.org/name'),
+      }, {
         base: '/archive/users/',
+        type: 'https://schema.org/Person',
       });
 
       expect(localUsers.config.base).toBe('/data/users/');
@@ -237,26 +216,27 @@ describe('db.createTable()', () => {
       expect(localUsers.config.name).toBe(archivedUsers.config.name);
     });
 
-    it('should allow same schema with different hooks', () => {
+    it('should allow same structure with different hooks', () => {
       const db = createMockDb();
       
-      const userSchema = solidSchema('users', {
-        id: id(),
-        name: string('name').predicate('https://schema.org/name'),
-      }, {
-        type: 'https://schema.org/Person',
-      });
-
       const hook1 = vi.fn();
       const hook2 = vi.fn();
 
-      const table1 = db.createTable(userSchema, {
+      const table1 = podTable('users', {
+        id: id(),
+        name: string('name').predicate('https://schema.org/name'),
+      }, {
         base: '/data/users1/',
+        type: 'https://schema.org/Person',
         hooks: { afterInsert: hook1 },
       });
 
-      const table2 = db.createTable(userSchema, {
+      const table2 = podTable('users', {
+        id: id(),
+        name: string('name').predicate('https://schema.org/name'),
+      }, {
         base: '/data/users2/',
+        type: 'https://schema.org/Person',
         hooks: { afterInsert: hook2 },
       });
 

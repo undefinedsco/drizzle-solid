@@ -4,7 +4,7 @@ import { INTEROP, UDFS } from './interop-types';
 const ns = { prefix: 'interop', uri: INTEROP.NS };
 
 // Registry Set (Entry point from Profile)
-export const registrySetSchema = solidSchema('registrySet', {
+export const registrySetSchema = solidSchema({
   id: id(),
   hasDataRegistry: uri('hasDataRegistry').array().predicate(INTEROP.hasDataRegistry),
   hasAgentRegistry: uri('hasAgentRegistry').array().predicate('http://www.w3.org/ns/solid/interop#hasAgentRegistry'),
@@ -14,7 +14,7 @@ export const registrySetSchema = solidSchema('registrySet', {
 });
 
 // Data Registry (Contains Data Registrations)
-export const dataRegistrySchema = solidSchema('dataRegistry', {
+export const dataRegistrySchema = solidSchema({
   id: id(),
   hasDataRegistration: uri('hasDataRegistration').array().predicate(INTEROP.hasDataRegistration),
 }, {
@@ -23,7 +23,7 @@ export const dataRegistrySchema = solidSchema('dataRegistry', {
 });
 
 // Data Registration (Links to actual data location)
-export const dataRegistrationSchema = solidSchema('dataRegistration', {
+export const dataRegistrationSchema = solidSchema({
   id: id(),
   registeredShapeTree: uri('registeredShapeTree').predicate(INTEROP.registeredShapeTree),
   registeredBy: uri('registeredBy').predicate(INTEROP.registeredBy),
@@ -36,7 +36,7 @@ export const dataRegistrationSchema = solidSchema('dataRegistration', {
 });
 
 // Application Registration (For an App to find its grants)
-export const applicationRegistrationSchema = solidSchema('applicationRegistration', {
+export const applicationRegistrationSchema = solidSchema({
   id: id(),
   registeredAgent: uri('registeredAgent').predicate('http://www.w3.org/ns/solid/interop#registeredAgent'),
   hasAccessGrant: uri('hasAccessGrant').predicate(INTEROP.hasAccessGrant),
@@ -46,7 +46,7 @@ export const applicationRegistrationSchema = solidSchema('applicationRegistratio
 });
 
 // Access Grant (Group of Data Grants)
-export const accessGrantSchema = solidSchema('accessGrant', {
+export const accessGrantSchema = solidSchema({
   id: id(),
   grantedBy: uri('grantedBy').predicate('http://www.w3.org/ns/solid/interop#grantedBy'),
   grantedAt: string('grantedAt').predicate('http://www.w3.org/ns/solid/interop#grantedAt'),
@@ -58,7 +58,7 @@ export const accessGrantSchema = solidSchema('accessGrant', {
 });
 
 // Data Grant (Specific access to data)
-export const dataGrantSchema = solidSchema('dataGrant', {
+export const dataGrantSchema = solidSchema({
   id: id(),
   registeredShapeTree: uri('registeredShapeTree').predicate(INTEROP.registeredShapeTree),
   hasDataRegistration: uri('hasDataRegistration').predicate(INTEROP.hasDataRegistration),

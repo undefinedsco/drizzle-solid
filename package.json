@@ -1,6 +1,6 @@
 {
   "name": "drizzle-solid",
-  "version": "0.2.3",
+  "version": "0.2.4",
   "description": "Drizzle ORM adapter for Solid Pods",
   "main": "dist/index.js",
   "types": "dist/index.d.ts",
