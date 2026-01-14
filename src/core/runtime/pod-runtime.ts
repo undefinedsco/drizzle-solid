@@ -24,30 +24,23 @@ export class PodRuntime {
 
   /**
    * 检测服务器是否允许 X-Request-ID header (通过 CORS preflight)
+   * 使用原生 fetch 发送最干净的 OPTIONS 请求
    */
   private async detectRequestIdSupport(): Promise<boolean> {
-    try {
-      // 发送 OPTIONS preflight 请求检测
-      const response = await fetch(this.podUrl, {
-        method: 'OPTIONS',
-      });
+    const response = await globalThis.fetch(this.podUrl, {
+      method: 'OPTIONS',
+    });
 
-      const allowedHeaders = response.headers.get('Access-Control-Allow-Headers') || '';
-      // 检查是否允许 X-Request-ID（不区分大小写）
-      const supported = allowedHeaders.toLowerCase().includes('x-request-id');
+    const allowedHeaders = response.headers.get('Access-Control-Allow-Headers') || '';
+    const supported = allowedHeaders.toLowerCase().includes('x-request-id');
 
-      if (supported) {
-        console.log('[PodRuntime] X-Request-ID header is supported by server');
-      } else {
-        console.log('[PodRuntime] X-Request-ID header is not in Access-Control-Allow-Headers, disabling');
-      }
-
-      return supported;
-    } catch {
-      // 如果 OPTIONS 请求失败（可能是同源请求），假设支持
-      console.log('[PodRuntime] Could not detect CORS headers, assuming X-Request-ID is supported');
-      return true;
+    if (supported) {
+      console.log('[PodRuntime] X-Request-ID header is supported by server');
+    } else {
+      console.log('[PodRuntime] X-Request-ID header is not in Access-Control-Allow-Headers, disabling');
     }
+
+    return supported;
   }
 
   /**
