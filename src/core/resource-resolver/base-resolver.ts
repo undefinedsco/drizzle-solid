@@ -103,6 +103,11 @@ export abstract class BaseResourceResolver implements ResourceResolver {
     }
 
     // Relative path - resolve against pod base
-    return new URL(base, this.podBaseUrl).toString();
+    // Note: paths starting with '/' should be relative to pod base, not origin
+    // e.g., '/.data/tags.ttl' with pod base 'http://localhost:3000/test/'
+    // should resolve to 'http://localhost:3000/test/.data/tags.ttl'
+    const podBase = this.podBaseUrl.endsWith('/') ? this.podBaseUrl : `${this.podBaseUrl}/`;
+    const normalizedPath = base.startsWith('/') ? base.slice(1) : base;
+    return new URL(normalizedPath, podBase).toString();
   }
 }

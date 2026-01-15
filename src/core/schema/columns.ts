@@ -105,14 +105,14 @@ export class ColumnBuilder<
   }
 
   primaryKey(): ColumnBuilder<TType, TElement, true, THasDefault> {
-    const predicate = this.name === 'id' ? '@id' : this.options.predicate;
+    // primaryKey 等价于 predicate: '@id'，表示该列是 RDF subject IRI
+    this._predicateUri = '@id';
     this.options = {
       ...this.options,
       primaryKey: true,
       required: true,
-      predicate
+      predicate: '@id'
     };
-    if (predicate) this._predicateUri = predicate;
     return this as unknown as ColumnBuilder<TType, TElement, true, THasDefault>;
   }
 
@@ -213,11 +213,10 @@ export abstract class PodColumnBase<
   }
 
   primaryKey(): this {
+    // primaryKey 等价于 predicate: '@id'，表示该列是 RDF subject IRI
     this.options.primaryKey = true;
     this.options.required = true;
-    if (!this.options.predicate && this.name === 'id') {
-      this.options.predicate = '@id';
-    }
+    this.options.predicate = '@id';
     return this;
   }
 

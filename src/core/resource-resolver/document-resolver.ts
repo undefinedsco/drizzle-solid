@@ -23,7 +23,12 @@ export class DocumentResourceResolver extends BaseResourceResolver {
     }
 
     // Resolve relative path against pod base
-    return new URL(containerPath, this.podBaseUrl).toString();
+    // Note: paths starting with '/' should be relative to pod base, not origin
+    // e.g., '/.data/providers/' with pod base 'http://localhost:3000/test/'
+    // should resolve to 'http://localhost:3000/test/.data/providers/'
+    const base = this.podBaseUrl.endsWith('/') ? this.podBaseUrl : `${this.podBaseUrl}/`;
+    const normalizedPath = containerPath.startsWith('/') ? containerPath.slice(1) : containerPath;
+    return new URL(normalizedPath, base).toString();
   }
 
   getResourceUrl(table: PodTable): string {
