@@ -8,7 +8,7 @@ import {
   SelectField, SelectFieldMap, JoinType, ColumnReference, ResolvedJoinCondition, SessionInterface
 } from './types';
 import { createLiteralCondition, buildConditionTreeFromObject } from './helpers';
-import { UriResolverImpl } from '../uri';
+import { UriResolverImpl, UriContext } from '../uri';
 
 export class SelectQueryBuilder<TTable extends PodTable<any> = PodTable<any>> {
   static readonly [entityKind] = 'SelectQueryBuilder';
@@ -472,6 +472,8 @@ export class SelectQueryBuilder<TTable extends PodTable<any> = PodTable<any>> {
 
       if (this.selectedTable) {
         finalRows = await this.hydrateInlineColumns(finalRows, this.selectedTable);
+        // 处理引用字段：将 URI 转换回 ID
+        finalRows = this.resolveReferenceIds(finalRows, this.selectedTable);
       }
 
       if (this.selectedFields) {
@@ -814,12 +816,25 @@ export class SelectQueryBuilder<TTable extends PodTable<any> = PodTable<any>> {
       if (row.uri === undefined) {
         row.uri = subjectValue;
       }
+
+      // DEBUG - log before extracting id
+      const fs = require('fs');
+      fs.appendFileSync('/tmp/drizzle-debug.log',
+        `[normalizeRow] row.id before extraction: ${row.id}\n` +
+        `[normalizeRow] subjectValue: ${subjectValue}\n`
+      );
+
       if (row.id === undefined) {
         const derivedId = this.extractIdFromSubject(subjectValue, this.selectedTable);
         if (derivedId !== undefined) {
           row.id = derivedId;
         }
       }
+
+      // DEBUG - log after extracting id
+      fs.appendFileSync('/tmp/drizzle-debug.log',
+        `[normalizeRow] row.id after extraction: ${row.id}\n\n`
+      );
     }
     return row;
   }
@@ -979,6 +994,56 @@ export class SelectQueryBuilder<TTable extends PodTable<any> = PodTable<any>> {
     });
 
     return rows;
+  }
+
+  /**
+   * 处理引用字段：将 URI 转换回简单 ID
+   * 
+   * 对于配置了 .reference() 的列，将存储的完整 URI 转换回用户友好的 ID
+   * 例如：http://pod/.data/chat/chat-123/index.ttl#this -> chat-123
+   */
+  private resolveReferenceIds(rows: Record<string, any>[], table: PodTable<any>): Record<string, any>[] {
+    if (!rows.length) return rows;
+
+    // 找出所有引用列
+    const columns = Object.values(table.columns ?? {}) as PodColumnBase[];
+    const referenceColumns = columns.filter(col => col.isReference?.());
+
+    if (referenceColumns.length === 0) return rows;
+
+    // 获取 URI 解析器和上下文
+    const dialect = this.session.getDialect?.();
+    const resolver = dialect?.getUriResolver?.() ?? new UriResolverImpl(dialect?.getPodUrl?.() ?? '');
+    
+    // 构建 URI 上下文
+    const uriContext: UriContext = {
+      baseUri: dialect?.getPodUrl?.(),
+      tableRegistry: dialect?.getTableRegistry?.(),
+      tableNameRegistry: dialect?.getTableNameRegistry?.(),
+    };
+
+    return rows.map(row => {
+      const result = { ...row };
+      
+      for (const col of referenceColumns) {
+        const value = row[col.name];
+        if (!value) continue;
+
+        // 处理数组类型
+        if (Array.isArray(value)) {
+          result[col.name] = value.map(v => {
+            if (typeof v === 'string') {
+              return resolver.extractReferenceId(v, col, uriContext);
+            }
+            return v;
+          });
+        } else if (typeof value === 'string') {
+          result[col.name] = resolver.extractReferenceId(value, col, uriContext);
+        }
+      }
+
+      return result;
+    });
   }
 
   private normalizeInlineObjectValue(value: any): any {
@@ -1420,32 +1485,38 @@ export class SelectQueryBuilder<TTable extends PodTable<any> = PodTable<any>> {
     // Use UriResolver for proper document/fragment mode handling
     if (table) {
       const dialect = this.session.getDialect?.();
-      const resolver = dialect?.getUriResolver?.() ?? new UriResolverImpl();
+      const resolver = dialect?.getUriResolver?.() ?? new UriResolverImpl(dialect?.getPodUrl?.() ?? '');
       const parsed = resolver.parseSubject(subject, table);
+
+      // DEBUG - write to file
+      const fs = require('fs');
+      fs.appendFileSync('/tmp/drizzle-debug.log',
+        `[extractIdFromSubject] subject: ${subject}\n` +
+        `[extractIdFromSubject] table.config.base: ${table.config?.base}\n` +
+        `[extractIdFromSubject] table.config.subjectTemplate: ${table.config?.subjectTemplate}\n` +
+        `[extractIdFromSubject] parsed.id: ${parsed?.id}\n` +
+        `[extractIdFromSubject] podUrl: ${(resolver as any).podUrl}\n\n`
+      );
+
       if (parsed && parsed.id) {
         return parsed.id;
       }
     }
 
-    // Fallback when no table: try fragment first, then filename
+    // Fallback when no table: 返回包含 # 的 fragment 部分
     const hashIndex = subject.indexOf('#');
     if (hashIndex !== -1) {
-      const fragment = subject.slice(hashIndex + 1);
-      if (fragment.length > 0) {
-        return fragment;
-      }
+      // 返回整个 fragment（包含 #），与新的 id 规则一致
+      const fallbackId = subject.slice(hashIndex);
+      return fallbackId;
     }
 
-    // Try filename extraction
+    // Try filename extraction (包含扩展名和可能的 fragment)
     const lastSlash = subject.lastIndexOf('/');
     if (lastSlash !== -1) {
-      let filename = subject.slice(lastSlash + 1);
-      const extIndex = filename.lastIndexOf('.');
-      if (extIndex !== -1) {
-        filename = filename.slice(0, extIndex);
-      }
-      if (filename.length > 0) {
-        return filename;
+      const remainder = subject.slice(lastSlash + 1);
+      if (remainder.length > 0) {
+        return remainder;
       }
     }
 

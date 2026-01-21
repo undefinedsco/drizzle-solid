@@ -202,7 +202,51 @@ export class TripleBuilderImpl implements TripleBuilder {
         return `_:${term.value}`;
 
       case 'Literal': {
-        // 转义引号
+        // 如果值包含双引号或换行符，使用三引号字符串避免转义问题
+        const hasQuotes = term.value.includes('"');
+        const hasNewlines = term.value.includes('\n') || term.value.includes('\r');
+
+        if (hasQuotes || hasNewlines) {
+          // 使用三引号字符串
+          // 需要处理的特殊情况：
+          // 1. 内容包含 """ 序列需要转义
+          // 2. 内容以 " 或 "" 结尾需要转义最后的引号，避免和闭合三引号形成 """" 或 """""
+          let escaped = term.value;
+
+          // 转义三引号序列
+          escaped = escaped.replace(/"""/g, '"\\"\\""');
+
+          // 如果内容以引号结尾，转义最后一个引号
+          // 这避免了 """content"""" 这样的无效序列
+          if (escaped.endsWith('"')) {
+            // 检查结尾有多少个引号
+            const match = escaped.match(/"*$/);
+            const trailingQuotes = match ? match[0].length : 0;
+            if (trailingQuotes > 0) {
+              // 转义所有结尾引号
+              escaped = escaped.slice(0, -trailingQuotes) + '\\"'.repeat(trailingQuotes);
+            }
+          }
+
+          if (term.language) {
+            return `"""${escaped}"""@${term.language}`;
+          }
+
+          if (term.datatype) {
+            const datatypeUri = term.datatype.value;
+            if (datatypeUri === `${XSD}string`) {
+              return `"""${escaped}"""`;
+            }
+            if (datatypeUri === `${XSD}integer`) {
+              return term.value;
+            }
+            return `"""${escaped}"""^^<${datatypeUri}>`;
+          }
+
+          return `"""${escaped}"""`;
+        }
+
+        // 普通字符串，转义反斜杠和引号
         const escaped = term.value.replace(/\\/g, '\\\\').replace(/"/g, '\\"');
 
         if (term.language) {

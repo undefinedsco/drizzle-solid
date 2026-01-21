@@ -4,7 +4,10 @@
  * 统一的 URI 生成和解析
  * 整合了 Subject URI 和 Object/Reference URI 的解析逻辑
  * 
- * 设计原则：无状态，所有需要的上下文都通过参数传入
+ * 设计原则：
+ * - 无状态，所有需要的上下文都通过参数传入
+ * - 统一使用 base + subjectTemplate 来生成和解析 URI
+ * - 不再区分 document/fragment 模式，模式由 template 自然表达
  */
 
 import type { PodTable, PodColumnBase } from '../schema';
@@ -46,7 +49,21 @@ export class UriResolverImpl implements UriResolver {
 
   // ================= Subject URI 解析 =================
 
-  resolveSubject(table: PodTable, record: Record<string, unknown>, index?: number): string {
+  /**
+   * 解析 subject URI
+   * @param table 表定义
+   * @param record 记录数据
+   * @param index 可选的行索引
+   * @param options.strict 是否严格模式（默认 true）。false 时允许部分解析，用于查询场景
+   */
+  resolveSubject(
+    table: PodTable,
+    record: Record<string, unknown>,
+    index?: number,
+    options?: { strict?: boolean }
+  ): string {
+    const strict = options?.strict ?? true;
+
     // Check if record has an absolute ID override
     const explicitId = record['@id'] ?? record['id'] ?? record['uri'];
     if (typeof explicitId === 'string') {
@@ -56,15 +73,14 @@ export class UriResolverImpl implements UriResolver {
       // Check if it's a relative URI with fragment
       const hashIndex = explicitId.indexOf('#');
       if (hashIndex > 0) {
-        const mode = this.getResourceMode(table);
-        if (mode === 'fragment') {
+        const template = this.getEffectivePattern(table);
+        if (template.startsWith('#')) {
           record = { ...record, id: explicitId.slice(hashIndex + 1) };
         }
       }
     }
 
     const pattern = this.getEffectivePattern(table);
-    const mode = this.getResourceMode(table);
     const base = this.getSubjectBaseUrl(table);
 
     // 单例模式 - 直接返回 base + pattern
@@ -73,17 +89,16 @@ export class UriResolverImpl implements UriResolver {
     }
 
     // 应用模板变量
-    const applied = this.applyTemplate(pattern, record, index);
+    const applied = this.applyTemplate(pattern, record, index, table, strict);
 
-    if (applied) {
-      if (this.isAbsoluteUri(applied)) {
-        return applied;
-      }
+    if (applied === null) {
+      // 非严格模式下，applyTemplate 返回 null 表示无法完全解析
+      // 使用 fallback URI（仅用于查询场景的比较）
+      return this.generateFallbackUri(base, pattern, index);
     }
 
-    if (!applied) {
-      // 如果模板应用失败，生成默认 URI
-      return this.generateFallbackUri(base, mode, index);
+    if (this.isAbsoluteUri(applied)) {
+      return applied;
     }
 
     return this.combineBaseAndPattern(base, applied);
@@ -98,8 +113,8 @@ export class UriResolverImpl implements UriResolver {
     const resourceUrl = hasFragment ? uri.slice(0, hashIndex) : uri;
     const fragment = hasFragment ? uri.slice(hashIndex + 1) : undefined;
 
-    const mode = this.getResourceMode(table);
     const id = this.extractId(uri, table);
+    const mode = this.getResourceMode(table);
 
     return {
       uri,
@@ -115,39 +130,35 @@ export class UriResolverImpl implements UriResolver {
     return hashIndex !== -1 ? subjectUri.slice(0, hashIndex) : subjectUri;
   }
 
+  /**
+   * 判断资源模式
+   * 简化版：直接从 subjectTemplate 判断
+   */
   getResourceMode(table: PodTable): ResourceMode {
-    // 只有用户显式提供 subjectTemplate 时才用它来判断
-    const hasCustomTemplate = table.hasCustomTemplate?.() ?? false;
-
-    if (hasCustomTemplate) {
-      const pattern = table.config?.subjectTemplate ?? '';
-
-      if (pattern.startsWith('#')) {
-        return 'fragment';
-      }
-
-      if (pattern.includes('.ttl') || pattern.includes('.jsonld') || pattern.includes('.json')) {
-        return 'document';
-      }
-
-      return 'document';
+    const template = table.config?.subjectTemplate ?? this.getDefaultPattern(table);
+    
+    // 以 # 开头是 fragment 模式
+    if (template.startsWith('#')) {
+      return 'fragment';
     }
-
-    const containerPath = table.getContainerPath();
-    const tableName = table.config?.name ?? '';
-
-    const normalizedContainer = containerPath.endsWith('/') ? containerPath : `${containerPath}/`;
-
-    if (normalizedContainer.endsWith(`${tableName}/`)) {
-      return 'document';
-    }
-
-    return 'fragment';
+    
+    // 否则是 document 模式
+    return 'document';
   }
 
+  /**
+   * 获取默认模板
+   * 根据 base 是否以 / 结尾判断
+   * 与 PodTable.buildDefaultSubjectTemplate 保持一致
+   */
   getDefaultPattern(table: PodTable): string {
-    const mode = this.getResourceMode(table);
-    return mode === 'fragment' ? '#{id}' : '{id}.ttl';
+    const base = table.config?.base ?? '';
+    // base 以 / 结尾表示容器 → document 模式 → {id}.ttl
+    // base 是文件路径 → fragment 模式 → #{id}
+    if (base.endsWith('/')) {
+      return '{id}.ttl';
+    }
+    return '#{id}';
   }
 
   resolveInlineChild(
@@ -349,29 +360,51 @@ export class UriResolverImpl implements UriResolver {
     return undefined;
   }
 
+  /**
+   * 从引用 URI 中提取 ID
+   * 
+   * 用于读取时将完整 URI 转换回简单 ID
+   * 
+   * @param uri 完整的 URI (如 http://pod/.data/chat/chat-123/index.ttl#this)
+   * @param column 引用列定义
+   * @param context URI 上下文（包含表注册表）
+   * @returns 提取的 ID (如 chat-123)，如果无法解析则返回原 URI
+   */
+  extractReferenceId(uri: string, column: PodColumnBase | any, context?: UriContext): string {
+    if (!uri || !this.isAbsoluteUri(uri)) {
+      return uri;
+    }
+
+    // 找到目标表
+    const targetTable = this.findTargetTable(column, context);
+    if (!targetTable) {
+      // 无法确定目标表，返回原 URI
+      return uri;
+    }
+
+    // 使用目标表的信息提取 ID
+    const parsed = this.parseSubject(uri, targetTable);
+    if (parsed && parsed.id) {
+      return parsed.id;
+    }
+
+    return uri;
+  }
+
   // ================= Private Helpers =================
 
   /**
    * 从表获取基础 URL 和 subject template 信息
+   * 简化版：统一使用 base + subjectTemplate
    */
   private getTableUriInfo(table: PodTable): { baseUrl: string; subjectTemplate: string } | undefined {
-    const subjectTemplate = table.config?.subjectTemplate || '{id}.ttl';
-
-    // Fragment Mode (#{id}) - 使用 resourcePath
-    if (subjectTemplate.startsWith('#')) {
-      const base = table.config?.base;
-      if (!base) return undefined;
-      const baseUrl = base.endsWith('/') ? base.slice(0, -1) : base;
-      return { baseUrl: this.toAbsoluteUrl(baseUrl), subjectTemplate };
-    }
-
-    // Document Mode - 使用容器路径
-    const base = table.config?.containerPath || table.getContainerPath?.();
+    const base = table.config?.base;
     if (!base) return undefined;
 
-    const baseUrl = base.endsWith('/') ? base : `${base}/`;
+    const subjectTemplate = table.config?.subjectTemplate || this.getDefaultPattern(table);
+    const baseUrl = this.toAbsoluteUrl(base);
 
-    return { baseUrl: this.toAbsoluteUrl(baseUrl), subjectTemplate };
+    return { baseUrl, subjectTemplate };
   }
 
   /**
@@ -397,7 +430,8 @@ export class UriResolverImpl implements UriResolver {
     }
 
     // Document 模式，直接拼接
-    return `${baseUrl}${result}`;
+    const cleanBase = baseUrl.endsWith('/') ? baseUrl : `${baseUrl}/`;
+    return `${cleanBase}${result}`;
   }
 
   /**
@@ -418,17 +452,11 @@ export class UriResolverImpl implements UriResolver {
 
   /**
    * 获取 Subject base URL
+   * 简化版：统一使用 table.config.base
    */
   private getSubjectBaseUrl(table: PodTable): string {
-    const mode = this.getResourceMode(table);
-
-    if (mode === 'document') {
-      const containerPath = table.getContainerPath();
-      return this.toAbsoluteUrl(containerPath);
-    }
-
-    const resourcePath = table.getResourcePath?.() ?? table.config?.base ?? '';
-    return this.toAbsoluteUrl(resourcePath);
+    const base = table.config?.base ?? '';
+    return this.toAbsoluteUrl(base);
   }
 
   /**
@@ -468,19 +496,45 @@ export class UriResolverImpl implements UriResolver {
   }
 
   /**
+   * 将列值归一化为适合模板使用的字符串
+   * 特别处理：如果是引用列且值为 URI，则尝试提取 ID
+   */
+  normalizeValue(value: unknown, column?: PodColumnBase, context?: UriContext): string {
+    if (value === undefined || value === null) {
+      return '';
+    }
+
+    // 处理引用列：如果是引用列且值为 URI，尝试提取 ID
+    if (typeof value === 'string' && this.isAbsoluteUri(value)) {
+      if (column && this.isReferenceColumn(column)) {
+        return this.extractReferenceId(value, column, context);
+      }
+    }
+
+    return String(value);
+  }
+
+  /**
    * 应用模板变量
+   * @param template 模板字符串
+   * @param record 记录数据
+   * @param index 可选的行索引
+   * @param table 可选的表定义
+   * @param strict 是否严格模式（默认 true）。false 时缺少字段返回 null，不抛出异常
    */
   private applyTemplate(
     template: string,
     record: Record<string, unknown>,
-    index?: number
+    index?: number,
+    table?: PodTable,
+    strict: boolean = true
   ): string | null {
     if (!template.includes('{')) {
       return template;
     }
 
     const timeContext = this.createTimeContext(record);
-    let missingReplacement = false;
+    const missingKeys: string[] = [];
 
     const replaced = template.replace(/(#?)\{([^}]+)\}/g, (match, prefix, key) => {
       if (key in timeContext) {
@@ -497,20 +551,40 @@ export class UriResolverImpl implements UriResolver {
       }
 
       if (rawValue === undefined || rawValue === null) {
-        missingReplacement = true;
-        return '';
+        missingKeys.push(key);
+        return match; // Keep original placeholder for error message
       }
 
-      let value = String(rawValue);
+      const column = (table as any)?.columns?.[key];
+      const context = table ? {
+        tableRegistry: (table as any)[Symbol.for('drizzle:tableRegistry')],
+        tableNameRegistry: (table as any)[Symbol.for('drizzle:tableNameRegistry')]
+      } : undefined;
+
+      const value = this.normalizeValue(rawValue, column, context);
 
       if (prefix === '#' && value.startsWith('#')) {
-        value = value.slice(1);
+        return prefix + value.slice(1);
       }
 
       return prefix + value;
     });
 
-    return missingReplacement ? null : replaced;
+    if (missingKeys.length > 0) {
+      if (strict) {
+        const tableName = table?.config?.name || 'unknown';
+        throw new Error(
+          `[UriResolver] Missing required fields for template "${template}" in table "${tableName}": ` +
+          `[${missingKeys.join(', ')}]. ` +
+          `Record keys: [${Object.keys(record).join(', ')}]. ` +
+          `Record: ${JSON.stringify(record)}`
+        );
+      }
+      // 非严格模式，返回 null 表示无法完全解析
+      return null;
+    }
+
+    return replaced;
   }
 
   /**
@@ -529,54 +603,130 @@ export class UriResolverImpl implements UriResolver {
     }
 
     const yyyy = date.getUTCFullYear().toString();
-    const mm = (date.getUTCMonth() + 1).toString().padStart(2, '0');
+    const MM = (date.getUTCMonth() + 1).toString().padStart(2, '0');
     const dd = date.getUTCDate().toString().padStart(2, '0');
     const timestamp = Math.floor(date.getTime() / 1000).toString();
 
-    return { date, yyyy, mm, dd, timestamp };
+    return {
+      date,
+      yyyy,
+      MM,
+      dd,
+      timestamp,
+    };
   }
 
   /**
    * 生成回退 URI
+   * 简化版：根据 template 判断模式
    */
-  private generateFallbackUri(base: string, mode: ResourceMode, index?: number): string {
+  private generateFallbackUri(base: string, template: string, index?: number): string {
     const suffix = index !== undefined ? `row-${index + 1}` : `row-${Date.now()}`;
 
-    if (mode === 'fragment') {
+    // template 以 # 开头是 fragment 模式
+    if (template.startsWith('#')) {
       const cleanBase = base.endsWith('/') ? base.slice(0, -1) : base;
       return `${cleanBase}#${suffix}`;
     }
 
+    // 否则是 document 模式
     const cleanBase = base.endsWith('/') ? base : `${base}/`;
     return `${cleanBase}${suffix}.ttl`;
   }
 
   /**
    * 从 URI 提取 ID
+   * 
+   * 简化版：统一使用 base + subjectTemplate 反向解析
+   * 
+   * 例如：
+   * - uri = "http://pod/.data/chat/chat-123/index.ttl#this"
+   * - base = "http://pod/.data/chat/"
+   * - relativePath = "chat-123/index.ttl#this"
+   * - template = "{id}/index.ttl#this"
+   * - id = "chat-123"
    */
   private extractId(uri: string, table: PodTable): string {
-    const mode = this.getResourceMode(table);
-    const hashIndex = uri.indexOf('#');
+    const template = table.config?.subjectTemplate || this.getDefaultPattern(table);
+    const tableBase = table.config?.base ?? '';
 
-    if (mode === 'fragment' && hashIndex !== -1) {
-      return uri.slice(hashIndex + 1);
-    }
+    // Step 1: 计算相对路径
+    // 核心思路：在 URI 中查找 table.config.base，提取其后的部分
+    let relativePath: string = '';
 
-    const urlWithoutFragment = hashIndex !== -1 ? uri.slice(0, hashIndex) : uri;
-    const lastSlash = urlWithoutFragment.lastIndexOf('/');
-
-    if (lastSlash !== -1) {
-      let filename = urlWithoutFragment.slice(lastSlash + 1);
-
-      const extIndex = filename.lastIndexOf('.');
-      if (extIndex !== -1) {
-        filename = filename.slice(0, extIndex);
+    if (tableBase && uri.includes(tableBase)) {
+      // 找到 base 在 URI 中的位置，提取之后的部分
+      const index = uri.indexOf(tableBase);
+      relativePath = uri.substring(index + tableBase.length);
+      // 移除开头的 / (如果 base 不以 / 结尾)
+      if (relativePath.startsWith('/')) {
+        relativePath = relativePath.substring(1);
       }
-
-      return filename;
+    } else if (!tableBase) {
+      // 没有配置 base，使用整个 URI
+      relativePath = uri;
+    } else {
+      // base 不在 URI 中，说明 URI 格式不匹配
+      // 返回空字符串，让后续的 template 匹配失败
+      console.warn(`[UriResolver] Cannot extract ID: base "${tableBase}" not found in URI "${uri}"`);
+      return '';
     }
 
-    return uri;
+    // Step 2: 根据 subjectTemplate 反向解析 {id}
+    if (template) {
+      const extractedId = this.extractIdFromTemplate(relativePath, template);
+      if (extractedId !== null) {
+        return extractedId;
+      }
+    }
+
+    // 如果没有模板或解析失败，返回相对路径
+    return relativePath;
+  }
+
+  /**
+   * 从相对路径反向解析出 id
+   * 
+   * 将模板转为正则表达式，提取 {id} 对应的值
+   * 
+   * @param relativePath 相对路径 (如 "chat-123/index.ttl#this")
+   * @param template 模板 (如 "{id}/index.ttl#this")
+   * @returns 提取的 id (如 "chat-123")，解析失败返回 null
+   */
+  private extractIdFromTemplate(relativePath: string, template: string): string | null {
+    // 构建正则表达式
+    // 1. 转义特殊字符
+    // 2. 将 {id} 替换为捕获组 (.+?)
+    // 3. 将其他 {xxx} 占位符替换为非捕获组 (?:.+?)
+
+    let regexStr = template
+      // 转义正则特殊字符（除了 { 和 }）
+      .replace(/[.+?^$[\]\\()]/g, '\\$&')
+      // 将 {id} 替换为命名捕获组
+      .replace(/\{id\}/g, '(?<id>.+?)')
+      // 将其他 {xxx} 占位符替换为非捕获组
+      .replace(/\{[^}]+\}/g, '(?:.+?)');
+
+    // 添加锚点
+    regexStr = `^${regexStr}$`;
+
+    try {
+      const regex = new RegExp(regexStr);
+      const match = relativePath.match(regex);
+
+      if (match && match.groups?.id) {
+        return match.groups.id;
+      }
+      
+      // 兼容不支持命名捕获组的环境
+      if (match && match[1]) {
+        return match[1];
+      }
+    } catch (e) {
+      // 正则解析失败，忽略
+    }
+
+    return null;
   }
 }
 

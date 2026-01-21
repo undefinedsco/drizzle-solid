@@ -130,7 +130,7 @@ export class SubjectResolverImpl implements SubjectResolver {
       }
 
       // pattern 不以 # 开头但包含文件扩展名 → document 模式
-      // 例如: '{id}.ttl', '{yyyy}/{mm}/{slug}.ttl'
+      // 例如: '{id}.ttl', '{yyyy}/{MM}/{slug}.ttl'
       if (pattern.includes('.ttl') || pattern.includes('.jsonld') || pattern.includes('.json')) {
         return 'document';
       }
@@ -175,6 +175,7 @@ export class SubjectResolverImpl implements SubjectResolver {
 
   /**
    * 获取默认的 subjectPattern
+   * 与 PodTable.buildDefaultSubjectTemplate 保持一致
    */
   getDefaultPattern(table: PodTable): string {
     const mode = this.getResourceMode(table);
@@ -183,6 +184,7 @@ export class SubjectResolverImpl implements SubjectResolver {
       return '#{id}';
     }
 
+    // document 模式默认不带 fragment
     return '{id}.ttl';
   }
 
@@ -405,36 +407,91 @@ export class SubjectResolverImpl implements SubjectResolver {
 
   /**
    * 从 URI 提取 ID
+   * 
+   * 两步解析：
+   * 1. 先计算 relativePath = uri - baseUrl
+   * 2. 再根据 subjectTemplate 反向解析出 {id}
+   * 
+   * 例如：
+   * - uri = "http://pod/users/alice.ttl#it", template = "{id}.ttl#it" → id = "alice"
+   * - uri = "http://pod/tags.ttl#tag-1", template = "#{id}" → id = "tag-1"
    */
   private extractId(uri: string, table: PodTable): string {
-    const mode = this.getResourceMode(table);
+    const baseUrl = this.getBaseUrl(table);
+    
+    // Step 1: 计算相对路径
+    let relativePath: string;
+    if (uri.startsWith(baseUrl)) {
+      relativePath = uri.substring(baseUrl.length);
+    } else {
+      // Fallback: 尝试其他方式
+      const mode = this.getResourceMode(table);
+      const hashIndex = uri.indexOf('#');
 
-    // 检查是否有 fragment
-    const hashIndex = uri.indexOf('#');
-
-    if (mode === 'fragment' && hashIndex !== -1) {
-      // fragment 模式: 取 # 后面的部分
-      return uri.slice(hashIndex + 1);
-    }
-
-    // document 模式: 尝试从文件名提取
-    // e.g., /data/users/alice.ttl → alice
-    const urlWithoutFragment = hashIndex !== -1 ? uri.slice(0, hashIndex) : uri;
-    const lastSlash = urlWithoutFragment.lastIndexOf('/');
-
-    if (lastSlash !== -1) {
-      let filename = urlWithoutFragment.slice(lastSlash + 1);
-
-      // 移除扩展名
-      const extIndex = filename.lastIndexOf('.');
-      if (extIndex !== -1) {
-        filename = filename.slice(0, extIndex);
+      if (mode === 'fragment' && hashIndex !== -1) {
+        relativePath = uri.slice(hashIndex);
+      } else {
+        const lastSlash = uri.lastIndexOf('/');
+        relativePath = lastSlash !== -1 ? uri.slice(lastSlash + 1) : uri;
       }
-
-      return filename;
     }
 
-    return uri;
+    // Step 2: 根据 subjectTemplate 反向解析 {id}
+    const template = this.getEffectivePattern(table);
+    if (template) {
+      const extractedId = this.extractIdFromTemplate(relativePath, template);
+      if (extractedId !== null) {
+        return extractedId;
+      }
+    }
+
+    // 如果没有模板或解析失败，返回相对路径
+    return relativePath;
+  }
+
+  /**
+   * 从相对路径反向解析出 id
+   * 
+   * 将模板转为正则表达式，提取 {id} 对应的值
+   * 
+   * @param relativePath 相对路径 (如 "alice.ttl#it")
+   * @param template 模板 (如 "{id}.ttl#it")
+   * @returns 提取的 id (如 "alice")，解析失败返回 null
+   */
+  private extractIdFromTemplate(relativePath: string, template: string): string | null {
+    // 构建正则表达式
+    // 1. 转义特殊字符
+    // 2. 将 {id} 替换为捕获组 (.+?)
+    // 3. 将其他 {xxx} 占位符替换为非捕获组 (?:.+?)
+    
+    let regexStr = template
+      // 转义正则特殊字符（除了 { 和 }）
+      .replace(/[.+?^$[\]\\()]/g, '\\$&')
+      // 将 {id} 替换为命名捕获组
+      .replace(/\{id\}/g, '(?<id>.+?)')
+      // 将其他 {xxx} 占位符替换为非捕获组
+      .replace(/\{[^}]+\}/g, '(?:.+?)');
+    
+    // 添加锚点
+    regexStr = `^${regexStr}$`;
+
+    try {
+      const regex = new RegExp(regexStr);
+      const match = relativePath.match(regex);
+      
+      if (match && match.groups?.id) {
+        return match.groups.id;
+      }
+      
+      // 兼容不支持命名捕获组的环境
+      if (match && match[1]) {
+        return match[1];
+      }
+    } catch (e) {
+      // 正则解析失败，忽略
+    }
+
+    return null;
   }
 }
 

@@ -53,7 +53,7 @@ export interface ResourceResolver {
     table: PodTable,
     containerUrl: string,
     condition?: QueryCondition,
-    listContainer?: () => Promise<string[]>
+    listContainer?: (url?: string) => Promise<string[]>
   ): Promise<string[]>;
 
   /**

@@ -1,6 +1,6 @@
 {
   "name": "@undefineds.co/drizzle-solid",
-  "version": "0.2.6",
+  "version": "0.2.7",
   "description": "Drizzle ORM adapter for Solid Pods",
   "main": "dist/index.js",
   "types": "dist/index.d.ts",
@@ -64,6 +64,9 @@
     "orm"
   ],
   "license": "MIT",
+  "publishConfig": {
+    "access": "public"
+  },
   "dependencies": {
     "@comunica/query-sparql-solid": "^4.0.2",
     "@inrupt/solid-client": "^3.0.0",
@@ -90,6 +93,7 @@
     "@vitest/coverage-v8": "^2.1.9",
     "@vitest/utils": "^2.1.9",
     "eslint": "^8.37.0",
+    "localtunnel": "^2.0.2",
     "ts-node": "^10.9.0",
     "typescript": "^5.0.0",
     "vite": "^5.4.21",

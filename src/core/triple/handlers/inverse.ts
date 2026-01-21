@@ -6,6 +6,8 @@
 
 import type { PodColumnBase, PodTable } from '../../schema';
 import type { ColumnHandler, RdfTerm, BuildResult, BuildContext } from '../types';
+import type { UriContext } from '../../uri';
+import { UriResolverImpl } from '../../uri';
 
 const XSD = 'http://www.w3.org/2001/XMLSchema#';
 
@@ -22,9 +24,35 @@ export class InverseHandler implements ColumnHandler {
     return column.options?.inverse === true;
   }
 
-  formatValue(value: unknown, column: PodColumnBase, _context?: BuildContext): RdfTerm {
-    // 逆向谓词的 object 通常是 URI 引用
-    if (column.options?.referenceTarget || column.dataType === 'uri' || this.isUri(value)) {
+  /**
+   * 将 BuildContext 转换为 UriContext
+   */
+  private toUriContext(context?: BuildContext): UriContext | undefined {
+    if (!context) return undefined;
+
+    return {
+      baseUri: context.baseUri,
+      tableRegistry: context.tableRegistry,
+      tableNameRegistry: context.tableNameRegistry,
+    };
+  }
+
+  formatValue(value: unknown, column: PodColumnBase, context?: BuildContext): RdfTerm {
+    // 如果是 URI 引用类型，使用 UriResolver 解析
+    if (column.options?.referenceTarget || column.dataType === 'uri' || column.isReference?.()) {
+      const uri = String(value);
+      const uriContext = this.toUriContext(context);
+      const resolver = context?.uriResolver ?? new UriResolverImpl();
+      const resolved = resolver.resolveReference(uri, column, uriContext);
+
+      return {
+        termType: 'NamedNode',
+        value: resolved,
+      };
+    }
+
+    // 如果是普通 URI 字符串
+    if (this.isUri(value)) {
       return {
         termType: 'NamedNode',
         value: String(value),
@@ -54,7 +82,7 @@ export class InverseHandler implements ColumnHandler {
     value: unknown,
     column: PodColumnBase,
     _table: PodTable,
-    _context: BuildContext
+    context: BuildContext
   ): BuildResult {
     const values = Array.isArray(value)
       ? value
@@ -62,19 +90,17 @@ export class InverseHandler implements ColumnHandler {
         ? value.split(',').map((v) => v.trim()).filter(Boolean)
         : [value];
 
-    const triples = values.map((v) => ({
-      subject: { termType: 'NamedNode' as const, value: toIriString(v) },
-      predicate: { termType: 'NamedNode' as const, value: predicate },
-      object: { termType: 'NamedNode' as const, value: subject }
-    }));
+    const triples = values.map((v) => {
+      // 使用 formatValue 来正确处理 URI 解析
+      const objectTerm = this.formatValue(v, column, context);
+
+      return {
+        subject: objectTerm,  // 逆向：引用值作为 subject
+        predicate: { termType: 'NamedNode' as const, value: predicate },
+        object: { termType: 'NamedNode' as const, value: subject }  // 当前记录作为 object
+      };
+    });
+
     return { triples };
   }
-}
-
-function toIriString(raw: any): string {
-  const str = typeof raw === 'string' ? raw.replace(/^\"|\"$/g, '') : String(raw);
-  if (str.startsWith('<') && str.endsWith('>')) {
-    return str.slice(1, -1);
-  }
-  return str;
 }

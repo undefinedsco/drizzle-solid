@@ -82,7 +82,7 @@ export class LdpStrategy implements ExecutionStrategy {
       table,
       containerUrl,
       conditionTree as QueryCondition | undefined,
-      () => this.listContainerResources(containerUrl)
+      (url?: string) => this.listContainerResources(url || containerUrl)
     );
 
     // Convert plan to SPARQL - check for simple select options or SQL

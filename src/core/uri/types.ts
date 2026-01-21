@@ -36,6 +36,16 @@ export interface ParsedSubject {
 
 /**
  * 时间变量上下文
+ *
+ * 变量命名遵循 Java/ISO 风格 (SimpleDateFormat):
+ * - yyyy: 年份 (4位)
+ * - MM: 月份 (2位，大写以区分分钟)
+ * - dd: 日期 (2位)
+ * - HH: 小时 (2位, 24小时制) - 预留
+ * - mm: 分钟 (2位) - 预留
+ * - ss: 秒钟 (2位) - 预留
+ *
+ * 示例: {yyyy}/{MM}/{dd} → 2026/01/20
  */
 export interface TimeContext {
   /** 日期对象 */
@@ -45,7 +55,7 @@ export interface TimeContext {
   yyyy: string;
 
   /** 月份 (2位) */
-  mm: string;
+  MM: string;
 
   /** 日期 (2位) */
   dd: string;

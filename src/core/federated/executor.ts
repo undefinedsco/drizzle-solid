@@ -545,17 +545,22 @@ export class FederatedQueryExecutor {
 
   /**
    * 从 URI 提取 ID
+   * 
+   * 注意：这里是 fallback 逻辑，没有 table 上下文时使用
+   * 返回包含 # 的 fragment 部分，与新的 id 规则一致
    */
   private extractIdFromUri(uri: string): string {
-    // 处理 fragment
-    if (uri.includes('#')) {
-      return uri.split('#').pop() ?? uri;
+    // 处理 fragment - 返回包含 # 的部分
+    const hashIndex = uri.indexOf('#');
+    if (hashIndex !== -1) {
+      return uri.slice(hashIndex); // 包含 #
     }
-    // 处理路径
-    const parts = uri.split('/');
-    const last = parts.pop() ?? '';
-    // 去掉扩展名
-    return last.replace(/\.[^.]+$/, '');
+    // 处理路径 - 返回最后一段（包含扩展名）
+    const lastSlash = uri.lastIndexOf('/');
+    if (lastSlash !== -1) {
+      return uri.slice(lastSlash + 1);
+    }
+    return uri;
   }
 
   /**

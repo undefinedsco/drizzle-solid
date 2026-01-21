@@ -10,6 +10,7 @@ const fs = require('fs');
 const path = require('path');
 const http = require('http');
 const { setTimeout: delay } = require('timers/promises');
+const localtunnel = require('localtunnel');
 
 const REPO_ROOT = path.join(__dirname, '..');
 const DEFAULT_PORT = Number(process.env.SOLID_SERVER_PORT || 3000);

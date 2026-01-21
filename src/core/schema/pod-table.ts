@@ -250,7 +250,7 @@ export class PodTable<TColumns extends Record<string, PodColumnBase<any, any, an
       (this as any)._!.config.containerPath = this.config.containerPath;
     }
     if (!this.hasCustomSubjectTemplate) {
-      this.subjectTemplate = this.buildDefaultSubjectTemplate(this.config.base, this.config.containerPath, this.config.name);
+      this.subjectTemplate = this.buildDefaultSubjectTemplate(this.config.base);
       this.config.subjectTemplate = this.subjectTemplate;
       if ((this as any)._?.config) {
         (this as any)._!.config.subjectTemplate = this.subjectTemplate;
@@ -280,16 +280,27 @@ export class PodTable<TColumns extends Record<string, PodColumnBase<any, any, an
   getColumn(name: string): PodColumnBase | undefined { return this.columns[name as keyof TColumns]; }
   hasColumn(name: string): boolean { return name in this.columns; }
 
-  private resolveSubjectTemplate(template: string | undefined, resourcePath: string, containerPath: string, tableName: string): { template: string; isCustom: boolean } {
+  private resolveSubjectTemplate(template: string | undefined, resourcePath: string, _containerPath: string, _tableName: string): { template: string; isCustom: boolean } {
     if (template && template.trim().length > 0) return { template: template.trim(), isCustom: true };
-    return { template: this.buildDefaultSubjectTemplate(resourcePath, containerPath, tableName), isCustom: false };
+    return { template: this.buildDefaultSubjectTemplate(resourcePath), isCustom: false };
   }
 
-  private buildDefaultSubjectTemplate(resourcePath: string, containerPath: string, tableName = 'resource'): string {
-    const normalizedContainer = this.ensureTrailingSlash(containerPath || '');
-    const isDocumentMode = normalizedContainer.endsWith(`${tableName}/`);
-    if (isDocumentMode) return '{id}.ttl';
-    if (resourcePath && resourcePath.includes('{')) return resourcePath;
+  /**
+   * 构建默认的 subjectTemplate
+   * 根据 base 路径判断
+   * - base 以 / 结尾 → document 模式 → {id}.ttl
+   * - base 是文件路径 → fragment 模式 → #{id}
+   */
+  private buildDefaultSubjectTemplate(base: string): string {
+    // base 以 / 结尾表示容器 → document 模式
+    if (base.endsWith('/')) {
+      return '{id}.ttl';
+    }
+    // base 包含模板变量，直接使用
+    if (base.includes('{')) {
+      return base;
+    }
+    // base 是文件路径 → fragment 模式
     return '#{id}';
   }
 

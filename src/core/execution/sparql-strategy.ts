@@ -99,15 +99,19 @@ export class SparqlStrategy implements ExecutionStrategy {
       _sql?: any;
     };
 
-    // Pass `true` for `includeGraph` to ensure the graph is included if targetGraph is defined.
-    // The SparqlConverter will handle the specific syntax (FROM/GRAPH).
+    // For SPARQL endpoint queries (especially CSS /-/sparql), we don't need GRAPH ?g wrapper
+    // because the endpoint is a federated query interface that automatically queries 
+    // all documents under the container. Using GRAPH ?g can cause issues with some endpoints.
+    // Only use GRAPH when we have a specific targetGraph.
+    const useGraphVariable = targetGraph !== undefined;
+    
     if (extendedPlan._simpleSelectOptions) {
-      sparqlQuery = this.sparqlConverter.convertSimpleSelect(extendedPlan._simpleSelectOptions, targetGraph, undefined, true);
+      sparqlQuery = this.sparqlConverter.convertSimpleSelect(extendedPlan._simpleSelectOptions, targetGraph, undefined, useGraphVariable);
     } else if (extendedPlan._sql && plan.baseTable) {
       const ast = this.sparqlConverter.parseDrizzleAST(extendedPlan._sql, plan.baseTable);
-      sparqlQuery = this.sparqlConverter.convertSelect(ast, plan.baseTable, targetGraph, undefined, true);
+      sparqlQuery = this.sparqlConverter.convertSelect(ast, plan.baseTable, targetGraph, undefined, useGraphVariable);
     } else {
-      sparqlQuery = this.sparqlConverter.convertSelectPlan(plan, targetGraph, undefined, true);
+      sparqlQuery = this.sparqlConverter.convertSelectPlan(plan, targetGraph, undefined, useGraphVariable);
     }
 
     console.log('DEBUG: Generated SPARQL Query for SELECT:', sparqlQuery.query);
@@ -168,35 +172,45 @@ export class SparqlStrategy implements ExecutionStrategy {
    */
   private parseSparqlResultsJson(json: any, plan: SelectQueryPlan): any[] {
     const bindings = json?.results?.bindings || [];
-    
+
     return bindings.map((binding: Record<string, any>) => {
       const row: Record<string, any> = {};
-      
+
       for (const [varName, termObj] of Object.entries(binding)) {
         if (!termObj) continue;
-        
+
         // Convert SPARQL result term to JS value
         row[varName] = this.convertSparqlTerm(termObj);
       }
-      
+
       // Extract ID from subject URI if present
       if (row.subject && plan.baseTable) {
         const subjectUri = row.subject as string;
-        // Extract ID from URI like "http://pod/path/file.ttl#id" -> "id"
-        const hashIndex = subjectUri.lastIndexOf('#');
-        if (hashIndex !== -1) {
-          row.id = subjectUri.substring(hashIndex + 1);
-        } else {
-          // Or from "http://pod/path/id.ttl" -> "id"
-          const lastSlash = subjectUri.lastIndexOf('/');
-          const filename = subjectUri.substring(lastSlash + 1);
-          if (filename.endsWith('.ttl')) {
-            row.id = filename.slice(0, -4);
+
+        // Use UriResolver to properly extract ID from subject URI
+        const parsed = this.uriResolver.parseSubject(subjectUri, plan.baseTable);
+        if (parsed && parsed.id) {
+          row.id = parsed.id;
+        }
+
+        // Fallback to simple extraction if resolver parsing failed
+        if (!row.id) {
+          const hashIndex = subjectUri.lastIndexOf('#');
+          if (hashIndex !== -1) {
+            row.id = subjectUri.substring(hashIndex + 1);
+          } else {
+            // Or from "http://pod/path/id.ttl" -> "id"
+            const lastSlash = subjectUri.lastIndexOf('/');
+            const filename = subjectUri.substring(lastSlash + 1);
+            if (filename.endsWith('.ttl')) {
+              row.id = filename.slice(0, -4);
+            }
           }
         }
+
         delete row.subject;
       }
-      
+
       return row;
     });
   }

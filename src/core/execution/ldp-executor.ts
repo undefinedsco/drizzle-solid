@@ -56,10 +56,25 @@ export class LdpExecutor {
     const deleteTriples: string[] = [];
     const insertTriples: string[] = [];
 
+    // DEBUG: Log insert operation details
+    console.log('[DEBUG executeInsert]', {
+      tableName: table.config?.name,
+      resourceUrl,
+      rowCount: rows.length,
+      template: table.config?.subjectTemplate,
+      base: table.config?.base,
+    });
+
     rows.forEach((row, idx) => {
+      // DEBUG: Log row data
+      console.log(`[DEBUG executeInsert] Row ${idx}:`, JSON.stringify(row));
+
       // 使用 SubjectResolver 生成 URI
       const subject = this.uriResolver.resolveSubject(table, row, idx);
-      
+
+      // DEBUG: Log generated subject URI
+      console.log(`[DEBUG executeInsert] Generated subject URI: ${subject}`);
+
       // 1. rdf:type
       const typeTriple = this.tripleBuilder.buildTypeTriple(subject, table.config.type as string);
       insertTriples.push(...this.tripleBuilder.toN3Strings([typeTriple]));
@@ -67,17 +82,17 @@ export class LdpExecutor {
       // 2. 处理所有列（跳过纯主键列）
       Object.entries(table.columns ?? {}).forEach(([key, col]) => {
         if (row[key] === undefined || row[key] === null) return;
-        
+
         // 跳过纯主键列（predicate 为 @id 的列）
         // 这类列只用于生成 subject URI，不需要单独的三元组
         // 但如果主键列有显式的 predicate（如 schema:identifier），则应该写入
         if ((col as any)._virtualId) return;
         const predicate = (col as any).options?.predicate || (col as any)._predicateUri;
         if (predicate === '@id') return;
-        
+
         const result = this.tripleBuilder.buildInsert(subject, col as any, row[key], table);
         insertTriples.push(...this.tripleBuilder.toN3Strings(result.triples));
-        
+
         if (result.childTriples && result.childTriples.length > 0) {
           insertTriples.push(...this.tripleBuilder.toN3Strings(result.childTriples));
         }
@@ -85,14 +100,21 @@ export class LdpExecutor {
     });
 
     if (insertTriples.length === 0) {
+      console.log('[DEBUG executeInsert] No triples to insert, returning empty');
       return [];
     }
 
     const mode = this.uriResolver.getResourceMode(table);
+    console.log(`[DEBUG executeInsert] Mode for table ${table.config?.name}: ${mode}`);
 
-    // Document Mode: 每条记录单独写入各自的文件
+    // Document Mode: 每条记录写入各自的文件
+    // 但如果多条记录共享同一个资源 URL（如同一天的 messages.ttl），则合并写入
     if (mode === 'document') {
-      const results: any[] = [];
+      console.log('[DEBUG executeInsert] Entering Document mode branch');
+
+      // 按 resourceUrl 分组收集三元组
+      const resourceTriples = new Map<string, string[]>();
+
       for (let idx = 0; idx < rows.length; idx++) {
         const row = rows[idx];
         const subject = this.uriResolver.resolveSubject(table, row, idx);
@@ -120,16 +142,47 @@ export class LdpExecutor {
 
         if (recordTriples.length === 0) continue;
 
-        const body = recordTriples.join('\n');
-        const response = await this.fetchFn(docResourceUrl, {
-          method: 'PUT',
-          headers: { 'Content-Type': 'text/turtle' },
-          body
-        });
+        // 按 resourceUrl 分组
+        const existing = resourceTriples.get(docResourceUrl) || [];
+        existing.push(...recordTriples);
+        resourceTriples.set(docResourceUrl, existing);
+      }
+
+      // 对每个唯一的 resourceUrl 执行一次写入
+      const results: any[] = [];
+      for (const [docResourceUrl, triples] of resourceTriples.entries()) {
+        // 检查资源是否已存在，如果存在则使用 PATCH 追加
+        const headRes = await this.fetchFn(docResourceUrl, { method: 'HEAD' });
+        const resourceExists = headRes.ok || headRes.status === 405;
+
+        let response;
+        if (resourceExists) {
+          // 资源已存在，使用 SPARQL UPDATE 追加三元组
+          const sparql = `INSERT DATA {\n${triples.join('\n')}\n}`;
+          console.log(`[DEBUG executeInsert] Document mode PATCH to: ${docResourceUrl}`);
+          console.log(`[DEBUG executeInsert] Triples being added:\n${triples.join('\n')}`);
+
+          response = await this.fetchFn(docResourceUrl, {
+            method: 'PATCH',
+            headers: { 'Content-Type': 'application/sparql-update' },
+            body: sparql
+          });
+        } else {
+          // 资源不存在，使用 PUT 创建
+          const body = triples.join('\n');
+          console.log(`[DEBUG executeInsert] Document mode PUT to: ${docResourceUrl}`);
+          console.log(`[DEBUG executeInsert] Triples being stored:\n${body}`);
+
+          response = await this.fetchFn(docResourceUrl, {
+            method: 'PUT',
+            headers: { 'Content-Type': 'text/turtle' },
+            body
+          });
+        }
 
         if (![200, 201, 202, 204, 205].includes(response.status)) {
           const text = await response.text().catch(() => '');
-          throw new Error(`PUT failed for ${docResourceUrl}: ${response.status} ${response.statusText}${text ? ` - ${text}` : ''}`);
+          throw new Error(`Write failed for ${docResourceUrl}: ${response.status} ${response.statusText}${text ? ` - ${text}` : ''}`);
         }
 
         await this.sparqlExecutor.invalidateHttpCache(docResourceUrl);
@@ -138,7 +191,9 @@ export class LdpExecutor {
           const containerUrl = docResourceUrl.slice(0, lastSlash + 1);
           await this.sparqlExecutor.invalidateHttpCache(containerUrl);
         }
-        results.push({ success: true, source: docResourceUrl, status: response.status, via: 'put' });
+        // Also invalidate global cache to ensure SPARQL endpoint queries see the new data
+        await this.sparqlExecutor.invalidateHttpCache(undefined as any).catch(() => undefined);
+        results.push({ success: true, source: docResourceUrl, status: response.status, via: resourceExists ? 'patch' : 'put' });
       }
       return results;
     }
@@ -190,7 +245,9 @@ export class LdpExecutor {
       const containerUrl = resourceUrl.slice(0, lastSlash + 1);
       await this.sparqlExecutor.invalidateHttpCache(containerUrl);
     }
-    
+    // Also invalidate global cache to ensure SPARQL endpoint queries see the new data
+    await this.sparqlExecutor.invalidateHttpCache(undefined as any).catch(() => undefined);
+
     return [{ success: true, source: resourceUrl, status: response.status, via: 'sparql-update' }];
   }
 

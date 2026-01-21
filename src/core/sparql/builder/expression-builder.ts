@@ -83,8 +83,9 @@ export class ExpressionBuilder {
 
   /**
    * Format a subject comparison value, resolving UUID/relative IDs to full URIs.
+   * Returns either a formatted URI like `<http://...>` or a SPARQL expression for partial matching.
    */
-  private formatSubjectValue(value: any, table: PodTable, isVirtualId: boolean): string {
+  private formatSubjectValue(value: any, table: PodTable, isVirtualId: boolean): string | { partial: true; id: string } {
     const raw = String(value ?? '');
     if (raw.startsWith('<') && raw.endsWith('>')) {
       const inner = raw.slice(1, -1);
@@ -92,14 +93,24 @@ export class ExpressionBuilder {
         return raw;
       }
       const normalizedInner = inner.startsWith('#') ? inner.slice(1) : inner;
-      const uri = this.uriResolver.resolveSubject(table, { id: normalizedInner });
-      return `<${uri}>`;
+      try {
+        const uri = this.uriResolver.resolveSubject(table, { id: normalizedInner });
+        return `<${uri}>`;
+      } catch {
+        // Cannot resolve full URI, return partial match indicator
+        return { partial: true, id: normalizedInner };
+      }
     }
     if (this.uriResolver.isAbsoluteUri(raw)) return `<${raw}>`;
 
     const normalizedId = raw.startsWith('#') ? raw.slice(1) : raw;
-    const uri = this.uriResolver.resolveSubject(table, { id: normalizedId });
-    return `<${uri}>`;
+    try {
+      const uri = this.uriResolver.resolveSubject(table, { id: normalizedId });
+      return `<${uri}>`;
+    } catch {
+      // Cannot resolve full URI, return partial match indicator
+      return { partial: true, id: normalizedId };
+    }
   }
 
   /**
@@ -210,10 +221,31 @@ export class ExpressionBuilder {
     if (condition.operator === 'IN' || condition.operator === 'NOT IN') {
       if (!Array.isArray(value) || value.length === 0) return condition.operator === 'IN' ? 'false' : 'true';
 
+      if (isSubject) {
+        // Check if any values need partial matching
+        const results = value.map((v: any) => this.formatSubjectValue(v, table, isVirtualId));
+        const hasPartial = results.some((r: any) => typeof r === 'object' && r.partial);
+
+        if (hasPartial) {
+          // Use STRENDS for partial matching
+          const conditions = results.map((r: any) => {
+            if (typeof r === 'object' && r.partial) {
+              const escapedId = r.id.replace(/"/g, '\\"');
+              return `STRENDS(STR(${variable}), "#${escapedId}")`;
+            }
+            return `(${variable} = ${r})`;
+          });
+          const expr = `(${conditions.join(' || ')})`;
+          return condition.operator === 'NOT IN' ? `!(${expr})` : expr;
+        }
+
+        // All values resolved to full URIs
+        const formattedValues = results.join(', ');
+        const expr = `${variable} IN(${formattedValues})`;
+        return condition.operator === 'NOT IN' ? `!(${expr})` : expr;
+      }
+
       const formattedValues = value.map((v: any) => {
-         if (isSubject) {
-            return this.formatSubjectValue(v, table, isVirtualId);
-         }
          if (isReference) {
             return this.formatReferenceValue(v, column, table);
          }
@@ -259,10 +291,22 @@ export class ExpressionBuilder {
     }
 
     // Basic operators (=, !=, <, >, <=, >=)
-    let formattedValue;
+    let formattedValue: string | string[] | { partial: true; id: string };
 
     if (isSubject) {
         formattedValue = this.formatSubjectValue(value, table, isVirtualId);
+
+        // Handle partial match (when full URI cannot be resolved)
+        if (typeof formattedValue === 'object' && formattedValue.partial) {
+          const escapedId = formattedValue.id.replace(/"/g, '\\"');
+          if (condition.operator === '=') {
+            return `STRENDS(STR(${variable}), "#${escapedId}")`;
+          } else if (condition.operator === '!=') {
+            return `!STRENDS(STR(${variable}), "#${escapedId}")`;
+          }
+          // For other operators, fall through with escaped ID
+          formattedValue = `"${escapedId}"`;
+        }
     } else if (isReference) {
         // Resolve reference URI
         formattedValue = this.formatReferenceValue(value, column, table);

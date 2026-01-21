@@ -52,6 +52,7 @@ describe('SubjectResolver', () => {
         namespace: ns,
       });
 
+      // Document mode 默认模板
       expect(table.getSubjectTemplate()).toBe('{id}.ttl');
     });
 
@@ -162,7 +163,7 @@ describe('SubjectResolver', () => {
         createdAt: string('createdAt').predicate('https://schema.org/dateCreated'),
       }, {
         base: '/data/posts/',
-        subjectTemplate: '{yyyy}/{mm}/{slug}.ttl',
+        subjectTemplate: '{yyyy}/{MM}/{slug}.ttl',
         type: 'https://schema.org/BlogPosting',
         namespace: ns,
       });
@@ -293,6 +294,7 @@ describe('SubjectResolver', () => {
         namespace: ns,
       });
 
+      // 默认模板 {id}.ttl，URI 不带 fragment
       const result = resolver.parse('https://pod.example/data/users/alice.ttl', table);
 
       expect(result).not.toBeNull();
@@ -318,6 +320,7 @@ describe('SubjectResolver', () => {
       expect(result!.uri).toBe('https://pod.example/data/tags.ttl#tag-1');
       expect(result!.resourceUrl).toBe('https://pod.example/data/tags.ttl');
       expect(result!.fragment).toBe('tag-1');
+      // 默认模板 #{id}，所以 id = tag-1
       expect(result!.id).toBe('tag-1');
       expect(result!.mode).toBe('fragment');
     });
@@ -339,7 +342,7 @@ describe('SubjectResolver', () => {
       expect(result!.uri).toBe('https://pod.example/data/users/alice.ttl#it');
       expect(result!.resourceUrl).toBe('https://pod.example/data/users/alice.ttl');
       expect(result!.fragment).toBe('it');
-      // 关键: id 应该是 alice，不是 it
+      // 模板 {id}.ttl#it，反向解析得 id = alice
       expect(result!.id).toBe('alice');
       expect(result!.mode).toBe('document');
     });
@@ -361,7 +364,7 @@ describe('SubjectResolver', () => {
       expect(result!.uri).toBe('https://pod.example/data/profiles/bob.ttl#me');
       expect(result!.resourceUrl).toBe('https://pod.example/data/profiles/bob.ttl');
       expect(result!.fragment).toBe('me');
-      // 关键: id 应该是 bob，不是 me
+      // 模板 {id}.ttl#me，反向解析得 id = bob
       expect(result!.id).toBe('bob');
       expect(result!.mode).toBe('document');
     });
