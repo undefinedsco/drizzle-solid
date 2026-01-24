@@ -817,24 +817,12 @@ export class SelectQueryBuilder<TTable extends PodTable<any> = PodTable<any>> {
         row.uri = subjectValue;
       }
 
-      // DEBUG - log before extracting id
-      const fs = require('fs');
-      fs.appendFileSync('/tmp/drizzle-debug.log',
-        `[normalizeRow] row.id before extraction: ${row.id}\n` +
-        `[normalizeRow] subjectValue: ${subjectValue}\n`
-      );
-
       if (row.id === undefined) {
         const derivedId = this.extractIdFromSubject(subjectValue, this.selectedTable);
         if (derivedId !== undefined) {
           row.id = derivedId;
         }
       }
-
-      // DEBUG - log after extracting id
-      fs.appendFileSync('/tmp/drizzle-debug.log',
-        `[normalizeRow] row.id after extraction: ${row.id}\n\n`
-      );
     }
     return row;
   }
@@ -1487,16 +1475,6 @@ export class SelectQueryBuilder<TTable extends PodTable<any> = PodTable<any>> {
       const dialect = this.session.getDialect?.();
       const resolver = dialect?.getUriResolver?.() ?? new UriResolverImpl(dialect?.getPodUrl?.() ?? '');
       const parsed = resolver.parseSubject(subject, table);
-
-      // DEBUG - write to file
-      const fs = require('fs');
-      fs.appendFileSync('/tmp/drizzle-debug.log',
-        `[extractIdFromSubject] subject: ${subject}\n` +
-        `[extractIdFromSubject] table.config.base: ${table.config?.base}\n` +
-        `[extractIdFromSubject] table.config.subjectTemplate: ${table.config?.subjectTemplate}\n` +
-        `[extractIdFromSubject] parsed.id: ${parsed?.id}\n` +
-        `[extractIdFromSubject] podUrl: ${(resolver as any).podUrl}\n\n`
-      );
 
       if (parsed && parsed.id) {
         return parsed.id;

@@ -247,71 +247,6 @@ export class PodDialect {
       .filter((value): value is string => Boolean(value));
   }
 
-  /**
-   * @deprecated 此方法仅被废弃的 executeComplexUpdate 使用
-   * 保留仅用于参考
-   */
-  private buildUpdateQueryForSubject(
-    subject: string,
-    data: Record<string, any>,
-    table: PodTable,
-    columns: string[]
-  ): string | null {
-    const prefixLines = this.buildPrefixLines();
-    const deleteStatements: string[] = [];
-    const insertTriples: string[] = [];
-
-    columns.forEach((columnName, index) => {
-      const column = table.columns[columnName];
-      if (!column) {
-        return;
-      }
-
-      const predicate = this.sparqlConverter.getPredicateForColumnPublic(column, table);
-      deleteStatements.push(`DELETE WHERE {\n  <${subject}> <${predicate}> ?value${index} .\n}`);
-
-      const newValue = data[columnName];
-      if (newValue === null || newValue === undefined) {
-        return;
-      }
-
-      const literal = this.sparqlConverter.formatLiteralValue(newValue, column);
-      if (literal === 'NULL') {
-        return;
-      }
-
-      insertTriples.push(`  <${subject}> <${predicate}> ${literal} .`);
-    });
-
-    if (deleteStatements.length === 0 && insertTriples.length === 0) {
-      return null;
-    }
-
-    const parts: string[] = [];
-    if (deleteStatements.length > 0) {
-      parts.push(deleteStatements.join(';\n'));
-    }
-    if (insertTriples.length > 0) {
-      parts.push(`INSERT DATA {\n${insertTriples.join('\n')}\n}`);
-    }
-
-    return `${prefixLines}\n${parts.join(';\n')}`;
-  }
-
-  private buildPrefixLines(): string {
-    const prefixes = this.sparqlConverter.getPrefixes();
-    return Object.entries(prefixes)
-      .map(([prefix, uri]) => `PREFIX ${prefix}: <${uri}>`)
-      .join('\n');
-  }
-
-  private isSubjectResolutionError(error: unknown): boolean {
-    if (!(error instanceof Error)) {
-      return false;
-    }
-    return error.message.includes('requires an id or @id condition');
-  }
-
   async connect(): Promise<void> {
     await this.runtime.connect();
   }
@@ -453,57 +388,6 @@ export class PodDialect {
     const resourceUrl = `${baseUrl}${resourceRelative.replace(/^\/+/, '')}`;
 
     return { containerUrl, resourceUrl };
-  }
-
-  private collectSelectSources(plan: SelectQueryPlan): Array<string | { type: 'sparql'; value: string }> {
-    const tables = new Set<PodTable<any>>();
-    if (plan.baseTable) {
-      tables.add(plan.baseTable);
-    }
-
-    if (Array.isArray(plan.joins)) {
-      for (const join of plan.joins) {
-        if (join?.table) {
-          tables.add(join.table);
-        }
-      }
-    }
-
-    if (plan.aliasToTable instanceof Map) {
-      for (const table of plan.aliasToTable.values()) {
-        if (table) {
-          tables.add(table);
-        }
-      }
-    }
-
-    const seen = new Set<string>();
-    const sources: Array<string | { type: 'sparql'; value: string }> = [];
-
-    for (const table of tables) {
-      const descriptor = this.resolveTableResource(table);
-      if (descriptor.mode === 'ldp') {
-        // Document mode: query the container, not a single file
-        const resourceMode = this.uriResolver.getResourceMode(table);
-        const sourceUrl = resourceMode === 'document'
-          ? descriptor.containerUrl
-          : descriptor.resourceUrl;
-
-        const key = `ldp:${sourceUrl}`;
-        if (!seen.has(key)) {
-          seen.add(key);
-          sources.push(sourceUrl);
-        }
-      } else {
-        const key = `sparql:${descriptor.endpoint}`;
-        if (!seen.has(key)) {
-          seen.add(key);
-          sources.push({ type: 'sparql', value: descriptor.endpoint });
-        }
-      }
-    }
-
-    return sources;
   }
 
   private async resourceExists(resourceUrl: string): Promise<boolean> {
@@ -950,18 +834,6 @@ export class PodDialect {
     };
   }
 
-  private buildSubjectUriFromFragment(fragment: string, table: PodTable): string {
-    // This method is used by rewriteWhereConditionWithSubjects and other internal logic
-    // Ideally we should use SubjectResolver, but for fragment building relative to base, we need this helper.
-    // Or delegate to SubjectResolver if it exposes parsing.
-    // SubjectResolver.parse handles URIs.
-    // For now, keep this simple helper as it was used by extractSubjectFromRow logic context.
-    // Wait, extractSubjectFromRow doesn't use this.
-    // But `rewriteWhereConditionWithSubjects` calls `findSubjectsForCondition`.
-    // `findSubjectsForCondition` calls `buildSubjectLookupPlan` which is also missing?
-    return this.sparqlConverter.generateSubjectUri({ id: fragment }, table);
-  }
-
   private extractSubjectFromRow(row: Record<string, any>): string | null {
     const subject = (row as any).subject ?? (row as any)['?subject'];
     if (!subject) {
@@ -974,25 +846,6 @@ export class PodDialect {
       return subject.value;
     }
     return null;
-  }
-
-  private operationHasInlineObjects(table: PodTable, data: Record<string, any>): boolean {
-    return Object.entries(data).some(([key, value]) => {
-      if (value === undefined) return false;
-      const col = (table as any).columns?.[key] as any;
-      if (!col) return false;
-      return this.isInlineObjectColumn(col);
-    });
-  }
-
-  private isInlineObjectColumn(column: any): boolean {
-    if (!column) return false;
-    if (column.dataType === 'object') return true;
-    if (column.dataType === 'array') {
-      const elem = (column as any).elementType ?? column.options?.baseType;
-      return elem === 'object';
-    }
-    return false;
   }
 
   private conditionTargetsIdentifier(condition?: QueryCondition): boolean {
@@ -1385,70 +1238,6 @@ export class PodDialect {
    */
   getTypeIndexManager(): TypeIndexManager {
     return this.typeIndexManager;
-  }
-
-  /**
-   * @deprecated 此方法已废弃，不再使用
-   *
-   * 原因：
-   * 1. 每次 GET 整个容器内容效率极低（对于大容器可能有几 MB）
-   * 2. 使用字符串匹配检查资源存在性不够可靠
-   * 3. SPARQL INSERT 本身不会覆盖已存在的三元组，重复插入只会添加新的三元组
-   * 4. 如果需要防止重复插入，应该由业务层处理（使用 INSERT WHERE NOT EXISTS）
-   *
-   * 改进的资源存在性检查 - 使用直接 HTTP 而不是 Comunica ASK
-   * 这解决了 409 冲突问题：当 ASK 查询失败时，不应该继续 INSERT
-   */
-  private async checkResourceExistence(values: any[], table: PodTable, containerUrl: string): Promise<boolean> {
-    console.warn('[DEPRECATED] checkResourceExistence is deprecated and should not be used');
-    try {
-      let targetContainer = containerUrl.startsWith('http')
-        ? containerUrl
-        : this.resolveAbsoluteUrl(containerUrl);
-      if (!targetContainer.endsWith('/')) {
-        targetContainer = `${targetContainer}/`;
-      }
-
-      console.log(`🔍 检查资源存在性: ${targetContainer}`);
-
-      // 直接读取容器内容，检查是否包含我们要插入的资源
-      const response = await this.runtime.getFetch()(targetContainer, {
-        method: 'GET',
-        headers: {
-          'Accept': 'text/turtle'
-        }
-      });
-
-      if (!response.ok) {
-        if (response.status === 404) {
-          // 容器不存在，资源肯定不存在
-          console.log(`✅ 容器不存在，可以执行 INSERT`);
-          return true; // 可以继续 INSERT
-        }
-        throw new Error(`HTTP ${response.status}: ${response.statusText}`);
-      }
-
-      const turtleData = await response.text();
-      console.log(`📖 容器内容长度: ${turtleData.length} 字符`);
-      
-      // 检查每个要插入的资源是否已存在
-      for (const record of values) {
-        const subjectUri = this.sparqlConverter.generateSubjectUri(record, table);
-        
-        // 检查 Turtle 数据中是否包含这个资源 URI
-        if (turtleData.includes(subjectUri)) {
-          console.log(`❌ 发现已存在的资源: ${subjectUri}`);
-          return false; // 资源已存在，不能 INSERT
-        }
-      }
-
-      console.log(`✅ 资源存在性检查通过，可以执行 INSERT`);
-      return true; // 所有资源都不存在，可以 INSERT
-      
-    } catch (error) {
-      console.error('❌ 资源存在性检查失败:', error);
-      throw error;
-    }
   }
 
   // 确保容器存在（递归创建父目录）

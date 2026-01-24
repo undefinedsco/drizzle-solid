@@ -1,13 +1,7 @@
 import type { ComunicaSPARQLExecutor } from '../sparql-executor';
 import type { ASTToSPARQLConverter, SPARQLQuery } from '../ast-to-sparql';
 import type { SelectQueryPlan } from '../select-plan';
-import type {
-  ExecutionStrategy,
-  ExecutionResult,
-  InsertQueryPlan,
-  UpdateQueryPlan,
-  DeleteQueryPlan
-} from './types';
+import type { ExecutionStrategy } from './types';
 import { isSameOrigin, getFetchForOrigin } from '../utils/origin-auth';
 import type { UriResolver } from '../uri';
 
@@ -187,6 +181,10 @@ export class SparqlStrategy implements ExecutionStrategy {
       if (row.subject && plan.baseTable) {
         const subjectUri = row.subject as string;
 
+        // Preserve the full subject URI in @id for downstream processing
+        // (hydrateInlineColumns needs full URI, not just the ID)
+        row['@id'] = subjectUri;
+
         // Use UriResolver to properly extract ID from subject URI
         const parsed = this.uriResolver.parseSubject(subjectUri, plan.baseTable);
         if (parsed && parsed.id) {
@@ -220,169 +218,77 @@ export class SparqlStrategy implements ExecutionStrategy {
    */
   private convertSparqlTerm(term: { type: string; value: string; datatype?: string }): any {
     if (!term || !term.type) return null;
-    
+
     const { type, value, datatype } = term;
-    
+
     if (type === 'uri') {
       return value;
     }
-    
+
     if (type === 'bnode') {
       return `_:${value}`;
     }
-    
-    if (type === 'literal') {
-      // Handle typed literals
-      if (datatype) {
-        if (datatype === 'http://www.w3.org/2001/XMLSchema#integer' ||
-            datatype === 'http://www.w3.org/2001/XMLSchema#int') {
-          return parseInt(value, 10);
-        }
-        if (datatype === 'http://www.w3.org/2001/XMLSchema#decimal' ||
-            datatype === 'http://www.w3.org/2001/XMLSchema#float' ||
-            datatype === 'http://www.w3.org/2001/XMLSchema#double') {
-          return parseFloat(value);
-        }
-        if (datatype === 'http://www.w3.org/2001/XMLSchema#boolean') {
-          return value === 'true' || value === '1';
-        }
-        if (datatype === 'http://www.w3.org/2001/XMLSchema#dateTime' ||
-            datatype === 'http://www.w3.org/2001/XMLSchema#date') {
-          return new Date(value);
-        }
+
+    if (type === 'literal' || type === 'typed-literal') {
+      const effectiveDatatype = datatype || this.extractDatatypeFromValue(value);
+
+      if (effectiveDatatype) {
+        return this.convertTypedLiteral(value, effectiveDatatype);
       }
-      return value;
+      return this.extractLiteralValue(value);
     }
-    
+
     return value;
   }
 
   /**
-   * Execute INSERT operation via SPARQL UPDATE
-   * 
-   * @deprecated This method is not called in SPARQL-as-LDP-enhancement mode.
-   * All write operations are routed to LdpStrategy for Solid Notifications compatibility.
-   * Kept for potential future use (e.g., pure SPARQL mode).
-   * @see LdpStrategy.executeInsert for the active implementation
+   * Convert a typed literal value to JavaScript type
    */
-  async executeInsert(
-    plan: InsertQueryPlan,
-    _containerUrl: string,
-    resourceUrl: string
-  ): Promise<ExecutionResult[]> {
-    const table = plan.table;
-    const targetGraph = this.resolveTargetGraph(table);
+  private convertTypedLiteral(value: string, datatype: string): any {
+    const literalValue = this.extractLiteralValue(value);
 
-    // targetGraph is now resolved for both Document Mode (base container) and Fragment Mode (base file)
-    // Safety check: ensure targetGraph is resolved
-    if (!targetGraph) {
-        throw new Error('INSERT operation in SPARQL mode requires a target graph. Ensure table.config.base is set.');
+    if (datatype === 'http://www.w3.org/2001/XMLSchema#integer' ||
+        datatype === 'http://www.w3.org/2001/XMLSchema#int') {
+      return parseInt(literalValue, 10);
+    }
+    if (datatype === 'http://www.w3.org/2001/XMLSchema#decimal' ||
+        datatype === 'http://www.w3.org/2001/XMLSchema#float' ||
+        datatype === 'http://www.w3.org/2001/XMLSchema#double') {
+      return parseFloat(literalValue);
+    }
+    if (datatype === 'http://www.w3.org/2001/XMLSchema#boolean') {
+      return literalValue === 'true' || literalValue === '1';
+    }
+    if (datatype === 'http://www.w3.org/2001/XMLSchema#dateTime' ||
+        datatype === 'http://www.w3.org/2001/XMLSchema#date') {
+      return new Date(literalValue);
     }
 
-    const sparqlQuery = this.sparqlConverter.convertInsert(plan, table, targetGraph);
-    return await this.executeSparqlUpdate(resourceUrl, sparqlQuery, table.config.containerPath);
+    return literalValue;
   }
 
   /**
-   * Execute UPDATE operation via SPARQL UPDATE
-   * 
-   * @deprecated This method is not called in SPARQL-as-LDP-enhancement mode.
-   * All write operations are routed to LdpStrategy for Solid Notifications compatibility.
-   * Kept for potential future use (e.g., pure SPARQL mode).
-   * @see LdpStrategy.executeUpdate for the active implementation
+   * Extract datatype from a value string like "true"^^<http://...#boolean>
    */
-  async executeUpdate(
-    plan: UpdateQueryPlan,
-    _containerUrl: string,
-    resourceUrl: string
-  ): Promise<ExecutionResult[]> {
-    const table = plan.table;
-    const targetGraph = this.resolveTargetGraph(table);
-    
-    if (!targetGraph) {
-        throw new Error('UPDATE operation in SPARQL mode requires a target graph. Ensure table.config.base is set.');
-    }
-    
-    const sparqlQuery = this.sparqlConverter.convertUpdate(
-      plan.data,
-      plan.where,
-      table,
-      targetGraph
-    );
-    return await this.executeSparqlUpdate(resourceUrl, sparqlQuery, table.config.containerPath);
+  private extractDatatypeFromValue(value: string): string | undefined {
+    const match = value.match(/\^\^<?([^>]+)>?$/);
+    return match ? match[1] : undefined;
   }
 
   /**
-   * Execute DELETE operation via SPARQL UPDATE
-   * 
-   * @deprecated This method is not called in SPARQL-as-LDP-enhancement mode.
-   * All write operations are routed to LdpStrategy for Solid Notifications compatibility.
-   * Kept for potential future use (e.g., pure SPARQL mode).
-   * @see LdpStrategy.executeDelete for the active implementation
+   * Extract literal value from a typed literal string like "true"^^<...>
    */
-  async executeDelete(
-    plan: DeleteQueryPlan,
-    _containerUrl: string,
-    resourceUrl: string
-  ): Promise<ExecutionResult[]> {
-    const table = plan.table;
-    const targetGraph = this.resolveTargetGraph(table);
-    
-    if (!targetGraph) {
-        throw new Error('DELETE operation in SPARQL mode requires a target graph. Ensure table.config.base is set.');
+  private extractLiteralValue(value: string): string {
+    // Remove quotes and datatype annotation
+    const match = value.match(/^"(.*)"\^\^/);
+    if (match) {
+      return match[1];
     }
-    
-    const sparqlQuery = this.sparqlConverter.convertDelete(
-      plan.where,
-      table,
-      targetGraph
-    );
-    return await this.executeSparqlUpdate(resourceUrl, sparqlQuery, table.config.containerPath);
+    // Remove just quotes
+    if (value.startsWith('"') && value.endsWith('"')) {
+      return value.slice(1, -1);
+    }
+    return value;
   }
 
-  /**
-   * Execute a SPARQL UPDATE query against an endpoint
-   */
-  private async executeSparqlUpdate(
-    endpoint: string,
-    sparqlQuery: SPARQLQuery,
-    containerUri?: string
-  ): Promise<ExecutionResult[]> {
-    const fetchFn = this.getFetchForEndpoint(endpoint);
-
-    // DEBUG: 打印生成的 SPARQL
-    console.log('[SparqlStrategy] Executing Update:', sparqlQuery.query);
-
-    const response = await fetchFn(endpoint, {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/sparql-update' },
-      body: sparqlQuery.query
-    });
-
-    if (!response.ok) {
-      const text = await response.text().catch(() => '');
-      return [{
-        success: false,
-        source: endpoint,
-        status: response.status,
-        via: 'sparql-endpoint',
-        error: `${response.status} ${response.statusText}${text ? ` - ${text}` : ''}`
-      }];
-    }
-
-    // 更新成功后使缓存失效，避免后续查询命中旧数据
-    await this.sparqlExecutor.invalidateHttpCache(endpoint).catch(() => undefined);
-    if (containerUri) {
-      console.log('DEBUG: Invalidating container cache for:', containerUri);
-      await this.sparqlExecutor.invalidateHttpCache(containerUri).catch(() => undefined);
-    }
-    await this.sparqlExecutor.invalidateHttpCache(undefined as any).catch(() => undefined); // Invalidate all caches as a fallback
-
-    return [{
-      success: true,
-      source: endpoint,
-      status: response.status,
-      via: 'sparql-endpoint'
-    }];
-  }
 }

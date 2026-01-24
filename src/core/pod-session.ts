@@ -1,10 +1,7 @@
 import { entityKind } from 'drizzle-orm';
 import { SQL } from 'drizzle-orm';
 import { PodDialect, type PodOperation } from './pod-dialect';
-import { PodTable, PodColumnBase, type InferTableData, type InferInsertData, type InferUpdateData } from './schema';
-import { QueryCondition, inArray } from './query-conditions';
-import { AggregateExpression, isAggregateExpression } from './aggregates';
-import type { SelectQueryPlan } from './select-plan';
+import { PodTable } from './schema';
 
 // Import the new Query Builders and types
 import { SelectQueryBuilder } from './query-builders/select-query-builder';
@@ -23,9 +20,16 @@ export class PodAsyncSession {
 
   constructor(
     private dialect: PodDialect,
-    private schema?: any,
+    private _schema?: any,
     private options: { logger?: boolean } = {}
   ) {}
+
+  /**
+   * 获取会话关联的 schema
+   */
+  getSchema(): any {
+    return this._schema;
+  }
 
   /**
    * 检查连接状态

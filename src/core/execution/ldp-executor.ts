@@ -7,7 +7,6 @@
 import type { PodTable } from '../schema';
 import type { ComunicaSPARQLExecutor } from '../sparql-executor';
 import { TripleBuilderImpl } from '../triple/builder';
-import type { TripleBuilder } from '../triple/types';
 import type { UriResolver } from '../uri';
 
 export class LdpExecutor {
@@ -15,9 +14,6 @@ export class LdpExecutor {
   private fetchFn: typeof fetch;
   private tripleBuilder: TripleBuilderImpl;
   private uriResolver: UriResolver;
-  
-  // 用于跟踪 N3 Patch 请求数
-  private n3PatchCounter = 0;
 
   constructor(sparqlExecutor: ComunicaSPARQLExecutor, fetchFn: typeof fetch, uriResolver: UriResolver) {
     this.sparqlExecutor = sparqlExecutor;
@@ -53,7 +49,6 @@ export class LdpExecutor {
     table: PodTable,
     resourceUrl: string
   ): Promise<any[]> {
-    const deleteTriples: string[] = [];
     const insertTriples: string[] = [];
 
     // DEBUG: Log insert operation details
@@ -286,7 +281,7 @@ export class LdpExecutor {
       
       // 额外的内联对象清理逻辑
       const entries = Object.entries(data).filter(([_, value]) => value !== undefined);
-      for (const [key, rawValue] of entries) {
+      for (const [key] of entries) {
         // 跳过系统字段
         if (key === '@id' || key === 'subject') continue;
         
@@ -392,15 +387,60 @@ export class LdpExecutor {
 
   // ================= Private Helpers =================
 
-  private async resourceExists(resourceUrl: string): Promise<boolean> {
-    try {
-      const response = await this.fetchFn(resourceUrl, { method: 'HEAD' });
-      if (response.ok || response.status === 405) return true;
-      if (response.status === 404) return false;
-      return response.ok;
-    } catch {
-      return false;
+  /**
+   * Execute a function with exponential backoff retry on server errors
+   */
+  private async retryWithBackoff<T>(
+    fn: () => Promise<{ response: Response | null; result?: T; shouldRetry: boolean; fallback?: () => Promise<T> }>,
+    maxRetries: number = 3
+  ): Promise<{ response: Response | null; result?: T; lastError?: unknown }> {
+    let response: Response | null = null;
+    let lastError: unknown;
+
+    for (let i = 0; i < maxRetries; i++) {
+      try {
+        const outcome = await fn();
+        response = outcome.response;
+
+        if (outcome.result !== undefined) {
+          return { response, result: outcome.result };
+        }
+
+        if (outcome.fallback) {
+          const fallbackResult = await outcome.fallback();
+          return { response, result: fallbackResult };
+        }
+
+        if (!outcome.shouldRetry) {
+          break;
+        }
+
+        await new Promise(r => setTimeout(r, 1000 * (i + 1)));
+      } catch (e) {
+        lastError = e;
+        if (i < maxRetries - 1) {
+          await new Promise(r => setTimeout(r, 1000 * (i + 1)));
+        }
+      }
     }
+
+    return { response, lastError };
+  }
+
+  /**
+   * Build error from failed response
+   */
+  private async buildPatchError(
+    response: Response | null,
+    lastError: unknown,
+    errorPrefix: string
+  ): Promise<Error> {
+    const text = response ? await response.text().catch(() => '') : '';
+    const status = response ? response.status : 'Network Error';
+    const statusText = response ? response.statusText : (lastError instanceof Error ? lastError.message : String(lastError));
+    const error: any = new Error(`${errorPrefix} failed: ${status} ${statusText}${text ? ` - ${text}` : ''}`);
+    error.status = status;
+    return error;
   }
 
   private async buildUpdatePatchPayload(
@@ -490,7 +530,7 @@ export class LdpExecutor {
 
   /**
    * 执行更新操作
-   * 
+   *
    * 优先尝试 SPARQL UPDATE (application/sparql-update)，
    * xpod 内部使用 SPARQL，标准 CSS 也支持。
    * 如果失败，回退到 N3 Patch。
@@ -506,65 +546,49 @@ export class LdpExecutor {
       return [];
     }
 
-    this.n3PatchCounter++;
-    
-    // 构建 SPARQL UPDATE 查询
     const sparqlUpdate = this.buildSparqlUpdate(deleteTriples, insertTriples, deleteWherePatterns);
-    
-    let response;
-    let lastError;
 
-    // 首先尝试 SPARQL UPDATE
-    for (let i = 0; i < 3; i++) {
-      try {
-        response = await this.fetchFn(resourceUrl, {
-          method: 'PATCH',
-          headers: {
-            'Content-Type': 'application/sparql-update'
-          },
-          body: sparqlUpdate
-        });
+    const { response, result, lastError } = await this.retryWithBackoff<any[]>(async () => {
+      const res = await this.fetchFn(resourceUrl, {
+        method: 'PATCH',
+        headers: { 'Content-Type': 'application/sparql-update' },
+        body: sparqlUpdate
+      });
 
-        if (response.ok) {
-          await this.sparqlExecutor.invalidateHttpCache(resourceUrl);
-          return [{ success: true, source: resourceUrl, status: response.status, via: 'sparql-update' }];
-        }
-        
-        // 如果 SPARQL UPDATE 不被支持 (415/405)，尝试 N3 Patch
-        // 如果 SPARQL UPDATE 不被支持 (415/405)，尝试 N3 Patch
-        if (response.status === 415 || response.status === 405) {
-          const fallbackDeletes = deleteWherePatterns.length > 0
-            ? [...deleteTriples, ...deleteWherePatterns]
-            : deleteTriples;
-          const fallbackWhere = deleteWherePatterns.length > 0
-            ? deleteWherePatterns
-            : wherePatterns;
-          return await this.executeN3PatchInternal(resourceUrl, fallbackDeletes, insertTriples, fallbackWhere);
-        }
-        
-        // 服务器错误，重试
-        if (response.status >= 500 || response.status === 409) {
-          await new Promise(r => setTimeout(r, 1000 * (i + 1)));
-          continue;
-        }
-        break;
-      } catch (e) {
-        lastError = e;
-        if (i < 2) await new Promise(r => setTimeout(r, 1000 * (i + 1)));
+      if (res.ok) {
+        await this.sparqlExecutor.invalidateHttpCache(resourceUrl);
+        return {
+          response: res,
+          result: [{ success: true, source: resourceUrl, status: res.status, via: 'sparql-update' }],
+          shouldRetry: false
+        };
       }
+
+      // SPARQL UPDATE not supported, fallback to N3 Patch
+      if (res.status === 415 || res.status === 405) {
+        const fallbackDeletes = deleteWherePatterns.length > 0
+          ? [...deleteTriples, ...deleteWherePatterns]
+          : deleteTriples;
+        const fallbackWhere = deleteWherePatterns.length > 0
+          ? deleteWherePatterns
+          : wherePatterns;
+        return {
+          response: res,
+          shouldRetry: false,
+          fallback: () => this.executeN3PatchInternal(resourceUrl, fallbackDeletes, insertTriples, fallbackWhere)
+        };
+      }
+
+      // Server error, retry
+      const shouldRetry = res.status >= 500 || res.status === 409;
+      return { response: res, shouldRetry };
+    });
+
+    if (result) {
+      return result;
     }
 
-    if (!response || !response.ok) {
-      const text = response ? await response.text().catch(() => '') : '';
-      const status = response ? response.status : 'Network Error';
-      const statusText = response ? response.statusText : (lastError instanceof Error ? (lastError as Error).message : String(lastError));
-      const error: any = new Error(`SPARQL UPDATE failed: ${status} ${statusText}${text ? ` - ${text}` : ''}`);
-      error.status = status;
-      throw error;
-    }
-
-    await this.sparqlExecutor.invalidateHttpCache(resourceUrl);
-    return [{ success: true, source: resourceUrl, status: response.status, via: 'sparql-update' }];
+    throw await this.buildPatchError(response, lastError, 'SPARQL UPDATE');
   }
 
   /**
@@ -605,76 +629,49 @@ export class LdpExecutor {
     wherePatterns: string[] = []
   ): Promise<any[]> {
     const patch = this.tripleBuilder.buildN3Patch(deleteTriples, insertTriples, wherePatterns);
-    let response;
-    let lastError;
 
-    for (let i = 0; i < 3; i++) {
-      try {
-        response = await this.fetchFn(resourceUrl, {
+    const { response, result, lastError } = await this.retryWithBackoff<any[]>(async () => {
+      let res = await this.fetchFn(resourceUrl, {
+        method: 'PATCH',
+        headers: { 'Content-Type': 'text/n3' },
+        body: patch
+      });
+
+      // Resource not found, create it and retry
+      if (res.status === 404) {
+        const createRes = await this.fetchFn(resourceUrl, {
+          method: 'PUT',
+          headers: { 'Content-Type': 'text/turtle' },
+          body: ''
+        });
+        if (!createRes.ok && createRes.status !== 409) {
+          throw new Error(`Failed to create resource ${resourceUrl}: ${createRes.status} ${createRes.statusText}`);
+        }
+        res = await this.fetchFn(resourceUrl, {
           method: 'PATCH',
-          headers: {
-            'Content-Type': 'text/n3'
-          },
+          headers: { 'Content-Type': 'text/n3' },
           body: patch
         });
-
-        if (response.status === 404) {
-          const createRes = await this.fetchFn(resourceUrl, {
-            method: 'PUT',
-            headers: { 'Content-Type': 'text/turtle' },
-            body: ''
-          });
-          if (!createRes.ok && createRes.status !== 409) {
-            throw new Error(`Failed to create resource ${resourceUrl}: ${createRes.status} ${createRes.statusText}`);
-          }
-          response = await this.fetchFn(resourceUrl, {
-            method: 'PATCH',
-            headers: { 'Content-Type': 'text/n3' },
-            body: patch
-          });
-        }
-
-        if (response.ok) break;
-        
-        if (response.status >= 500 || response.status === 409) {
-          await new Promise(r => setTimeout(r, 1000 * (i + 1)));
-          continue;
-        }
-        break;
-      } catch (e) {
-        lastError = e;
-        if (i < 2) await new Promise(r => setTimeout(r, 1000 * (i + 1)));
       }
+
+      if (res.ok) {
+        await this.sparqlExecutor.invalidateHttpCache(resourceUrl);
+        return {
+          response: res,
+          result: [{ success: true, source: resourceUrl, status: res.status, via: 'n3' }],
+          shouldRetry: false
+        };
+      }
+
+      const shouldRetry = res.status >= 500 || res.status === 409;
+      return { response: res, shouldRetry };
+    });
+
+    if (result) {
+      return result;
     }
 
-    if (!response || !response.ok) {
-      const text = response ? await response.text().catch(() => '') : '';
-      const status = response ? response.status : 'Network Error';
-      const statusText = response ? response.statusText : (lastError instanceof Error ? (lastError as Error).message : String(lastError));
-      const error: any = new Error(`N3 PATCH failed: ${status} ${statusText}${text ? ` - ${text}` : ''}`);
-      error.status = status;
-      throw error;
-    }
-
-    await this.sparqlExecutor.invalidateHttpCache(resourceUrl);
-    return [{ success: true, source: resourceUrl, status: response.status, via: 'n3' }];
-  }
-
-  /**
-   * 尝试使用 SPARQL UPDATE 进行 Patch
-   * 保留此方法供将来 SPARQL endpoint 增强使用
-   */
-  private async trySparqlPatch(resourceUrl: string, sparql: string): Promise<boolean> {
-    try {
-      const response = await this.fetchFn(resourceUrl, {
-        method: 'PATCH',
-        headers: { 'Content-Type': 'application/sparql-update' },
-        body: sparql
-      });
-      return response.ok;
-    } catch (error) {
-      return false;
-    }
+    throw await this.buildPatchError(response, lastError, 'N3 PATCH');
   }
 
   private formatTerm(term: any): string {
@@ -730,12 +727,12 @@ export class LdpExecutor {
       if (o.termType === 'NamedNode') {
          // Check against table schema to see if this is an inline column
          const pVal = p.value;
-         for (const [colName, col] of Object.entries((table as any).columns)) {
+         for (const [, col] of Object.entries((table as any).columns)) {
             const predicate = this.tripleBuilder.getPredicateUri(col as any, table);
             // Check if column is inline
-            const isInline = (col as any).dataType === 'object' || (col as any).dataType === 'json' || 
+            const isInline = (col as any).dataType === 'object' || (col as any).dataType === 'json' ||
                      ((col as any).dataType === 'array' && ((col as any).elementType === 'object' || (col as any).options?.baseType === 'object'));
-            
+
             if (predicate === pVal && isInline) {
                childSubjects.push(o.value);
             }

@@ -383,11 +383,11 @@ export class SubjectResolverImpl implements SubjectResolver {
 
     // 使用 UTC 时间
     const yyyy = date.getUTCFullYear().toString();
-    const mm = (date.getUTCMonth() + 1).toString().padStart(2, '0');
+    const MM = (date.getUTCMonth() + 1).toString().padStart(2, '0');
     const dd = date.getUTCDate().toString().padStart(2, '0');
     const timestamp = Math.floor(date.getTime() / 1000).toString();
 
-    return { date, yyyy, mm, dd, timestamp };
+    return { date, yyyy, MM, dd, timestamp };
   }
 
   /**

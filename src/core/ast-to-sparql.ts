@@ -100,10 +100,6 @@ export class ASTToSPARQLConverter {
 
   addPrefix(prefix: string, uri: string): void {
     this.prefixes[prefix] = uri;
-    // Re-instantiate builders to propagate prefixes if necessary, 
-    // or make builders reference this.prefixes object (passed by reference).
-    // Since we passed object ref in constructor, it should update automatically 
-    // if we mutate the object.
   }
 
   // Legacy / Helper methods exposed for other modules
@@ -120,26 +116,8 @@ export class ASTToSPARQLConverter {
     return generateSubjectUri(record, table, this.uriResolver);
   }
 
-  /**
-   * @deprecated Use parseDrizzleAST() + convertSelect() with table context instead
-   * Direct SQL conversion without table context is limited and may not work correctly
-   */
-  convert(sql: SQL): SPARQLQuery {
-    const sqlString = sql.queryChunks.join('');
-
-    if (sqlString.toLowerCase().includes('select')) {
-      return this.convertSelect({
-        select: undefined,
-        columns: '*',
-        where: this.parseWhereClause(sql)
-      }, {} as any);
-    }
-
-    throw new Error(`Direct SQL conversion without table context is limited: ${sqlString}`);
-  }
-
-  parseDrizzleAST(sql: SQL, table: PodTable): any {
-    // Basic placeholder
+  parseDrizzleAST(sql: SQL, _table?: PodTable): any {
+    void _table;
     return {
       type: 'select',
       columns: '*',
@@ -148,7 +126,7 @@ export class ASTToSPARQLConverter {
   }
 
   private parseWhereClause(sql: SQL): any {
-    // Placeholder for AST parsing
+    void sql;
     return {};
   }
 }

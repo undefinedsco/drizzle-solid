@@ -11,29 +11,18 @@ import {
 import { PodTable, SolidSchema, isSolidSchema, type InferTableData, PodColumnBase, type RelationDefinition, type InstantiateTableOptions } from './schema';
 import { QueryCondition } from './query-conditions';
 import { inArray } from './query-conditions';
-import { 
-  NotificationsClient, 
-  type SubscribeOptions, 
+import {
+  NotificationsClient,
+  type SubscribeOptions,
   type TableSubscribeOptions,
   type EntitySubscribeOptions,
   type Subscription,
   type Activity,
-  type NotificationType,
   type NotificationsClientConfig
 } from './notifications';
-import { FederatedQueryExecutor, type FederatedError, type FederatedQueryOptions } from './federated';
+import { FederatedQueryExecutor, type FederatedError } from './federated';
 import type { DataDiscovery } from './discovery';
 
-
-/**
- * 从 SolidSchema 或 PodTable 获取 type
- */
-function getTargetType(target: PodTable<any> | SolidSchema<any>): string {
-  if (isSolidSchema(target)) {
-    return target.type;
-  }
-  return target.config.type;
-}
 
 /**
  * 初始化表选项
@@ -869,23 +858,6 @@ export class PodDatabase<TSchema extends Record<string, unknown> = Record<string
   }
 
   /**
-   * 从 predicate URI 提取列名
-   */
-  private predicateToColumnName(predicate: string): string {
-    const hashIndex = predicate.lastIndexOf('#');
-    if (hashIndex >= 0) {
-      return predicate.substring(hashIndex + 1);
-    }
-    
-    const slashIndex = predicate.lastIndexOf('/');
-    if (slashIndex >= 0) {
-      return predicate.substring(slashIndex + 1);
-    }
-    
-    return predicate;
-  }
-
-  /**
    * 从 RDF 类型 URI 提取类名
    */
   private extractClassName(rdfClass: string): string {
@@ -1018,7 +990,7 @@ export class PodDatabase<TSchema extends Record<string, unknown> = Record<string
       }
     }
 
-    const createHelper = (tableName: string, table: PodTable<any>) => {
+    const createHelper = (_tableName: string, table: PodTable<any>) => {
       const findMany = async <T = InferTableData<typeof table>>(options?: {
         where?: Record<string, unknown> | QueryCondition;
         columns?: SelectFieldMap;
@@ -1062,24 +1034,25 @@ export class PodDatabase<TSchema extends Record<string, unknown> = Record<string
         return await findFirst<T>({ ...options, where: { ...(options?.where ?? {}), id } });
       };
 
-      /**
-       * @deprecated Use db.findByIri(table, iri) instead
-       */
-      const findByIRI = async <T = InferTableData<typeof table>>(iri: string, _options?: Parameters<typeof findMany>[0]) => {
-        // Delegate to the main findByIri method
-        return await this.findByIri(table, iri) as T | null;
-      };
-
       const count = async (options?: { where?: Record<string, unknown> | QueryCondition }) => {
         const rows = await findMany({ where: options?.where, columns: undefined, limit: undefined, offset: undefined });
         return rows.length;
+      };
+
+      // Helper to create the deprecated findByIRI method without triggering deprecation warning on reference
+      const self = this;
+      const createFindByIRI = () => async <T = InferTableData<typeof table>>(iri: string, _options?: Parameters<typeof findMany>[0]) => {
+        void _options;
+        return await self.findByIri(table, iri) as T | null;
       };
 
       return {
         findMany,
         findFirst,
         findById,
-        findByIRI,
+        // eslint-disable-next-line @typescript-eslint/no-deprecated
+        /** @deprecated Use db.findByIri(table, iri) instead */
+        findByIRI: createFindByIRI(),
         count
       };
     };

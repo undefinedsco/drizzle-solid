@@ -187,6 +187,10 @@ export class PodExecutor {
       ? operation.plan
       : { table: operation.table, rows: values };
 
+    if (!strategy.executeInsert) {
+      throw new Error('Strategy does not support INSERT operations');
+    }
+
     const results = await strategy.executeInsert(insertPlan, containerUrl, resourceUrl);
     console.log(`INSERT operation completed, ${results.length} records affected`);
     return results;
@@ -252,6 +256,10 @@ export class PodExecutor {
       updatePlan.where = ensuredCondition;
     }
 
+    if (!strategy.executeUpdate) {
+      throw new Error('Strategy does not support UPDATE operations');
+    }
+
     const results = await strategy.executeUpdate(updatePlan, containerUrl, resourceUrl);
     return results;
   }
@@ -306,6 +314,10 @@ export class PodExecutor {
       }
 
       deletePlan.where = ensuredCondition;
+    }
+
+    if (!strategy.executeDelete) {
+      throw new Error('Strategy does not support DELETE operations');
     }
 
     const results = await strategy.executeDelete(deletePlan, containerUrl, resourceUrl);

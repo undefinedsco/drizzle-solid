@@ -4,7 +4,7 @@
  */
 
 import { PodColumnBase } from './schema';
-import { BinaryExpression, LogicalExpression, UnaryExpression, SPARQLExpression } from './expressions';
+import { BinaryExpression, LogicalExpression, UnaryExpression } from './expressions';
 
 // 导出新的类型
 export type QueryCondition = BinaryExpression | LogicalExpression | UnaryExpression;

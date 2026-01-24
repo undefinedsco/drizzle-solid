@@ -135,6 +135,13 @@ export {
   type SchemaParseResult
 } from './core/rdf-schema-parser';
 
+// URI 解析 - 时间变量上下文
+export type {
+  TimeContext,
+  ResourceMode,
+  ParsedSubject,
+} from './core/uri';
+
 
 // 类型安全的表定义（推荐）
 export {

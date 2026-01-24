@@ -53,8 +53,8 @@ export interface ExecutionContext {
  * ExecutionStrategy interface
  *
  * Abstracts the difference between LDP and SPARQL execution modes.
- * Each strategy handles SELECT, INSERT, UPDATE, DELETE operations
- * in its own way.
+ * SELECT is required; write operations are optional since SPARQL mode
+ * only supports SELECT (writes are routed to LDP for Solid Notifications compatibility).
  */
 export interface ExecutionStrategy {
   /** Mode identifier */
@@ -70,27 +70,27 @@ export interface ExecutionStrategy {
   ): Promise<any[]>;
 
   /**
-   * Execute an INSERT operation
+   * Execute an INSERT operation (optional - SPARQL mode does not support writes)
    */
-  executeInsert(
+  executeInsert?(
     plan: InsertQueryPlan,
     containerUrl: string,
     resourceUrl: string
   ): Promise<ExecutionResult[]>;
 
   /**
-   * Execute an UPDATE operation
+   * Execute an UPDATE operation (optional - SPARQL mode does not support writes)
    */
-  executeUpdate(
+  executeUpdate?(
     plan: UpdateQueryPlan,
     containerUrl: string,
     resourceUrl: string
   ): Promise<ExecutionResult[]>;
 
   /**
-   * Execute a DELETE operation
+   * Execute a DELETE operation (optional - SPARQL mode does not support writes)
    */
-  executeDelete(
+  executeDelete?(
     plan: DeleteQueryPlan,
     containerUrl: string,
     resourceUrl: string

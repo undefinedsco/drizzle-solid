@@ -607,13 +607,7 @@ export class UriResolverImpl implements UriResolver {
     const dd = date.getUTCDate().toString().padStart(2, '0');
     const timestamp = Math.floor(date.getTime() / 1000).toString();
 
-    return {
-      date,
-      yyyy,
-      MM,
-      dd,
-      timestamp,
-    };
+    return { date, yyyy, MM, dd, timestamp };
   }
 
   /**
