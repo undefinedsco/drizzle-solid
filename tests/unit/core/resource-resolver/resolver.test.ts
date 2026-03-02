@@ -331,6 +331,116 @@ describe('FragmentResourceResolver', () => {
   });
 });
 
+describe('resolveSelectSources() - multi-variable templates', () => {
+  it('should throw error when id provided but other template variables missing', async () => {
+    const resolver = new DocumentResourceResolver('http://localhost:3000/test/');
+    const table = podTable('threads', {
+      id: id(),
+      chatId: string('chatId').predicate('https://schema.org/chatId'),
+      content: string('content').predicate('https://schema.org/text'),
+    }, {
+      base: '/.data/chats/',
+      subjectTemplate: '{chatId}/index.ttl#{id}',
+      type: 'https://example.org/Thread',
+      namespace: ns,
+    });
+
+    // Condition with only id, missing chatId (using binary_expr format)
+    const condition = {
+      type: 'binary_expr',
+      left: { type: 'column_ref', name: 'id' },
+      operator: '=',
+      right: 'thread_abc123'
+    };
+
+    // Should throw error instead of silently falling back to container scan
+    await expect(
+      resolver.resolveSelectSources(
+        table,
+        'http://localhost:3000/test/.data/chats/',
+        condition
+      )
+    ).rejects.toThrow(/missing required variable.*chatId/);
+  });
+
+  it('should use fast path when all template variables are present', async () => {
+    const resolver = new DocumentResourceResolver('http://localhost:3000/test/');
+    const table = podTable('threads', {
+      id: id(),
+      chatId: string('chatId').predicate('https://schema.org/chatId'),
+      content: string('content').predicate('https://schema.org/text'),
+    }, {
+      base: '/.data/chats/',
+      subjectTemplate: '{chatId}/index.ttl#{id}',
+      type: 'https://example.org/Thread',
+      namespace: ns,
+    });
+
+    // Condition with both id and chatId (using logical_expr format)
+    const condition = {
+      type: 'logical_expr',
+      operator: 'AND',
+      expressions: [
+        {
+          type: 'binary_expr',
+          left: { type: 'column_ref', name: 'id' },
+          operator: '=',
+          right: 'thread_abc123'
+        },
+        {
+          type: 'binary_expr',
+          left: { type: 'column_ref', name: 'chatId' },
+          operator: '=',
+          right: 'chat1'
+        }
+      ]
+    };
+
+    const sources = await resolver.resolveSelectSources(
+      table,
+      'http://localhost:3000/test/.data/chats/',
+      condition
+    );
+
+    // Should resolve to specific container without needing listContainer
+    expect(sources).toEqual([
+      'http://localhost:3000/test/.data/chats/chat1/index.ttl',
+    ]);
+  });
+
+  it('should use fast path for simple single-variable templates', async () => {
+    const resolver = new DocumentResourceResolver('http://localhost:3000/test/');
+    const table = podTable('items', {
+      id: id(),
+      name: string('name').predicate('https://schema.org/name'),
+    }, {
+      base: '/.data/items/',
+      subjectTemplate: '{id}.ttl#it',
+      type: 'https://example.org/Item',
+      namespace: ns,
+    });
+
+    // Condition with only id (using binary_expr format)
+    const condition = {
+      type: 'binary_expr',
+      left: { type: 'column_ref', name: 'id' },
+      operator: '=',
+      right: 'item-123'
+    };
+
+    const sources = await resolver.resolveSelectSources(
+      table,
+      'http://localhost:3000/test/.data/items/',
+      condition
+    );
+
+    // Should use fast path and resolve directly
+    expect(sources).toEqual([
+      'http://localhost:3000/test/.data/items/item-123.ttl',
+    ]);
+  });
+});
+
 describe('Edge cases', () => {
   it('should handle deeply nested user paths', () => {
     const resolver = new DocumentResourceResolver('http://localhost:3000/org/team/user/');

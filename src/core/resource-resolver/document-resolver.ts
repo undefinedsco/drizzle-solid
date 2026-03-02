@@ -78,26 +78,53 @@ export class DocumentResourceResolver extends BaseResourceResolver {
     condition?: QueryCondition,
     listContainer?: (url?: string) => Promise<string[]>
   ): Promise<string[]> {
-    // 1. With id condition: query specific files directly
+    // 1. Check if subjectTemplate has variables other than {id}
+    const template = this.getEffectiveTemplate(table);
+    const variables = Array.from(template.matchAll(/\{([^}]+)\}/g)).map(m => m[1]);
+    const requiredVars = variables.filter(v => v !== 'id' && v !== 'index');
     const idValues = this.extractIdValues(condition);
 
-    if (idValues.length > 0) {
+    // 2. With id condition: only use fast path if template has no other variables
+    if (idValues.length > 0 && requiredVars.length === 0) {
       return idValues.map(id => {
         const subjectUri = this.resolveSubject(table, { id });
         return this.getResourceUrlForSubject(subjectUri);
       });
     }
 
-    // 2. Check if subjectTemplate has variables other than {id}
-    const template = this.getEffectiveTemplate(table);
-    const variables = Array.from(template.matchAll(/\{([^}]+)\}/g)).map(m => m[1]);
-    const requiredVars = variables.filter(v => v !== 'id' && v !== 'index');
-
+    // 3. Multi-variable template: try to resolve with all available values
     if (requiredVars.length > 0) {
       const templateValues = this.extractTemplateValues(condition, requiredVars);
+
+      // Merge id values into templateValues if available
+      if (idValues.length > 0 && !('id' in templateValues)) {
+        templateValues['id'] = idValues[0];
+      }
+
       const allVarsPresent = requiredVars.every(v => v in templateValues);
-      
+
+      // id provided but missing other required template variables — error
+      if (idValues.length > 0 && !allVarsPresent) {
+        const missing = requiredVars.filter(v => !(v in templateValues));
+        throw new Error(
+          `Cannot resolve subjectTemplate '${template}': ` +
+          `missing required variable(s) [${missing.join(', ')}] in query condition. ` +
+          `Add eq(table.${missing[0]}, value) to your where clause.`
+        );
+      }
+
       if (allVarsPresent) {
+        // Check if we also have id - if so, we can resolve the complete path
+        const hasId = idValues.length > 0 || 'id' in templateValues;
+
+        if (hasId) {
+          // All variables including id are present - resolve directly
+          const id = idValues[0] || templateValues['id'];
+          const subjectUri = this.resolveSubject(table, { ...templateValues, id });
+          return [this.getResourceUrlForSubject(subjectUri)];
+        }
+
+        // All required vars present but no id - resolve to specific sub-container
         let partialPath = template;
         for (const [key, val] of Object.entries(templateValues)) {
            const column = (table as any).columns?.[key];
@@ -105,7 +132,7 @@ export class DocumentResourceResolver extends BaseResourceResolver {
            const normalizedVal = this.uriResolver.normalizeValue(val, column);
            partialPath = partialPath.replace(new RegExp(`\\{${key}\\}`, 'g'), normalizedVal);
         }
-        
+
         const baseUrl = this.getContainerUrl(table);
         const firstbrace = partialPath.indexOf('{');
         let relativeContainer = partialPath;
@@ -114,10 +141,10 @@ export class DocumentResourceResolver extends BaseResourceResolver {
            if (lastSlashBeforeBrace !== -1) {
              relativeContainer = partialPath.substring(0, lastSlashBeforeBrace + 1);
            } else {
-             relativeContainer = ''; 
+             relativeContainer = '';
            }
         }
-        
+
         if (relativeContainer && listContainer) {
            const specificContainer = new URL(relativeContainer, baseUrl).toString();
            // List the specific sub-container instead of the base container
@@ -142,10 +169,40 @@ export class DocumentResourceResolver extends BaseResourceResolver {
     findSubjects: (resourceUrl: string) => Promise<string[]>,
     listContainer: () => Promise<string[]>
   ): Promise<string[]> {
-    // With id condition: resolve subjects directly from ids
+    // Check if subjectTemplate has variables other than {id}
+    const template = this.getEffectiveTemplate(table);
+    const variables = Array.from(template.matchAll(/\{([^}]+)\}/g)).map(m => m[1]);
+    const requiredVars = variables.filter(v => v !== 'id' && v !== 'index');
     const idValues = this.extractIdValues(condition);
-    if (idValues.length > 0) {
+
+    // With id condition: only use fast path if template has no other variables
+    if (idValues.length > 0 && requiredVars.length === 0) {
       return idValues.map(id => this.resolveSubject(table, { id }));
+    }
+
+    // Multi-variable template: check if all variables can be resolved
+    if (idValues.length > 0 && requiredVars.length > 0) {
+      const templateValues = this.extractTemplateValues(condition, requiredVars);
+
+      // Merge id values into templateValues
+      if (!('id' in templateValues)) {
+        templateValues['id'] = idValues[0];
+      }
+
+      const allVarsPresent = requiredVars.every(v => v in templateValues);
+
+      // id provided but missing other required template variables — error
+      if (!allVarsPresent) {
+        const missing = requiredVars.filter(v => !(v in templateValues));
+        throw new Error(
+          `Cannot resolve subjectTemplate '${template}' for mutation: ` +
+          `missing required variable(s) [${missing.join(', ')}] in query condition. ` +
+          `Add eq(table.${missing[0]}, value) to your where clause.`
+        );
+      }
+
+      // All variables present, can resolve subject directly
+      return idValues.map(id => this.resolveSubject(table, { ...templateValues, id }));
     }
 
     // Without id condition: scan container and find matching subjects

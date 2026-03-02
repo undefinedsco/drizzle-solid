@@ -85,24 +85,33 @@ export abstract class BaseResourceResolver implements ResourceResolver {
    */
   resolveSubject(table: PodTable, record: Record<string, any>, index?: number): string {
     const baseUrl = this.getBaseUrlForTable(table);
-    
+
     // 优先使用显式提供的 id
     let id = record.id ?? record['@id'] ?? record.uri;
-    
+
     // 如果 id 已经是绝对 URI，直接返回
     if (id && this.isAbsoluteUri(id)) {
       return id;
     }
-    
+
     // 如果没有 id，生成 UUID
     if (id === undefined || id === null) {
       id = this.generateUuid();
     }
-    
+
     // 应用模板生成相对路径
     const template = this.getEffectiveTemplate(table);
-    const relativePath = this.applyTemplate(id, template);
-    
+    let relativePath = this.applyTemplate(id, template);
+
+    // Handle multi-variable templates: replace other {var} placeholders from record
+    const variables = Array.from(template.matchAll(/\{([^}]+)\}/g)).map(m => m[1]);
+    for (const varName of variables) {
+      if (varName !== 'id' && varName !== 'index' && varName in record) {
+        const value = String(record[varName]);
+        relativePath = relativePath.replace(new RegExp(`\\{${varName}\\}`, 'g'), value);
+      }
+    }
+
     return baseUrl + relativePath;
   }
 
