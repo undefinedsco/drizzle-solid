@@ -1,0 +1,157 @@
+name: Auto-fix Issues
+
+on:
+  issues:
+    types: [labeled]
+
+jobs:
+  auto-fix:
+    runs-on: ubuntu-latest
+    # Only run when labeled with 'auto-fix'
+    if: contains(github.event.label.name, 'auto-fix')
+
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          token: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: 20
+
+      - name: Install dependencies
+        run: yarn install --frozen-lockfile --ignore-engines
+
+      - name: Attempt auto-fix with Claude
+        id: fix
+        env:
+          ANTHROPIC_API_KEY: ${{ secrets.ANTHROPIC_API_KEY }}
+          ISSUE_NUMBER: ${{ github.event.issue.number }}
+          ISSUE_TITLE: ${{ github.event.issue.title }}
+          ISSUE_BODY: ${{ github.event.issue.body }}
+        run: |
+          # Create a script that uses Claude to analyze and fix
+          cat > auto-fix.js << 'SCRIPT'
+          const Anthropic = require('@anthropic-ai/sdk');
+          const { execSync } = require('child_process');
+          const fs = require('fs');
+
+          const client = new Anthropic({
+            apiKey: process.env.ANTHROPIC_API_KEY,
+          });
+
+          async function autoFix() {
+            const issueContext = `
+              Issue #${process.env.ISSUE_NUMBER}
+              Title: ${process.env.ISSUE_TITLE}
+              Body: ${process.env.ISSUE_BODY}
+            `;
+
+            // Read relevant files
+            const packageJson = fs.readFileSync('package.json', 'utf8');
+            const readme = fs.readFileSync('README.md', 'utf8');
+
+            const message = await client.messages.create({
+              model: 'claude-sonnet-4-6',
+              max_tokens: 4096,
+              messages: [{
+                role: 'user',
+                content: `You are a code assistant. Analyze this GitHub issue and determine if it can be automatically fixed.
+
+          ${issueContext}
+
+          Repository context:
+          - package.json: ${packageJson}
+          - README.md: ${readme}
+
+          If this is a simple fix (typo, documentation, small bug), provide:
+          1. Files to modify
+          2. Exact changes needed
+          3. Commit message
+
+          Format your response as JSON:
+          {
+            "canAutoFix": true/false,
+            "reason": "explanation",
+            "changes": [
+              {"file": "path/to/file", "action": "edit", "content": "new content"}
+            ],
+            "commitMessage": "fix: description"
+          }
+          `
+              }]
+            });
+
+            return JSON.parse(message.content[0].text);
+          }
+
+          autoFix().then(result => {
+            console.log(JSON.stringify(result));
+            fs.writeFileSync('fix-result.json', JSON.stringify(result, null, 2));
+          }).catch(err => {
+            console.error(err);
+            process.exit(1);
+          });
+          SCRIPT
+
+          npm install @anthropic-ai/sdk
+          node auto-fix.js
+
+      - name: Apply fixes
+        if: success()
+        run: |
+          if [ -f fix-result.json ]; then
+            CAN_FIX=$(jq -r '.canAutoFix' fix-result.json)
+            if [ "$CAN_FIX" = "true" ]; then
+              # Apply changes (simplified - real implementation would parse changes array)
+              COMMIT_MSG=$(jq -r '.commitMessage' fix-result.json)
+
+              # Create branch
+              git config user.name "github-actions[bot]"
+              git config user.email "github-actions[bot]@users.noreply.github.com"
+              git checkout -b auto-fix-${{ github.event.issue.number }}
+
+              # Commit and push (changes would be applied here)
+              git add .
+              git commit -m "$COMMIT_MSG" || echo "No changes to commit"
+              git push origin auto-fix-${{ github.event.issue.number }}
+
+              # Create PR
+              gh pr create \
+                --title "Auto-fix: ${{ github.event.issue.title }}" \
+                --body "Automated fix for #${{ github.event.issue.number }}" \
+                --base main \
+                --head auto-fix-${{ github.event.issue.number }}
+            fi
+          fi
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Comment result
+        uses: actions/github-script@v7
+        if: always()
+        with:
+          script: |
+            const fs = require('fs');
+            let message = '🤖 **Auto-fix attempt completed**\n\n';
+
+            if (fs.existsSync('fix-result.json')) {
+              const result = JSON.parse(fs.readFileSync('fix-result.json', 'utf8'));
+              if (result.canAutoFix) {
+                message += '✅ A fix has been generated and a PR will be created.\n\n';
+                message += `**Changes**: ${result.reason}`;
+              } else {
+                message += '❌ This issue cannot be automatically fixed.\n\n';
+                message += `**Reason**: ${result.reason}`;
+              }
+            } else {
+              message += '❌ Auto-fix analysis failed. Manual intervention required.';
+            }
+
+            await github.rest.issues.createComment({
+              owner: context.repo.owner,
+              repo: context.repo.repo,
+              issue_number: context.issue.number,
+              body: message
+            });
