@@ -54,7 +54,7 @@ describe('SPARQL Sidecar with Document Mode', () => {
           @prefix dc: <http://purl.org/dc/terms/>.
           @prefix meeting: <http://www.w3.org/ns/pim/meeting#>.
           
-          <#${chatId}> 
+          <> 
             a meeting:LongChat;
             dc:title "Chat ${chatId}";
             dc:description "Description for ${chatId}".

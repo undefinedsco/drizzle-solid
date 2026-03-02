@@ -350,9 +350,11 @@ describe('Solid Chat App Integration (Alice & Bob)', () => {
     console.log('Step 5: Alice sees messages:', updatedMessages);
 
     expect(updatedMessages.length).toBeGreaterThanOrEqual(2);
-    const bobMsg = updatedMessages.find(m => m.author === bobSession.info.webId);
+    // Find by ID to be robust against single-user test environments where Alice == Bob
+    const bobMsg = updatedMessages.find(m => m.id === 'msg-2');
     expect(bobMsg).toBeDefined();
     expect(bobMsg?.content).toBe('Hi Alice! Bob here.');
+    expect(bobMsg?.author).toBe(bobSession.info.webId);
 
   }, 180000);
 });

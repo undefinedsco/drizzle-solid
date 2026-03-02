@@ -165,7 +165,7 @@ describe('SPARQL Endpoint Mode Integration', () => {
     await session.fetch(aliceResource, {
         method: 'PUT',
         headers: { 'Content-Type': 'text/turtle' },
-        body: `<#${aliceId}> <http://schema.org/name> "Alice LDP"; a <http://schema.org/Person> .`
+        body: `<> <http://schema.org/name> "Alice LDP"; a <http://schema.org/Person> .`
     });
 
     // 验证 LDP 写入成功

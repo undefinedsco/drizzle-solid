@@ -101,7 +101,7 @@ describe('subjectTemplate Discovery via SAI', () => {
       headers: { 'Content-Type': 'text/turtle' },
       body: `
         @prefix schema: <http://schema.org/>.
-        <#note-abc> a <http://schema.org/Note_SetTemplateTest>;
+        <> a <http://schema.org/Note_SetTemplateTest>;
           schema:identifier "note-abc";
           schema:text "Document mode test note".
       `
@@ -198,7 +198,7 @@ describe('subjectTemplate Discovery via SAI', () => {
       headers: { 'Content-Type': 'text/turtle' },
       body: `
         @prefix schema: <http://schema.org/>.
-        <#article-001> a <http://schema.org/Article_ConsumerWorkflowTest>;
+        <> a <http://schema.org/Article_ConsumerWorkflowTest>;
           schema:identifier "article-001";
           schema:name "First Article";
           schema:text "Content of first article".

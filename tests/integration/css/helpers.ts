@@ -95,15 +95,50 @@ if (process.env.SOLID_ENABLE_REAL_TESTS !== 'false') {
   });
 }
 
+/**
+ * 为指定用户生成 Client Credentials Token
+ * 适用于 CSS 环境
+ */
+async function generateTokenForUser(email: string, password: string): Promise<{ id: string; secret: string }> {
+  const baseUrl = process.env.SOLID_SERVER_BASE_URL || 'http://localhost:3000';
+  const response = await fetch(`${baseUrl}/idp/credentials/`, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({
+      name: `test-token-${Date.now()}`,
+      email,
+      password
+    })
+  });
+
+  if (!response.ok) {
+    const text = await response.text();
+    throw new Error(`Failed to generate token for ${email}: ${response.status} ${text}`);
+  }
+
+  const data = await response.json();
+  return { id: data.id, secret: data.secret };
+}
+
 export async function createSecondSessionInstance(): Promise<Session> {
   bootstrapEnv();
 
-  const clientId = process.env.SOLID_CLIENT_ID_2;
-  const clientSecret = process.env.SOLID_CLIENT_SECRET_2;
-  const oidcIssuer = process.env.SOLID_OIDC_ISSUER;
+  let clientId = process.env.SOLID_CLIENT_ID_2;
+  let clientSecret = process.env.SOLID_CLIENT_SECRET_2;
+  const oidcIssuer = process.env.SOLID_OIDC_ISSUER || 'http://localhost:3000/';
   
-  if (!clientId || !clientSecret || !oidcIssuer) {
-    throw new Error('Missing SOLID_CLIENT_ID_2, SOLID_CLIENT_SECRET_2, or SOLID_OIDC_ISSUER in environment for dual-user tests');
+  // 如果环境变量未配置，尝试为 Bob 动态生成 Token
+  if (!clientId || !clientSecret) {
+    console.log('   ⚠️ SOLID_CLIENT_ID_2 未配置，尝试为 Bob 动态生成凭证...');
+    try {
+      const creds = await generateTokenForUser('bob@example.com', 'bob123');
+      clientId = creds.id;
+      clientSecret = creds.secret;
+      console.log('   ✅ Bob 凭证生成成功');
+    } catch (e) {
+      console.warn('   ❌ 无法生成 Bob 凭证:', e);
+      throw new Error('Missing SOLID_CLIENT_ID_2 and failed to auto-generate for bob@example.com');
+    }
   }
 
   const session = new Session();
@@ -114,7 +149,7 @@ export async function createSecondSessionInstance(): Promise<Session> {
     tokenType: 'DPoP'
   });
 
-  console.log('   ✅ 第二用户 Session创建成功');
+  console.log('   ✅ 第二用户 (Bob) Session创建成功');
   console.log(`   🆔 Session WebID: ${session.info.webId || 'N/A'}`);
 
   return session;
