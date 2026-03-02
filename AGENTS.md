@@ -28,10 +28,36 @@ OpenSpec guidance is deprecated in this repository. Do not use or reference `ope
 - Install the isolated CSS runtime with `yarn css:install` whenever dependencies change so Comunica v2 (CSS) stays separate from the library's v4 stack.
 - **Examples must be tested**: All example code in `examples/` must compile successfully and be verified to work. When adding or modifying examples, ensure they pass compilation checks and test their functionality against real CSS flows when possible.
 
-## Commit & Pull Request Guidelines
-- Follow the sequence: implement feature → add CSS-backed integration + targeted unit tests → refresh docs/examples → verify with `yarn quality` (or capture why integration tests were skipped).
-- Write Conventional Commits (`feat(core):`, `fix(utils):`, `docs(guides):`) and keep unrelated refactors out of scope.
-- PRs must include a short problem statement, test evidence (including manual CSS steps), migration notes if API changes, and reviewers for each touched area.
+## Git Operations & Commit Guidelines
+
+### File Safety Rules
+- **NEVER commit files containing secrets, tokens, or credentials**
+  - Check files like `*.sh`, `*.env`, config files before staging
+  - Use `git add <specific-files>` instead of `git add .` or `git add -A`
+  - If unsure, show file content to user before committing
+  - Common sensitive files: `.env`, `.env.local`, `*-secret.json`, `*-token.txt`, shell scripts with exports
+
+### Commit Workflow
+1. **Stage files explicitly**: `git add src/file1.ts src/file2.ts tests/file.test.ts`
+2. **Review staged changes**: `git diff --cached` before committing
+3. **Write Conventional Commits**:
+   - `feat(core): add multi-variable subjectTemplate support`
+   - `fix(utils): handle edge case in RDF parsing`
+   - `docs(guides): update authentication examples`
+   - `test: add unit tests for resource resolver`
+   - `chore: update dependencies`
+4. **Verify before push**: Run `yarn quality` (lint + test) locally first
+5. **Push carefully**: Use `git push origin main` (never force push to main unless explicitly needed)
+
+### Development Sequence
+- Implement feature → add tests (unit + integration) → update docs/examples → verify with `yarn quality` → commit → push
+
+### Pull Request Guidelines
+- Include problem statement and solution approach
+- Provide test evidence (unit test results + manual CSS verification if applicable)
+- Document API changes and migration notes
+- Keep commits focused (one logical change per commit)
+- Avoid mixing refactors with feature work
 
 ## Current Cleanup Priorities
 - Collapse redundant docs into `README.md` + `docs/guides/`, then archive legacy notes.
