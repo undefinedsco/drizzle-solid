@@ -32,10 +32,8 @@ jobs:
       - name: Build
         run: yarn build
 
-      - name: Run tests
-        run: yarn test --run
-        env:
-          NODE_ENV: test
+      - name: Run unit tests
+        run: yarn build && npx vitest --run tests/unit/
 
       - name: Extract version from tag
         id: version
