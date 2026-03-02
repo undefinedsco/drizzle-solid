@@ -37,11 +37,16 @@ export interface PodDialectConfig {
   session: SolidAuthSession;
   typeIndex?: TypeIndexConfig;
   disableInteropDiscovery?: boolean;
-  /** 
+  /**
    * 通知通道偏好顺序，默认 ['streaming-http', 'websocket']
    * 会根据服务器支持的通道自动选择第一个匹配的
    */
   preferredChannels?: ChannelType[];
+  /**
+   * Storage 缓存过期时间（毫秒），默认 5 分钟
+   * 用于 IdP-SP 分离场景，控制从 profile 重新读取 pim:storage 的频率
+   */
+  storageTTL?: number;
 }
 
 // Pod 操作类型 - 现在包含 SQL AST 和 JOIN
@@ -106,6 +111,7 @@ export class PodDialect {
       session,
       webId,
       podUrl: (config as any).podUrl,
+      storageTTL: config.storageTTL,
     });
     this.webId = this.runtime.getWebId();
     this.podUrl = this.runtime.getPodUrl();
@@ -784,6 +790,28 @@ export class PodDialect {
   // 核心查询方法 - 通过 ExecutionStrategy 执行
   async query(operation: PodOperation): Promise<unknown[]> {
     return this.executor.query(operation);
+  }
+
+  /**
+   * Collect all resource URLs involved in a query plan.
+   * Used for resolving data sources for SPARQL queries.
+   */
+  private collectSelectSources(plan: SelectQueryPlan): string[] {
+    const sources = new Set<string>();
+
+    // Base table
+    const { resourceUrl } = this.resolveTableUrls(plan.baseTable);
+    sources.add(resourceUrl);
+
+    // Joined tables
+    if (plan.joins) {
+      for (const join of plan.joins) {
+        const { resourceUrl: joinUrl } = this.resolveTableUrls(join.table);
+        sources.add(joinUrl);
+      }
+    }
+
+    return Array.from(sources);
   }
 
   private buildIdInConditionFromSubjects(subjects: string[]): QueryCondition | undefined {

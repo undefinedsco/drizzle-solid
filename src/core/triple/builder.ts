@@ -202,11 +202,10 @@ export class TripleBuilderImpl implements TripleBuilder {
         return `_:${term.value}`;
 
       case 'Literal': {
-        // 如果值包含双引号或换行符，使用三引号字符串避免转义问题
-        const hasQuotes = term.value.includes('"');
+        // 如果值包含换行符，使用三引号字符串避免转义问题
         const hasNewlines = term.value.includes('\n') || term.value.includes('\r');
 
-        if (hasQuotes || hasNewlines) {
+        if (hasNewlines) {
           // 使用三引号字符串
           // 需要处理的特殊情况：
           // 1. 内容包含 """ 序列需要转义

@@ -217,7 +217,7 @@ describe('ASTToSPARQLConverter', () => {
 
   describe('convertInsert', () => {
     it('应该转换 INSERT 查询', () => {
-      const values = [{ name: 'John', email: 'john@example.com' }];
+      const values = [{ id: '1', name: 'John', email: 'john@example.com' }];
       const result = converter.convertInsert(values, mockTable);
       
       expect(result).toBeDefined();
@@ -227,7 +227,7 @@ describe('ASTToSPARQLConverter', () => {
     });
 
     it('应该为每个值生成正确的三元组', () => {
-      const values = [{ name: 'John', email: 'john@example.com' }];
+      const values = [{ id: '1', name: 'John', email: 'john@example.com' }];
       const result = converter.convertInsert(values, mockTable);
       
       expect(result.query).toContain('"John"');
@@ -243,7 +243,7 @@ describe('ASTToSPARQLConverter', () => {
     it('应该支持 IR plan 输入', () => {
       const plan = {
         table: mockTable,
-        rows: [{ name: 'Carol', email: 'carol@example.com' }]
+        rows: [{ id: '1', name: 'Carol', email: 'carol@example.com' }]
       };
       const result = converter.convertInsert(plan);
       expect(result.query).toContain('"Carol"');

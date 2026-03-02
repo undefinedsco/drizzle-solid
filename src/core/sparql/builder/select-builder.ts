@@ -374,7 +374,7 @@ export class SelectBuilder {
       if (columnsToInclude && !columnsToInclude.has(columnName)) {
         return;
       }
-      
+
       const predicate = getPredicateForColumn(column, table);
 
       // Fix: Do not generate triple patterns for virtual @id predicate.
@@ -385,7 +385,7 @@ export class SelectBuilder {
 
       const subjectVar = { termType: 'Variable', value: 'subject' } as any;
       const valueVar = { termType: 'Variable', value: columnName } as any;
-      
+
       const isInverse = column.options?.inverse;
       const triple: sparqljs.Triple = {
         subject: isInverse ? valueVar : subjectVar,
@@ -393,7 +393,13 @@ export class SelectBuilder {
         object: isInverse ? subjectVar : valueVar
       };
 
-      if (column.options?.required) {
+      // Inverse triples MUST be OPTIONAL to avoid breaking compound query optimization
+      // in xpod's ComunicaQuintEngine. When inverse triples (where subject != ?subject)
+      // are in the required BGP, the engine's compound query optimizer mishandles them,
+      // causing other fields to be dropped from results.
+      if (isInverse) {
+        optionalTriples.push(triple);
+      } else if (column.options?.required) {
         requiredTriples.push(triple);
       } else {
         optionalTriples.push(triple);

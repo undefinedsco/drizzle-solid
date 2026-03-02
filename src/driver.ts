@@ -20,6 +20,11 @@ export interface SolidDrizzleConfig<TSchema extends Record<string, unknown> = Re
    * 是否自动连接到 Pod（默认 false，按需延迟连接）
    */
   autoConnect?: boolean;
+  /**
+   * Storage 缓存过期时间（毫秒），默认 5 分钟
+   * 用于 IdP-SP 分离场景，控制从 profile 重新读取 pim:storage 的频率
+   */
+  storageTTL?: number;
 }
 
 // 主要的 drizzle 函数 - 接受 Inrupt Session
@@ -37,6 +42,7 @@ export function drizzle<TSchema extends Record<string, unknown> = Record<string,
     session,
     preferredChannels: config?.notifications?.preferredChannels,
     disableInteropDiscovery: config?.disableInteropDiscovery,
+    storageTTL: config?.storageTTL,
   };
   const dialect = new PodDialect(dialectConfig);
   

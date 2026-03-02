@@ -40,7 +40,7 @@ class SubjectResolverCompat {
   }
 
   resolve(table: PodTable, record: Record<string, unknown>, index?: number): string {
-    return this.resolver.resolveSubject(table, record, index);
+    return this.resolver.resolveSubject(table, record, index, { strict: false });
   }
 
   parse(uri: string, table: PodTable) {

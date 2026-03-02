@@ -1,4 +1,5 @@
 import { resolvePodBase } from '../utils/pod-root';
+import { webIdResolver } from '../../utils/webid-resolver';
 import type { SolidAuthSession } from '../pod-dialect';
 
 // 生成唯一请求 ID
@@ -12,14 +13,22 @@ export class PodRuntime {
   private session: SolidAuthSession;
   private webId: string;
   private podUrl: string;
+  private storageUrl: string | null = null;  // 缓存的 storage URL
+  private storageResolvedAt: number = 0;     // storage 解析时间戳
   private connected = false;
   private wrappedFetch: typeof fetch | null = null;
   private requestIdSupported: boolean | null = null;
 
-  constructor(options: { session: SolidAuthSession; webId: string; podUrl?: string }) {
+  /** Storage 缓存过期时间，默认 5 分钟 */
+  private storageTTL: number = 5 * 60 * 1000;
+
+  constructor(options: { session: SolidAuthSession; webId: string; podUrl?: string; storageTTL?: number }) {
     this.session = options.session;
     this.webId = options.webId;
     this.podUrl = resolvePodBase({ webId: this.webId, podUrl: options.podUrl });
+    if (options.storageTTL !== undefined) {
+      this.storageTTL = options.storageTTL;
+    }
   }
 
   /**
@@ -92,6 +101,58 @@ export class PodRuntime {
     return this.podUrl;
   }
 
+  /**
+   * 获取缓存的 storage URL (从 profile 的 pim:storage 读取)
+   * 如果没有显式配置，返回 null
+   */
+  getStorageUrl(): string | null {
+    return this.storageUrl;
+  }
+
+  /**
+   * 检查 storage 缓存是否过期
+   */
+  isStorageExpired(): boolean {
+    if (!this.storageResolvedAt) return true;
+    return Date.now() - this.storageResolvedAt > this.storageTTL;
+  }
+
+  /**
+   * 获取 Pod URL，如果 storage 缓存过期则自动刷新
+   * 用于需要确保最新 storage 的场景
+   */
+  async getPodUrlWithRefresh(): Promise<string> {
+    if (this.isStorageExpired()) {
+      await this.refreshStorage();
+    }
+    return this.podUrl;
+  }
+
+  /**
+   * 强制刷新 storage URL（从 profile 重新读取）
+   * 用于 storage 配置变更后的场景
+   */
+  async refreshStorage(): Promise<string | null> {
+    // 清除 webIdResolver 的缓存
+    webIdResolver.clearCache();
+
+    const resolvedStorage = await webIdResolver.resolveStorage(this.webId, this.getFetch());
+    if (resolvedStorage) {
+      this.storageUrl = resolvedStorage;
+      this.storageResolvedAt = Date.now();
+      if (resolvedStorage !== this.podUrl) {
+        console.log(`[PodRuntime] Storage refreshed: ${resolvedStorage}`);
+        this.podUrl = resolvedStorage;
+      }
+    }
+    return this.storageUrl;
+  }
+
+  setPodUrl(url: string): void {
+    // Ensure trailing slash for consistency
+    this.podUrl = url.endsWith('/') ? url : `${url}/`;
+  }
+
   isConnected(): boolean {
     return this.connected;
   }
@@ -108,6 +169,19 @@ export class PodRuntime {
 
       // 重新创建 wrappedFetch（现在知道是否支持了）
       this.wrappedFetch = this.createWrappedFetch();
+
+      // 从 profile 解析 storage URL (IdP-SP 分离支持)
+      // 使用 webIdResolver 的缓存，避免重复读取 profile
+      const resolvedStorage = await webIdResolver.resolveStorage(this.webId, this.wrappedFetch);
+      if (resolvedStorage) {
+        this.storageUrl = resolvedStorage;
+        this.storageResolvedAt = Date.now();
+        // 如果 storage URL 与当前 podUrl 不同，更新 podUrl
+        if (resolvedStorage !== this.podUrl) {
+          console.log(`[PodRuntime] IdP-SP separation detected: storage at ${resolvedStorage}`);
+          this.podUrl = resolvedStorage;
+        }
+      }
 
       // Probe pod root with HEAD
       const response = await this.wrappedFetch(this.podUrl, {

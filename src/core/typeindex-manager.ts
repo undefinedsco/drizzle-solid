@@ -27,10 +27,14 @@ export interface TypeIndexConfig {
   autoCreate?: boolean;
 }
 
+const CACHE_TTL = 5 * 60 * 1000; // 5分钟缓存
+
 export class TypeIndexManager {
   private fetchFn: typeof fetch;
   private webId: string;
   private podUrl: string;
+  private typeIndexCache: { url: string; timestamp: number } | null = null;
+  private cachedTypeIndexUrl: string | null = null;
 
   constructor(webId: string, podUrl: string, fetchFn: typeof fetch = globalThis.fetch) {
     this.webId = webId;
@@ -59,12 +63,26 @@ export class TypeIndexManager {
     if (config.fetch) {
       this.fetchFn = config.fetch;
     }
+    // Clear cache when config changes
+    this.clearCache();
+  }
+
+  /**
+   * 清除缓存
+   */
+  clearCache(): void {
+    this.typeIndexCache = null;
   }
 
   /**
    * 从 WebID Profile 中发现 TypeIndex
    */
   async findTypeIndex(): Promise<string | null> {
+    // 检查缓存是否有效
+    if (this.typeIndexCache && (Date.now() - this.typeIndexCache.timestamp < CACHE_TTL)) {
+      return this.typeIndexCache.url;
+    }
+
     try {
       // 第一步：主动获取 profile 数据（即使 session 跳过了 profile）
       let profileDataset;
@@ -112,6 +130,7 @@ export class TypeIndexManager {
         if (privateTypeIndexUrls) {
           const typeIndexUrl = Array.isArray(privateTypeIndexUrls) ? privateTypeIndexUrls[0] : privateTypeIndexUrls;
           console.log(`Found Private TypeIndex in profile: ${typeIndexUrl}`);
+          this.cachedTypeIndexUrl = typeIndexUrl;
           return typeIndexUrl;
         }
 
@@ -120,6 +139,7 @@ export class TypeIndexManager {
         if (publicTypeIndexUrls) {
           const typeIndexUrl = Array.isArray(publicTypeIndexUrls) ? publicTypeIndexUrls[0] : publicTypeIndexUrls;
           console.log(`Found Public TypeIndex in profile: ${typeIndexUrl}`);
+          this.cachedTypeIndexUrl = typeIndexUrl;
           return typeIndexUrl;
         }
 
@@ -128,6 +148,7 @@ export class TypeIndexManager {
         if (legacyTypeIndexUrls) {
           const typeIndexUrl = Array.isArray(legacyTypeIndexUrls) ? legacyTypeIndexUrls[0] : legacyTypeIndexUrls;
           console.log(`Found legacy TypeIndex in profile: ${typeIndexUrl}`);
+          this.cachedTypeIndexUrl = typeIndexUrl;
           return typeIndexUrl;
         }
 
@@ -146,6 +167,7 @@ export class TypeIndexManager {
               if (privateTypeIndexLink) {
                 const typeIndexUrl = Array.isArray(privateTypeIndexLink) ? privateTypeIndexLink[0] : privateTypeIndexLink;
                 console.log(`Found Private TypeIndex in storage: ${typeIndexUrl}`);
+                this.cachedTypeIndexUrl = typeIndexUrl;
                 return typeIndexUrl;
               }
 
@@ -153,6 +175,7 @@ export class TypeIndexManager {
               if (publicTypeIndexLink) {
                 const typeIndexUrl = Array.isArray(publicTypeIndexLink) ? publicTypeIndexLink[0] : publicTypeIndexLink;
                 console.log(`Found Public TypeIndex in storage: ${typeIndexUrl}`);
+                this.cachedTypeIndexUrl = typeIndexUrl;
                 return typeIndexUrl;
               }
             }
@@ -175,6 +198,7 @@ export class TypeIndexManager {
         try {
           await getSolidDataset(location, { fetch: this.fetchFn });
           console.log(`Found TypeIndex at standard location: ${location}`);
+          this.cachedTypeIndexUrl = location;
           return location;
         } catch {
           // 继续尝试下一个位置
