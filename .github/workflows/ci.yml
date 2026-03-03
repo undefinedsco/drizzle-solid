@@ -66,7 +66,7 @@ jobs:
         run: yarn build
 
       - name: Install xpod
-        run: npm install -g xpod
+        run: npm install -g xpod --legacy-peer-deps
 
       - name: Start xpod on port 4000
         run: xpod start --port 4000 &

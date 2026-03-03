@@ -4,35 +4,42 @@ on:
   push:
     paths:
       - 'examples/**'
-      - 'tests/examples/**'
+      - 'tests/unit/examples.test.ts'
+      - 'tests/integration/css/examples-verification.test.ts'
   pull_request:
     paths:
       - 'examples/**'
-      - 'tests/examples/**'
+      - 'tests/unit/examples.test.ts'
+      - 'tests/integration/css/examples-verification.test.ts'
 
 jobs:
   test-examples:
     runs-on: ubuntu-latest
-    
+
     steps:
-    - uses: actions/checkout@v3
-    
+    - uses: actions/checkout@v4
+
     - name: Setup Node.js
-      uses: actions/setup-node@v3
+      uses: actions/setup-node@v4
       with:
         node-version: 20
-    
+        cache: 'yarn'
+
     - name: Install dependencies
-      run: npm install
-      
+      run: yarn install --frozen-lockfile --ignore-engines
+
+    - name: Build
+      run: yarn build
+
     - name: Run example tests
       run: |
-        npm run build
-        npm test tests/examples/
+        npx vitest --run tests/unit/examples.test.ts
       env:
-        SOLID_POD_URL: ${{ secrets.SOLID_POD_URL }}
-        SOLID_WEB_ID: ${{ secrets.SOLID_WEB_ID }}
-        
+        SOLID_OIDC_ISSUER: http://localhost:3000
+
     - name: Upload coverage
-      uses: codecov/codecov-action@v3
+      uses: codecov/codecov-action@v4
       if: always()
+      with:
+        token: ${{ secrets.CODECOV_TOKEN }}
+        fail_ci_if_error: false
