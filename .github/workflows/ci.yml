@@ -7,7 +7,7 @@ on:
     branches: [main, develop]
 
 jobs:
-  test:
+  unit-test:
     runs-on: ubuntu-latest
 
     strategy:
@@ -34,7 +34,7 @@ jobs:
         run: yarn build
 
       - name: Run unit tests
-        run: yarn build && npx vitest --run tests/unit/
+        run: npx vitest --run tests/unit/
         env:
           SOLID_OIDC_ISSUER: http://localhost:3000
 
@@ -44,3 +44,73 @@ jobs:
         with:
           token: ${{ secrets.CODECOV_TOKEN }}
           fail_ci_if_error: false
+
+  integration-test:
+    runs-on: ubuntu-latest
+    # Only run on Node 20 to save CI time
+    needs: unit-test
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: 20
+          cache: 'yarn'
+
+      - name: Install dependencies
+        run: yarn install --frozen-lockfile --ignore-engines
+
+      - name: Build
+        run: yarn build
+
+      - name: Install xpod
+        run: npm install -g xpod
+
+      - name: Start xpod on port 4000
+        run: xpod start --port 4000 &
+        env:
+          CSS_BASE_URL: http://localhost:4000/
+
+      - name: Wait for xpod to be ready
+        run: |
+          echo "Waiting for xpod..."
+          for i in $(seq 1 30); do
+            if curl -sf http://localhost:4000/.account/ > /dev/null 2>&1; then
+              echo "xpod is ready!"
+              break
+            fi
+            echo "Attempt $i/30..."
+            sleep 2
+          done
+
+      - name: Generate test credentials
+        id: creds
+        run: |
+          # Use seed account to generate client credentials
+          RESULT=$(node -e "
+            const { seedCredentials } = require('$(npm root -g)/xpod/dist/cli/seed.js');
+            process.env.CSS_BASE_URL = 'http://localhost:4000/';
+            seedCredentials().then(() => process.exit(0)).catch(e => { console.error(e); process.exit(1); });
+          " 2>&1)
+
+          echo "$RESULT"
+
+          CLIENT_ID=$(echo "$RESULT" | grep '^CLIENT_ID=' | cut -d= -f2)
+          CLIENT_SECRET=$(echo "$RESULT" | grep '^CLIENT_SECRET=' | cut -d= -f2)
+          WEBID=$(echo "$RESULT" | grep '^WEBID=' | cut -d= -f2)
+
+          echo "client_id=$CLIENT_ID" >> $GITHUB_OUTPUT
+          echo "client_secret=$CLIENT_SECRET" >> $GITHUB_OUTPUT
+          echo "webid=$WEBID" >> $GITHUB_OUTPUT
+
+      - name: Run integration tests
+        run: npx vitest --run tests/integration/
+        env:
+          SOLID_OIDC_ISSUER: http://localhost:4000/
+          SOLID_CLIENT_ID: ${{ steps.creds.outputs.client_id }}
+          SOLID_CLIENT_SECRET: ${{ steps.creds.outputs.client_secret }}
+          SOLID_WEBID: ${{ steps.creds.outputs.webid }}
+          SOLID_TEST_POD_BASE: http://localhost:4000/test/
+          SOLID_ENABLE_REAL_TESTS: true

@@ -48,9 +48,9 @@ fi
 echo -e "${GREEN}Pulling latest changes...${NC}"
 git pull origin $CURRENT_BRANCH
 
-# Run quality checks
-echo -e "${GREEN}Running quality checks...${NC}"
-yarn quality
+# Run quality checks (unit tests only for release)
+echo -e "${GREEN}Running quality checks (lint + build + unit tests)...${NC}"
+yarn build && yarn lint && SOLID_OIDC_ISSUER=http://localhost:3000 npx vitest --run tests/unit/
 
 # Get current version
 CURRENT_VERSION=$(node -p "require('./package.json').version")
