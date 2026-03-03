@@ -1039,18 +1039,16 @@ export class PodDatabase<TSchema extends Record<string, unknown> = Record<string
         return rows.length;
       };
 
-      // Helper to create the deprecated findByIRI method without triggering deprecation warning on reference
-      const self = this;
+      // Helper to create the deprecated findByIRI method
       const createFindByIRI = () => async <T = InferTableData<typeof table>>(iri: string, _options?: Parameters<typeof findMany>[0]) => {
         void _options;
-        return await self.findByIri(table, iri) as T | null;
+        return await this.findByIri(table, iri) as T | null;
       };
 
       return {
         findMany,
         findFirst,
         findById,
-        // eslint-disable-next-line @typescript-eslint/no-deprecated
         /** @deprecated Use db.findByIri(table, iri) instead */
         findByIRI: createFindByIRI(),
         count
