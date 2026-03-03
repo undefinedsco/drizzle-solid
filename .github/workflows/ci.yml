@@ -47,7 +47,7 @@ jobs:
 
   integration-test:
     runs-on: ubuntu-latest
-    # Only run on Node 20 to save CI time
+    # Only run on Node 22 (required by xpod)
     needs: unit-test
 
     steps:
@@ -56,7 +56,7 @@ jobs:
       - name: Setup Node.js
         uses: actions/setup-node@v4
         with:
-          node-version: 20
+          node-version: 22
           cache: 'yarn'
 
       - name: Install dependencies
@@ -88,18 +88,26 @@ jobs:
       - name: Generate test credentials
         id: creds
         run: |
-          # Use seed account to generate client credentials
-          RESULT=$(node -e "
-            const { seedCredentials } = require('$(npm root -g)/xpod/dist/cli/seed.js');
-            process.env.CSS_BASE_URL = 'http://localhost:4000/';
-            seedCredentials().then(() => process.exit(0)).catch(e => { console.error(e); process.exit(1); });
-          " 2>&1)
+          # Create test account and credentials via xpod CLI
+          cd $(npm root -g)/xpod
 
-          echo "$RESULT"
+          # Use xpod auth command to create credentials
+          CREDS=$(node dist/cli/index.js auth create-credentials \
+            --url http://localhost:4000 \
+            --email test@example.com \
+            --password test123456 \
+            --output 2>&1 || echo "FAILED")
 
-          CLIENT_ID=$(echo "$RESULT" | grep '^CLIENT_ID=' | cut -d= -f2)
-          CLIENT_SECRET=$(echo "$RESULT" | grep '^CLIENT_SECRET=' | cut -d= -f2)
-          WEBID=$(echo "$RESULT" | grep '^WEBID=' | cut -d= -f2)
+          echo "$CREDS"
+
+          if echo "$CREDS" | grep -q "FAILED"; then
+            echo "Failed to create credentials"
+            exit 1
+          fi
+
+          CLIENT_ID=$(echo "$CREDS" | grep "client_id:" | awk '{print $2}')
+          CLIENT_SECRET=$(echo "$CREDS" | grep "client_secret:" | awk '{print $2}')
+          WEBID=$(echo "$CREDS" | grep "webId:" | awk '{print $2}')
 
           echo "client_id=$CLIENT_ID" >> $GITHUB_OUTPUT
           echo "client_secret=$CLIENT_SECRET" >> $GITHUB_OUTPUT
