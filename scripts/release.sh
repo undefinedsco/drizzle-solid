@@ -26,10 +26,10 @@ if [[ ! "$VERSION_TYPE" =~ ^(patch|minor|major)$ ]]; then
   exit 1
 fi
 
-# Check if working directory is clean
-if [[ -n $(git status -s) ]]; then
-  echo -e "${RED}Error: Working directory is not clean. Commit or stash changes first.${NC}"
-  git status -s
+# Check if working directory is clean (ignore untracked files)
+if [[ -n $(git status -s --untracked-files=no) ]]; then
+  echo -e "${RED}Error: Working directory has uncommitted changes. Commit or stash changes first.${NC}"
+  git status -s --untracked-files=no
   exit 1
 fi
 
