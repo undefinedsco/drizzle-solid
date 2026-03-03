@@ -282,14 +282,45 @@ export class SelectBuilder {
     const requiredTriples: sparqljs.Triple[] = [];
     const optionalTriples: sparqljs.Triple[] = [];
 
+    // Extract columns referenced in WHERE conditions (these should be required, not optional)
+    const whereColumns = new Set<string>();
+    if (ast.where && typeof ast.where === 'object') {
+      const extractWhereColumns = (condition: any) => {
+        if (!condition || typeof condition !== 'object') return;
+        // Check for column in BinaryExpression.left
+        if (condition.left) {
+          if (typeof condition.left === 'string') {
+            whereColumns.add(condition.left);
+          } else if (condition.left.name) {
+            whereColumns.add(condition.left.name);
+          }
+        }
+        // Check for column in UnaryExpression.value (e.g., isNull, not)
+        if (condition.value) {
+          if (typeof condition.value === 'string') {
+            whereColumns.add(condition.value);
+          } else if (condition.value.name) {
+            whereColumns.add(condition.value.name);
+          } else if (typeof condition.value === 'object') {
+            extractWhereColumns(condition.value);
+          }
+        }
+        // Recursively check nested conditions (LogicalExpression like and/or)
+        if (condition.expressions && Array.isArray(condition.expressions)) {
+          condition.expressions.forEach(extractWhereColumns);
+        }
+      };
+      extractWhereColumns(ast.where);
+    }
+
     // Determine which columns to include in WHERE patterns
     // If ast.select specifies columns, only include those columns (plus any referenced in where/orderBy/groupBy)
     const selectFields = ast.select;
     let columnsToInclude: Set<string> | null = null;
-    
+
     if (selectFields && typeof selectFields === 'object' && Object.keys(selectFields).length > 0) {
       columnsToInclude = new Set<string>();
-      
+
       // Helper to extract column name from various field types
       const extractColumnName = (field: any): string | null => {
         if (!field) return null;
@@ -304,7 +335,7 @@ export class SelectBuilder {
         }
         return null;
       };
-      
+
       for (const [alias, field] of Object.entries(selectFields)) {
         // Add the alias itself (it might match a column name)
         columnsToInclude.add(alias);
@@ -314,40 +345,9 @@ export class SelectBuilder {
           columnsToInclude.add(colName);
         }
       }
-      
+
       // Include columns referenced in WHERE conditions
-      if (ast.where && typeof ast.where === 'object') {
-        const addWhereColumns = (condition: any) => {
-          if (!condition || !columnsToInclude) return;
-          if (typeof condition === 'object') {
-            // Check for column in BinaryExpression.left
-            if (condition.left) {
-              if (typeof condition.left === 'string') {
-                columnsToInclude.add(condition.left);
-              } else if (condition.left.name) {
-                // PodColumnBase has a name property
-                columnsToInclude.add(condition.left.name);
-              }
-            }
-            // Check for column in UnaryExpression.value (e.g., isNull, not)
-            if (condition.value) {
-              if (typeof condition.value === 'string') {
-                columnsToInclude.add(condition.value);
-              } else if (condition.value.name) {
-                columnsToInclude.add(condition.value.name);
-              } else if (typeof condition.value === 'object') {
-                // Recursively handle nested UnaryExpression (e.g., not(isNull(col)))
-                addWhereColumns(condition.value);
-              }
-            }
-            // Recursively check nested conditions (LogicalExpression like and/or)
-            if (condition.expressions && Array.isArray(condition.expressions)) {
-              condition.expressions.forEach(addWhereColumns);
-            }
-          }
-        };
-        addWhereColumns(ast.where);
-      }
+      whereColumns.forEach(col => columnsToInclude!.add(col));
       
       // Include columns referenced in ORDER BY
       if (Array.isArray(ast.orderBy)) {
@@ -399,7 +399,9 @@ export class SelectBuilder {
       // causing other fields to be dropped from results.
       if (isInverse) {
         optionalTriples.push(triple);
-      } else if (column.options?.required) {
+      } else if (column.options?.required || whereColumns.has(columnName)) {
+        // Columns referenced in WHERE conditions should be required, not optional
+        // This fixes issue #4: FILTER on optional fields returning 0 results
         requiredTriples.push(triple);
       } else {
         optionalTriples.push(triple);
