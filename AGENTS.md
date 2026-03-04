@@ -72,3 +72,13 @@ OpenSpec guidance is deprecated in this repository. Do not use or reference `ope
 ## SQL 支持范围
 - 目标与上游 Drizzle ORM 的 SQL 构建器表面保持一致，新增能力请优先对齐 Drizzle 的 API 命名和语义。
 - 实际落地范围、缺口与临时代替方案需在 README/文档中明确标注，便于用户了解当前版本行为。
+
+## Issue Handling Guidelines {#issue-handling}
+
+详细的 Issue 处理规范请参考：[docs/guides/issue-handling.md](docs/guides/issue-handling.md)
+
+**核心原则**：
+- 先理解问题，再动手修复
+- 创建测试重现问题
+- 分析根本原因，不只是症状
+- 提供清晰的错误提示和文档

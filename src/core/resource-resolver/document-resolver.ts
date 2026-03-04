@@ -103,8 +103,19 @@ export class DocumentResourceResolver extends BaseResourceResolver {
 
       const allVarsPresent = requiredVars.every(v => v in templateValues);
 
-      // id provided but missing other required template variables — error
+      // id provided but missing other required template variables
       if (idValues.length > 0 && !allVarsPresent) {
+        // Check if the provided id is a full URI (contains protocol)
+        // If so, we can use it directly without needing other template variables
+        const idValue = idValues[0];
+        const isFullUri = idValue.includes('://') || idValue.startsWith('http');
+
+        if (isFullUri) {
+          // Full URI provided - can resolve directly
+          return [this.getResourceUrlForSubject(idValue)];
+        }
+
+        // Short id provided but missing template variables - error
         const missing = requiredVars.filter(v => !(v in templateValues));
         throw new Error(
           `Cannot resolve subjectTemplate '${template}': ` +

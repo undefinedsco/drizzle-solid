@@ -32,7 +32,7 @@ describe('Issue #4: FILTER on optional/reference fields', () => {
       'Thread',
       {
         id: string('id').primaryKey(),
-        chatId: uri('chatId').predicate(SIOC.has_parent).reference('Chat'),
+        chatId: uri('chatId').predicate(SIOC.has_parent).reference('Chat').notNull(),
         title: string('title').predicate(SCHEMA.name),
       },
       {
