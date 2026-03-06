@@ -1,6 +1,6 @@
 {
   "name": "@undefineds.co/drizzle-solid",
-  "version": "0.2.11",
+  "version": "0.2.12",
   "description": "Drizzle ORM adapter for Solid Pods",
   "main": "dist/index.js",
   "types": "dist/index.d.ts",
@@ -19,6 +19,7 @@
   ],
   "scripts": {
     "build": "tsc && tsc -p tsconfig.esm.json",
+    "parity:generate": "ts-node scripts/generate-drizzle-parity.ts",
     "test": "yarn build && vitest",
     "test:watch": "vitest --watch",
     "test:coverage": "vitest --coverage",
