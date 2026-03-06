@@ -114,6 +114,30 @@ export class ExpressionBuilder {
   }
 
   /**
+   * Build a STRENDS suffix from the template by substituting {id} and
+   * extracting the meaningful tail. Purely template-driven — no mode branching.
+   *
+   * Examples:
+   *   "#{id}"                       + id=alice       → "#alice"
+   *   "{id}.ttl#it"                 + id=alice       → "/alice.ttl#it"
+   *   "{chatId}/index.ttl#{id}"     + id=thread_abc  → "/index.ttl#thread_abc"
+   */
+  private buildSuffixFromTemplate(id: string, table: PodTable): string {
+    const template = table.config?.subjectTemplate || '{id}.ttl';
+    const replaced = template.replace(/\{id\}/g, id);
+
+    // No unresolved variables → use the full replaced string
+    if (!replaced.includes('{')) {
+      return replaced.startsWith('#') ? replaced : '/' + replaced;
+    }
+
+    // Still has unresolved variables → take the tail after the last one
+    const lastBrace = replaced.lastIndexOf('}');
+    const tail = replaced.substring(lastBrace + 1); // e.g. "/index.ttl#thread_abc"
+    return tail;
+  }
+
+  /**
    * Check if value is a drizzle-orm SQL object
    */
   private isDrizzleSQL(value: any): boolean {
@@ -227,11 +251,12 @@ export class ExpressionBuilder {
         const hasPartial = results.some((r: any) => typeof r === 'object' && r.partial);
 
         if (hasPartial) {
-          // Use STRENDS for partial matching
+          // Use STRENDS for partial matching — suffix derived from template
           const conditions = results.map((r: any) => {
             if (typeof r === 'object' && r.partial) {
               const escapedId = r.id.replace(/"/g, '\\"');
-              return `STRENDS(STR(${variable}), "#${escapedId}")`;
+              const suffix = this.buildSuffixFromTemplate(escapedId, table);
+              return `STRENDS(STR(${variable}), "${suffix}")`;
             }
             return `(${variable} = ${r})`;
           });
@@ -299,10 +324,11 @@ export class ExpressionBuilder {
         // Handle partial match (when full URI cannot be resolved)
         if (typeof formattedValue === 'object' && formattedValue.partial) {
           const escapedId = formattedValue.id.replace(/"/g, '\\"');
+          const suffix = this.buildSuffixFromTemplate(escapedId, table);
           if (condition.operator === '=') {
-            return `STRENDS(STR(${variable}), "#${escapedId}")`;
+            return `STRENDS(STR(${variable}), "${suffix}")`;
           } else if (condition.operator === '!=') {
-            return `!STRENDS(STR(${variable}), "#${escapedId}")`;
+            return `!STRENDS(STR(${variable}), "${suffix}")`;
           }
           // For other operators, fall through with escaped ID
           formattedValue = `"${escapedId}"`;

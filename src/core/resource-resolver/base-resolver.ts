@@ -164,46 +164,34 @@ export abstract class BaseResourceResolver implements ResourceResolver {
   }
 
   /**
-   * 从相对路径反向解析出 id
-   * 
-   * @param relativePath 相对路径 (如 "alice.ttl#it")
-   * @param template 模板 (如 "{id}.ttl#it")
-   * @returns 提取的 id (如 "alice")，解析失败返回 null
+   * 从相对路径反向解析出所有模板变量
+   *
+   * @param relativePath 相对路径 (如 "room1/index.ttl#alice")
+   * @param template 模板 (如 "{chatId}/index.ttl#{id}")
+   * @returns 所有变量的键值对，解析失败返回 null
    */
-  protected extractIdFromTemplate(relativePath: string, template: string): string | null {
-    // 将模板转为正则表达式
-    // 1. 转义特殊字符
-    // 2. 将 {id} 替换为捕获组 (.+?)
-    // 3. 将其他 {xxx} 占位符替换为非捕获组 (?:.+?)
-    
+  protected extractVarsFromTemplate(
+    relativePath: string, template: string
+  ): Record<string, string> | null {
     let regexStr = template
-      // 转义正则特殊字符（除了 { 和 }）
       .replace(/[.+?^$[\]\\()]/g, '\\$&')
-      // 将 {id} 替换为命名捕获组
-      .replace(/\{id\}/g, '(?<id>.+?)')
-      // 将其他 {xxx} 占位符替换为非捕获组
-      .replace(/\{[^}]+\}/g, '(?:.+?)');
-    
-    // 添加锚点
+      .replace(/\{([^}]+)\}/g, '(?<$1>.+?)');
     regexStr = `^${regexStr}$`;
 
     try {
-      const regex = new RegExp(regexStr);
-      const match = relativePath.match(regex);
-      
-      if (match && match.groups?.id) {
-        return match.groups.id;
-      }
-      
-      // 兼容不支持命名捕获组的环境
-      if (match && match[1]) {
-        return match[1];
-      }
-    } catch (e) {
-      // 正则解析失败，忽略
+      const match = relativePath.match(new RegExp(regexStr));
+      return match?.groups ? { ...match.groups } : null;
+    } catch {
+      return null;
     }
+  }
 
-    return null;
+  /**
+   * 从相对路径反向解析出 id（向后兼容）
+   */
+  protected extractIdFromTemplate(relativePath: string, template: string): string | null {
+    const vars = this.extractVarsFromTemplate(relativePath, template);
+    return vars?.id ?? null;
   }
 
   /**
@@ -215,15 +203,24 @@ export abstract class BaseResourceResolver implements ResourceResolver {
 
     const ids: string[] = [];
 
-    // Handle simple object: { id: 'value' } or { id: ['v1', 'v2'] }
-    if (typeof condition === 'object' && !('type' in condition) && 'id' in condition) {
-      const idValue = (condition as any).id;
-      if (Array.isArray(idValue)) {
-        ids.push(...idValue.map(String));
-      } else if (idValue != null) {
-        ids.push(String(idValue));
+    // Handle simple object: { id: 'value' }, { id: ['v1', 'v2'] }, or { '@id': 'iri' }
+    if (typeof condition === 'object' && !('type' in condition)) {
+      // Handle '@id' field (from whereByIri)
+      if ('@id' in condition) {
+        const iri = String((condition as any)['@id']);
+        ids.push(iri);
+        return ids;
       }
-      return ids;
+
+      if ('id' in condition) {
+        const idValue = (condition as any).id;
+        if (Array.isArray(idValue)) {
+          ids.push(...idValue.map(String));
+        } else if (idValue != null) {
+          ids.push(String(idValue));
+        }
+        return ids;
+      }
     }
 
     this.collectIdValues(condition, ids);
