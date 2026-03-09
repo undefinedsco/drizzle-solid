@@ -182,6 +182,7 @@ Rules:
 - Ensure example verification stays green before publishing docs externally
 - Configure `CONTEXT7_API_KEY` in GitHub Actions secrets
 - Trigger sync by pushing doc/example changes to `main` or by running the workflow manually
+- The workflow refreshes existing libraries and automatically falls back to `add` for first-time registration
 
 ## Recommended Workflow
 
