@@ -15,15 +15,6 @@ jobs:
     steps:
       - uses: actions/checkout@v4
 
-      - name: Ensure Context7 library exists
-        id: context7_add
-        uses: rennf93/upsert-context7@1.1
-        with:
-          operation: 'add'
-          repo-url: 'https://github.com/undefinedsco/drizzle-solid'
-        env:
-          CONTEXT7_API_KEY: ${{ secrets.CONTEXT7_API_KEY }}
-
       - name: Refresh Context7 library
         id: context7_refresh
         uses: rennf93/upsert-context7@1.1
@@ -37,10 +28,6 @@ jobs:
       - name: Show Context7 result
         if: always()
         run: |
-          echo "add outcome: ${{ steps.context7_add.outcome }}"
-          echo "add success: ${{ steps.context7_add.outputs.success }}"
-          echo "add status: ${{ steps.context7_add.outputs.status-code }}"
-          echo "add message: ${{ steps.context7_add.outputs.message }}"
           echo "refresh outcome: ${{ steps.context7_refresh.outcome }}"
           echo "refresh success: ${{ steps.context7_refresh.outputs.success }}"
           echo "refresh status: ${{ steps.context7_refresh.outputs.status-code }}"
