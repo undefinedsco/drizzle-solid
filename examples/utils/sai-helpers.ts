@@ -46,7 +46,8 @@ export async function setupSaiForExample(
   ownerSession: Session, 
   granteeClientId: string, 
   dataContainerUrl: string,
-  rdfClass = 'http://schema.org/Thing'
+  rdfClass = 'http://schema.org/Thing',
+  options?: { registeredShapeTree?: string }
 ) {
   const ownerPodBase = ownerSession.info.webId!.split('profile')[0];
   const sai = getSaiTables(ownerPodBase);
@@ -95,7 +96,7 @@ export async function setupSaiForExample(
   await db.insert(sai.dataGrant).values({
       id: dataGrantId,
       hasDataRegistration: dataContainerUrl,
-      registeredShapeTree: 'http://localhost:3000/test/shapes/message-tree.ttl', // Dummy
+      registeredShapeTree: options?.registeredShapeTree || `${ownerPodBase}shapes/message-tree.ttl`,
       scopeOfGrant: 'http://www.w3.org/ns/solid/interop#AllFromRegistry'
   });
 

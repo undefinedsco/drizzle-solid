@@ -484,3 +484,42 @@ describe('Edge cases', () => {
     expect(resourceUrl).toBe('http://localhost:3000/user/default.ttl');
   });
 });
+
+
+describe('resolveSubjectsForMutation() - explicit @id QueryCondition', () => {
+  it('should accept QueryCondition-based @id filters without scanning', async () => {
+    const resolver = new DocumentResourceResolver('http://localhost:3000/test/');
+    const table = podTable('messages', {
+      id: id(),
+      chatId: string('chatId').predicate('https://schema.org/chatId'),
+      content: string('content').predicate('https://schema.org/text'),
+    }, {
+      base: '/.data/chats/',
+      subjectTemplate: '{chatId}/index.ttl#{id}',
+      type: 'https://example.org/Message',
+      namespace: ns,
+    });
+
+    const condition = {
+      type: 'binary_expr',
+      left: { type: 'column_ref', name: '@id' },
+      operator: 'IN',
+      right: ['http://localhost:3000/test/.data/chats/chat1/index.ttl#thread_abc123'],
+    };
+
+    const subjects = await resolver.resolveSubjectsForMutation(
+      table,
+      condition as any,
+      async () => {
+        throw new Error('should not scan subjects');
+      },
+      async () => {
+        throw new Error('should not list containers');
+      }
+    );
+
+    expect(subjects).toEqual([
+      'http://localhost:3000/test/.data/chats/chat1/index.ttl#thread_abc123',
+    ]);
+  });
+});

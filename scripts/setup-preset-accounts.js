@@ -36,7 +36,7 @@ function generateServerConfig() {
   const serverConfig = config.serverConfig;
   
   return {
-    "@context": "https://linkedsoftwaredependencies.org/bundles/npm/@solid/community-server/^7.0.0/components/context.jsonld",
+    "@context": "https://linkedsoftwaredependencies.org/bundles/npm/@solid/community-server/^8.0.0/components/context.jsonld",
     "import": [
       "css:config/app/init/initialize-prefilled-root.json",
       "css:config/app/main/default.json",

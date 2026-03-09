@@ -62,7 +62,7 @@ function ensureDirectories() {
   // 创建预设账户配置
   if (!fs.existsSync(SEEDED_POD_CONFIG)) {
     const seededPodConfig = {
-      "@context": "https://linkedsoftwaredependencies.org/bundles/npm/@solid/community-server/^7.0.0/components/context.jsonld",
+      "@context": "https://linkedsoftwaredependencies.org/bundles/npm/@solid/community-server/^8.0.0/components/context.jsonld",
       "@graph": [
         {
           "@id": "urn:solid-server:default:PodManager",

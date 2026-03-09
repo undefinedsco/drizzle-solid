@@ -43,6 +43,14 @@ export class UnaryExpression extends SPARQLExpression {
   }
 }
 
+export class SelectionAliasExpression extends SPARQLExpression {
+  constructor(
+    public alias: string
+  ) {
+    super();
+  }
+}
+
 export class FunctionExpression extends SPARQLExpression {
   constructor(
     public functionName: string,

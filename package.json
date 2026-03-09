@@ -1,6 +1,6 @@
 {
   "name": "@undefineds.co/drizzle-solid",
-  "version": "0.2.12",
+  "version": "0.2.13",
   "description": "Drizzle ORM adapter for Solid Pods",
   "main": "dist/index.js",
   "types": "dist/index.d.ts",
@@ -20,7 +20,9 @@
   "scripts": {
     "build": "tsc && tsc -p tsconfig.esm.json",
     "parity:generate": "ts-node scripts/generate-drizzle-parity.ts",
-    "test": "yarn build && vitest",
+    "test": "yarn build && vitest --run",
+    "test:integration": "SOLID_ENABLE_REAL_TESTS=true SOLID_SERIAL_TESTS=true vitest --run tests/integration/css",
+    "test:integration:examples": "SOLID_ENABLE_REAL_TESTS=true SOLID_SERIAL_TESTS=true vitest --run tests/integration/css/examples-verification.test.ts",
     "test:watch": "vitest --watch",
     "test:coverage": "vitest --coverage",
     "lint": "eslint src/**/*.ts",
@@ -30,7 +32,7 @@
     "example:setup": "ts-node examples/setup.ts",
     "example:quick": "ts-node examples/01-quick-start.ts",
     "example:query": "ts-node examples/02-relational-query.ts",
-    "example:discovery": "ts-node examples/03-zero-config-discovery.ts",
+    "example:discovery": "ts-node examples/05-data-discovery.ts",
     "example:federated": "ts-node examples/06-federated-query.ts",
     "example:hooks": "ts-node examples/07-hooks-and-profile.ts",
     "server:start": "node scripts/start-css-server.js",
@@ -43,9 +45,16 @@
     "demo:local": "ts-node examples/local-solid-demo.ts",
     "demo:local-simple": "node examples/simple-local-demo.js",
     "demo:local-http": "node examples/local-demo-simple.js",
-    "quality": "yarn build && yarn lint && vitest",
+    "quality": "yarn build && yarn lint && vitest --run",
     "release": "yarn build && yarn publish",
-    "css:install": "yarn --cwd .internal/css-runtime install"
+    "css:install": "yarn --cwd .internal/css-runtime install",
+    "example:data-discovery": "ts-node examples/05-data-discovery.ts",
+    "example:notifications": "ts-node examples/04-notifications.ts",
+    "example:iri": "ts-node examples/08-iri-based-operations.ts",
+    "example:schema-inheritance": "ts-node examples/08-schema-inheritance.ts",
+    "example:templates": "ts-node examples/09-multi-variable-templates.ts",
+    "examples:check": "node scripts/check-examples-manifest.js",
+    "examples:check:strict": "node scripts/check-examples-manifest.js --strict"
   },
   "author": "Undefined Sco",
   "repository": {
@@ -87,10 +96,11 @@
     "@inrupt/solid-client-authn-browser": "^3.1.1"
   },
   "devDependencies": {
-    "@solid/community-server": "^7.1.7",
+    "@solid/community-server": "^8.0.0-alpha.1",
     "@types/node": "^18.15.0",
     "@typescript-eslint/eslint-plugin": "^5.57.0",
     "@typescript-eslint/parser": "^5.57.0",
+    "@undefineds.co/xpod": "0.2.0-preview.2",
     "@vitest/coverage-v8": "^2.1.9",
     "@vitest/utils": "^2.1.9",
     "eslint": "^8.37.0",

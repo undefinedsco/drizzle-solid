@@ -66,6 +66,7 @@ async function run(providedSession?: Session) {
     content: string('content').predicate('https://schema.org/content'),
   }, {
     type: 'https://schema.org/BlogPosting',
+    base: '/data/posts/',
   });
 
   // ============================================
@@ -187,6 +188,7 @@ async function run(providedSession?: Session) {
     name: string('name').predicate('https://schema.org/name'),
   }, {
     type: 'https://schema.org/Organization',
+    base: '/data/groups/',
   });
 
   // Simulate a group with member WebIDs

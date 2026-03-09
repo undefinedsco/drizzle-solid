@@ -25,6 +25,10 @@ export interface SolidDrizzleConfig<TSchema extends Record<string, unknown> = Re
    * 用于 IdP-SP 分离场景，控制从 profile 重新读取 pim:storage 的频率
    */
   storageTTL?: number;
+  /**
+   * 启用 debug 模式，输出查询信息
+   */
+  debug?: boolean;
 }
 
 // 主要的 drizzle 函数 - 接受 Inrupt Session
@@ -43,6 +47,7 @@ export function drizzle<TSchema extends Record<string, unknown> = Record<string,
     preferredChannels: config?.notifications?.preferredChannels,
     disableInteropDiscovery: config?.disableInteropDiscovery,
     storageTTL: config?.storageTTL,
+    debug: config?.debug,
   };
   const dialect = new PodDialect(dialectConfig);
   

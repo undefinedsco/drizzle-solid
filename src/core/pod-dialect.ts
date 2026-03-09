@@ -18,6 +18,7 @@ import { isSameOrigin, getFetchForOrigin } from './utils/origin-auth';
 import type { ResourceResolver, ResourceResolverFactoryImpl } from './resource-resolver';
 import { PodRuntime } from './runtime/pod-runtime';
 import { PodServices } from './services/pod-services';
+import { DebugLogger, setGlobalDebugLogger } from './utils/debug-logger';
 
 // 最小 Solid Session 接口定义
 export interface SolidAuthSession {
@@ -47,6 +48,10 @@ export interface PodDialectConfig {
    * 用于 IdP-SP 分离场景，控制从 profile 重新读取 pim:storage 的频率
    */
   storageTTL?: number;
+  /**
+   * 启用 debug 模式，输出查询信息
+   */
+  debug?: boolean;
 }
 
 // Pod 操作类型 - 现在包含 SQL AST 和 JOIN
@@ -60,7 +65,7 @@ export interface PodOperation {
   values?: unknown | unknown[];
   plan?: SelectQueryPlan | InsertQueryPlan | UpdateQueryPlan | DeleteQueryPlan;
   joins?: Array<{
-    type: 'leftJoin' | 'rightJoin' | 'innerJoin' | 'fullJoin';
+    type: 'leftJoin' | 'rightJoin' | 'innerJoin' | 'fullJoin' | 'crossJoin';
     table: PodTable;
     condition: unknown;
   }>;
@@ -94,10 +99,21 @@ export class PodDialect {
   private registeredTables: Set<string> = new Set();
   private preparedContainers: Set<string> = new Set();
   private preparedResources: Set<string> = new Set();
+  private debugLogger: DebugLogger;
 
   constructor(config: PodDialectConfig) {
     this.config = config;
     const session = config.session;
+
+    // Initialize debug logger
+    this.debugLogger = new DebugLogger(config.debug || false);
+    setGlobalDebugLogger(this.debugLogger);
+
+    this.debugLogger.log('Initializing PodDialect with config:', {
+      debug: config.debug,
+      disableInteropDiscovery: config.disableInteropDiscovery,
+      storageTTL: config.storageTTL,
+    });
 
     // 从session中获取webId
     const webId = session.info.webId;
@@ -909,6 +925,37 @@ export class PodDialect {
     return false;
   }
 
+  private async rewriteIdentifierConditionWithSubjects(
+    condition: QueryCondition,
+    table: PodTable
+  ): Promise<QueryCondition | undefined> {
+    const resolver = this.getResolver(table);
+
+    try {
+      const subjects = await resolver.resolveSubjectsForMutation(
+        table,
+        condition,
+        async () => [],
+        async () => []
+      );
+      return this.buildIdInConditionFromSubjects(subjects);
+    } catch (error) {
+      const template = table.getSubjectTemplate?.() ?? table.config?.subjectTemplate ?? '{id}';
+      const message = error instanceof Error ? error.message : String(error);
+
+      if (message.includes('missing required variable')) {
+        throw new Error(
+          `Cannot resolve mutation target for table "${table.config.name ?? 'unknown'}" ` +
+          `with subjectTemplate "${template}" from where() alone. ` +
+          `Use an explicit @id via db.updateByIri()/db.deleteByIri() ` +
+          `(or the internal whereByIri()).`
+        );
+      }
+
+      throw error;
+    }
+  }
+
   private async ensureIdentifierCondition(
     condition: QueryCondition | undefined,
     table: PodTable,
@@ -919,7 +966,7 @@ export class PodDialect {
     }
 
     if (this.conditionTargetsIdentifier(condition)) {
-      return condition;
+      return await this.rewriteIdentifierConditionWithSubjects(condition, table);
     }
 
     return await this.rewriteWhereConditionWithSubjects(condition, table, resourceUrl);
@@ -1104,18 +1151,82 @@ export class PodDialect {
     };
   }
 
+  private stripSPARQLProlog(query: string): string {
+    const withoutComments = query
+      .replace(/^\s*#.*$/gm, '')
+      .trim();
+
+    return withoutComments.replace(/^(?:\s*(?:PREFIX|BASE)\s+[^\n]+\n)*/i, '').trim();
+  }
+
+  private looksLikeRawSQL(query: string): boolean {
+    const normalized = this.stripSPARQLProlog(query);
+
+    if (/^SELECT\b[\s\S]*\bFROM\b\s+(?!<|[?$])/i.test(normalized) && !/\{/m.test(normalized)) {
+      return true;
+    }
+
+    if (/^INSERT\s+INTO\b/i.test(normalized)) {
+      return true;
+    }
+
+    if (/^UPDATE\s+[A-Za-z_`"][\w$`"]*\s+SET\b/i.test(normalized)) {
+      return true;
+    }
+
+    if (/^DELETE\s+FROM\b/i.test(normalized)) {
+      return true;
+    }
+
+    return false;
+  }
+
+  private inferSPARQLQueryType(query: string): SPARQLQuery['type'] | undefined {
+    const withoutProlog = this.stripSPARQLProlog(query);
+    const firstKeyword = withoutProlog.match(/^(SELECT|ASK|INSERT|DELETE|UPDATE|WITH|LOAD|CLEAR|CREATE|DROP|COPY|MOVE|ADD|CONSTRUCT|DESCRIBE)\b/i)?.[1]?.toUpperCase();
+
+    switch (firstKeyword) {
+      case 'SELECT':
+      case 'ASK':
+      case 'INSERT':
+      case 'DELETE':
+      case 'UPDATE':
+        return firstKeyword;
+      case 'WITH':
+      case 'LOAD':
+      case 'CLEAR':
+      case 'CREATE':
+      case 'DROP':
+      case 'COPY':
+      case 'MOVE':
+      case 'ADD':
+        return 'UPDATE';
+      default:
+        return undefined;
+    }
+  }
+
   // 直接执行 SPARQL 查询（高级用法）
   async executeSPARQL(query: string): Promise<unknown[]> {
     if (!this.runtime.isConnected()) {
       throw new Error('Not connected to Pod');
     }
-    
-    const sparqlQuery = {
-      type: 'SELECT' as const,
+
+    if (this.looksLikeRawSQL(query)) {
+      throw new Error('executeSPARQL only accepts SPARQL text; raw SQL is not supported in Solid dialect');
+    }
+
+    const type = this.inferSPARQLQueryType(query);
+    if (!type) {
+      throw new Error('Unsupported SPARQL query type. Supported types: SELECT, ASK, INSERT, DELETE, UPDATE');
+    }
+
+    const sparqlQuery: SPARQLQuery = {
+      type,
       query,
       prefixes: {}
     };
-    
+
     return this.sparqlExecutor.executeQuery(sparqlQuery);
   }
 

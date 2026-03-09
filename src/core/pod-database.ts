@@ -159,6 +159,30 @@ export class PodDatabase<TSchema extends Record<string, unknown> = Record<string
     return this.session.delete(table);
   }
 
+  // 直接执行 SPARQL 查询（高级 escape hatch）
+  async execute(query: string): Promise<unknown[]> {
+    return await this.executeSPARQL(query);
+  }
+
+  // 显式 SPARQL 执行入口
+  async executeSPARQL(query: string): Promise<unknown[]> {
+    if (typeof query !== 'string' || query.trim().length === 0) {
+      throw new Error('executeSPARQL requires a non-empty SPARQL query string');
+    }
+    return await this.dialect.executeSPARQL(query);
+  }
+
+  // 顺序执行一组操作，保持与 Drizzle batch 类似的调用方式
+  async batch<TOperations extends readonly unknown[]>(operations: TOperations): Promise<{ [K in keyof TOperations]: Awaited<TOperations[K]> }> {
+    const results: unknown[] = [];
+
+    for (const operation of operations) {
+      results.push(await operation);
+    }
+
+    return results as { [K in keyof TOperations]: Awaited<TOperations[K]> };
+  }
+
   // Find first matching row (LIMIT 1)
   async findFirst<TTable extends PodTable<any>>(
     table: TTable,
@@ -991,18 +1015,64 @@ export class PodDatabase<TSchema extends Record<string, unknown> = Record<string
     }
 
     const createHelper = (_tableName: string, table: PodTable<any>) => {
-      const findMany = async <T = InferTableData<typeof table>>(options?: {
+      type FindManyOptions = {
         where?: Record<string, unknown> | QueryCondition;
         columns?: SelectFieldMap;
         limit?: number;
         offset?: number;
         orderBy?: Array<{ column: any; direction?: 'asc' | 'desc' }> | { column: any; direction?: 'asc' | 'desc' };
         with?: Record<string, boolean | { table?: PodTable<any> }>;
-      }): Promise<T[]> => {
-        // 清除之前的联邦查询错误
+      };
+
+      const createLazy = <T>(executor: () => Promise<T>): Promise<T> => {
+        let promise: Promise<T> | null = null;
+        const run = () => {
+          if (!promise) {
+            promise = executor();
+          }
+          return promise;
+        };
+
+        return {
+          then: (onfulfilled, onrejected) => run().then(onfulfilled, onrejected),
+          catch: (onrejected) => run().catch(onrejected),
+          finally: (onfinally) => run().finally(onfinally),
+          [Symbol.toStringTag]: 'Promise',
+        } as Promise<T>;
+      };
+
+      const projectColumns = (row: Record<string, any>, columns: SelectFieldMap, withOption?: FindManyOptions['with']): Record<string, any> => {
+        const projected: Record<string, any> = {};
+        for (const [alias, field] of Object.entries(columns)) {
+          if (field instanceof PodColumnBase) {
+            projected[alias] = row[field.name];
+            continue;
+          }
+          if (typeof field === 'string') {
+            projected[alias] = row[field] ?? row[field.split('.').pop() ?? field];
+            continue;
+          }
+          const name = (field as { name?: unknown })?.name;
+          if (typeof name === 'string') {
+            projected[alias] = row[name];
+            continue;
+          }
+          projected[alias] = row[alias];
+        }
+
+        if (withOption) {
+          for (const relationName of Object.keys(withOption)) {
+            projected[relationName] = row[relationName] ?? [];
+          }
+        }
+
+        return projected;
+      };
+
+      const executeFindMany = async <T = InferTableData<typeof table>>(options?: FindManyOptions): Promise<T[]> => {
         this.clearFederatedErrors();
-        
-        let builder = this.session.select(options?.columns).from(table);
+
+        let builder = this.session.select().from(table);
         if (options?.where) {
           builder = builder.where(options.where as any);
         }
@@ -1018,31 +1088,38 @@ export class PodDatabase<TSchema extends Record<string, unknown> = Record<string
         if (typeof options?.offset === 'number') {
           builder = builder.offset(options.offset);
         }
-        const rows = await builder;
+
+        let rows = await builder as Record<string, any>[];
         if (options?.with && Object.keys(options.with).length > 0) {
-          return await this.eagerLoadWith(rows as any[], table, options.with, tableMap) as T[];
+          rows = await this.eagerLoadWith(rows, table, options.with, tableMap);
+        }
+        if (options?.columns) {
+          rows = rows.map((row) => projectColumns(row, options.columns!, options.with));
         }
         return rows as T[];
       };
 
-      const findFirst = async <T = InferTableData<typeof table>>(options?: Parameters<typeof findMany>[0]) => {
-        const rows = await findMany<T>({ ...options, limit: 1 });
-        return rows[0] ?? null;
-      };
+      const findMany = <T = InferTableData<typeof table>>(options?: FindManyOptions): Promise<T[]> =>
+        createLazy(() => executeFindMany<T>(options));
 
-      const findById = async <T = InferTableData<typeof table>>(id: string, options?: Parameters<typeof findMany>[0]) => {
-        return await findFirst<T>({ ...options, where: { ...(options?.where ?? {}), id } });
-      };
+      const findFirst = <T = InferTableData<typeof table>>(options?: FindManyOptions): Promise<T | null> =>
+        createLazy(async () => {
+          const rows = await executeFindMany<T>({ ...options, limit: 1 });
+          return rows[0] ?? null;
+        });
 
-      const count = async (options?: { where?: Record<string, unknown> | QueryCondition }) => {
-        const rows = await findMany({ where: options?.where, columns: undefined, limit: undefined, offset: undefined });
-        return rows.length;
-      };
+      const findById = <T = InferTableData<typeof table>>(id: string, options?: FindManyOptions): Promise<T | null> =>
+        createLazy(async () => await findFirst<T>({ ...options, where: { ...(options?.where ?? {}), id } }));
 
-      // Helper to create the deprecated findByIRI method
-      const createFindByIRI = () => async <T = InferTableData<typeof table>>(iri: string, _options?: Parameters<typeof findMany>[0]) => {
+      const count = (options?: { where?: Record<string, unknown> | QueryCondition }): Promise<number> =>
+        createLazy(async () => {
+          const rows = await executeFindMany({ where: options?.where, columns: undefined, limit: undefined, offset: undefined });
+          return rows.length;
+        });
+
+      const createFindByIRI = () => <T = InferTableData<typeof table>>(iri: string, _options?: FindManyOptions): Promise<T | null> => {
         void _options;
-        return await this.findByIri(table, iri) as T | null;
+        return createLazy(async () => await this.findByIri(table, iri) as T | null);
       };
 
       return {
@@ -1125,12 +1202,23 @@ export class PodDatabase<TSchema extends Record<string, unknown> = Record<string
       const candidateColumns: PodColumnBase[] = relationDef?.fields && relationDef.fields.length > 0
         ? relationDef.fields
         : (Object.values(targetPodTable.columns ?? {}) as PodColumnBase[]);
+      const matchesParentReference = (col: PodColumnBase | undefined): boolean => Boolean(
+        col && (
+          col.options?.referenceTarget === parentTable.config.type ||
+          col.options?.referenceTable === parentTable ||
+          col.getReferenceTable?.() === parentTable
+        )
+      );
+      const matchesTargetReference = (col: PodColumnBase | undefined): boolean => Boolean(
+        col && (
+          col.options?.referenceTarget === targetType ||
+          col.options?.referenceTable === targetPodTable ||
+          col.getReferenceTable?.() === targetPodTable
+        )
+      );
       const referenceColumns = relationDef?.fields && relationDef.fields.length > 0
         ? candidateColumns
-        : candidateColumns.filter((col) =>
-            col?.options?.referenceTarget === parentTable.config.type &&
-            !col.isInverse?.()
-          );
+        : candidateColumns.filter((col) => matchesParentReference(col) && !col.isInverse?.());
 
       if (referenceColumns.length === 0) {
         const relationReferences: PodColumnBase[] = relationDef?.references ?? [];
@@ -1140,7 +1228,7 @@ export class PodDatabase<TSchema extends Record<string, unknown> = Record<string
               col &&
               typeof col.isInverse === 'function' &&
               col.isInverse() &&
-              col.options?.referenceTarget === targetType
+              matchesTargetReference(col)
             )
         );
         const parentColumns = Object.values(parentTable.columns ?? {}) as PodColumnBase[];
@@ -1148,7 +1236,7 @@ export class PodDatabase<TSchema extends Record<string, unknown> = Record<string
           (col) =>
             typeof col.isInverse === 'function' &&
             col.isInverse() &&
-            col.options?.referenceTarget === targetType
+            matchesTargetReference(col)
         );
 
         if (inverseCandidates.length === 0) {
@@ -1214,18 +1302,35 @@ export class PodDatabase<TSchema extends Record<string, unknown> = Record<string
       const grouped = new Map<string, Record<string, any>[]>();
       for (const child of childRows) {
         const fkValue = child[refColumn.name];
-        const normalized = useReferenceIri
-          ? this.normalizeReferenceValue(fkValue)
-          : this.normalizeLiteralValue(fkValue);
-        if (!normalized) continue;
-        const arr = grouped.get(normalized) ?? [];
-        arr.push(child);
-        grouped.set(normalized, arr);
+        const lookupKeys = useReferenceIri
+          ? this.collectReferenceLookupKeys(fkValue)
+          : (this.normalizeLiteralValue(fkValue) ? [this.normalizeLiteralValue(fkValue)!] : []);
+        for (const lookupKey of lookupKeys) {
+          const arr = grouped.get(lookupKey) ?? [];
+          arr.push(child);
+          grouped.set(lookupKey, arr);
+        }
       }
 
       dedupedRows.forEach((row) => {
-        const parentKey = this.resolveParentKey(row, referenceColumn, useReferenceIri);
-        row[key] = parentKey ? grouped.get(parentKey) ?? [] : [];
+        const parentKeys = useReferenceIri
+          ? Array.from(new Set([
+              this.resolveParentKey(row, referenceColumn, true),
+              this.resolveIdFromRow(row),
+            ].filter((value): value is string => typeof value === 'string' && value.length > 0)))
+          : [this.resolveParentKey(row, referenceColumn, false)].filter((value): value is string => typeof value === 'string' && value.length > 0);
+
+        const related: Record<string, any>[] = [];
+        for (const parentKey of parentKeys) {
+          const matches = grouped.get(parentKey) ?? [];
+          for (const match of matches) {
+            if (!related.includes(match)) {
+              related.push(match);
+            }
+          }
+        }
+
+        row[key] = related;
       });
     }
 
@@ -1302,6 +1407,19 @@ export class PodDatabase<TSchema extends Record<string, unknown> = Record<string
       return row.subject;
     }
     return undefined;
+  }
+
+  private collectReferenceLookupKeys(value: any): string[] {
+    const keys: string[] = [];
+    const normalized = this.normalizeReferenceValue(value) ?? this.normalizeLiteralValue(value);
+    if (normalized) {
+      keys.push(normalized);
+      const fragment = this.extractFragment(normalized);
+      if (fragment && !keys.includes(fragment)) {
+        keys.push(fragment);
+      }
+    }
+    return keys;
   }
 
   private normalizeReferenceValue(value: any): string | undefined {

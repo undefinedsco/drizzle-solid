@@ -207,8 +207,12 @@ export abstract class BaseResourceResolver implements ResourceResolver {
     if (typeof condition === 'object' && !('type' in condition)) {
       // Handle '@id' field (from whereByIri)
       if ('@id' in condition) {
-        const iri = String((condition as any)['@id']);
-        ids.push(iri);
+        const iriValue = (condition as any)['@id'];
+        if (Array.isArray(iriValue)) {
+          ids.push(...iriValue.map(String));
+        } else if (iriValue != null) {
+          ids.push(String(iriValue));
+        }
         return ids;
       }
 
@@ -309,7 +313,7 @@ export abstract class BaseResourceResolver implements ResourceResolver {
         colName = left.name;
       }
 
-      if (colName === 'id') {
+      if (colName === 'id' || colName === '@id') {
         if (condition.operator === '=' && condition.right != null) {
           ids.push(String(condition.right));
         } else if (condition.operator === 'IN' && Array.isArray(condition.right)) {

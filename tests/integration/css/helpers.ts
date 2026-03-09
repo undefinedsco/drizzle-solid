@@ -1,6 +1,7 @@
 import { Session } from '@inrupt/solid-client-authn-node';
 import { config as loadEnv } from 'dotenv';
 import { resolvePodBase } from '@src/core/utils/pod-root';
+import { buildTestPodUrl, createNoAuthPodSession, getSharedNoAuthXpodRuntime, isInProcessXpodEnabled, stopSharedNoAuthXpodRuntime } from './xpod-runtime';
 
 type FetchLike = typeof fetch;
 
@@ -9,13 +10,29 @@ let sharedSessionPromise: Promise<Session> | null = null;
 
 function bootstrapEnv(): void {
   if (envBootstrapped) return;
+  loadEnv({ override: false });
   loadEnv({ path: '.env.local', override: true });
-  loadEnv({ override: true });
   envBootstrapped = true;
 }
 
+export function getSessionPodBase(session: Pick<Session, 'info'> | { info?: { webId?: string } }): string {
+  const webId = session.info?.webId;
+  if (!webId) {
+    throw new Error('Session is missing webId information');
+  }
+
+  return resolvePodBase({ webId });
+}
+
+export { buildTestPodUrl };
+
 async function createSessionInstance(): Promise<Session> {
   bootstrapEnv();
+
+  if (isInProcessXpodEnabled()) {
+    const runtime = await getSharedNoAuthXpodRuntime();
+    return await createNoAuthPodSession(runtime, 'test') as unknown as Session;
+  }
 
   const clientId = process.env.SOLID_CLIENT_ID;
   const clientSecret = process.env.SOLID_CLIENT_SECRET;
@@ -68,12 +85,18 @@ async function getSharedSession(): Promise<Session> {
 }
 
 export async function resetSharedSession(): Promise<void> {
+  if (isInProcessXpodEnabled()) {
+    sharedSessionPromise = null;
+    await stopSharedNoAuthXpodRuntime();
+    return;
+  }
+
   if (!sharedSessionPromise) {
     return;
   }
   try {
     const session = await sharedSessionPromise;
-    await session.logout().catch(() => undefined);
+    await session.logout?.().catch(() => undefined);
   } finally {
     sharedSessionPromise = null;
   }
@@ -87,9 +110,11 @@ export async function createTestSession(options?: { shared?: boolean; skipTypeIn
   return await createSessionInstanceWithRetry();
 }
 
+bootstrapEnv();
+
 // 预热全局会话，确保多套件复用同一 session
-// 仅在启用真实集成测试时提前触发
-if (process.env.SOLID_ENABLE_REAL_TESTS !== 'false') {
+// 仅在显式启用真实集成测试且走远程 Solid 服务时提前触发
+if (process.env.SOLID_ENABLE_REAL_TESTS === 'true' && !isInProcessXpodEnabled()) {
   void getSharedSession().catch(() => {
     /* noop:失败时由首次调用重新尝试并抛错 */
   });
@@ -122,6 +147,11 @@ async function generateTokenForUser(email: string, password: string): Promise<{ 
 
 export async function createSecondSessionInstance(): Promise<Session> {
   bootstrapEnv();
+
+  if (isInProcessXpodEnabled()) {
+    const runtime = await getSharedNoAuthXpodRuntime();
+    return await createNoAuthPodSession(runtime, 'bob') as unknown as Session;
+  }
 
   let clientId = process.env.SOLID_CLIENT_ID_2;
   let clientSecret = process.env.SOLID_CLIENT_SECRET_2;
@@ -161,6 +191,10 @@ export async function grantAccess(
   agentWebId: string,
   modes: ('Read' | 'Write' | 'Append' | 'Control')[] = ['Read']
 ) {
+  if (isInProcessXpodEnabled()) {
+    console.log(`[grantAccess] skipped in xpod allow-all mode: ${agentWebId} -> ${resourceUrl} (${modes.join(', ')})`);
+    return;
+  }
   // Discover ACL URL from Link header (works for both WAC and ACP)
   const headRes = await ownerSession.fetch(resourceUrl, { method: 'HEAD' });
   const linkHeader = headRes.headers.get('link') || '';
@@ -343,7 +377,9 @@ export async function ensureContainer(session: Session, containerPath: string): 
     throw new Error('Session is missing webId information');
   }
 
-  const podBase = process.env.SOLID_TEST_POD_BASE || derivePodBaseFromWebId(webId);
+  const podBase = isInProcessXpodEnabled()
+    ? derivePodBaseFromWebId(webId)
+    : process.env.SOLID_TEST_POD_BASE || derivePodBaseFromWebId(webId);
   const containerUrl = normalizeContainerUrl(podBase, containerPath);
   const fetchFn = session.fetch.bind(session);
 
@@ -409,6 +445,10 @@ export async function ensureContainer(session: Session, containerPath: string): 
 
   } else if (!headResponse.ok && headResponse.status !== 409) {
     throw new Error(`Failed to access container ${containerUrl}: ${headResponse.status} ${headResponse.statusText}`);
+  }
+
+  if (isInProcessXpodEnabled()) {
+    return containerUrl;
   }
 
   // Discover ACL URL from Link header to determine if ACP or WAC

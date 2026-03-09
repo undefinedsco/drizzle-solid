@@ -8,6 +8,7 @@ export { findByIRI } from './utils/find-by-iri';
 // 表和列构建器
 export {
   podTable,
+  alias,
   // 标准 Drizzle 风格的列定义
   string,
   int,
@@ -188,6 +189,13 @@ export {
   conditions,
   type QueryCondition
 } from './core/query-conditions';
+
+// 排序表达式
+export {
+  asc,
+  desc,
+  type OrderByExpression
+} from './core/order-by';
 
 // 聚合函数
 export {

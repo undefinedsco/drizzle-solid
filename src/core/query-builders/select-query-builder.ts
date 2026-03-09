@@ -7,8 +7,10 @@ import { SelectQueryPlan } from '../select-plan';
 import {
   SelectField, SelectFieldMap, JoinType, ColumnReference, ResolvedJoinCondition, SessionInterface
 } from './types';
-import { createLiteralCondition, buildConditionTreeFromObject } from './helpers';
+import { createLiteralCondition, buildConditionTreeFromObject, inferSPARQLQueryType } from './helpers';
 import { UriResolverImpl, UriContext } from '../uri';
+import { isOrderByExpression, type OrderByExpression } from '../order-by';
+import { SelectionAliasExpression } from '../expressions';
 
 export class SelectQueryBuilder<TTable extends PodTable<any> = PodTable<any>> {
   static readonly [entityKind] = 'SelectQueryBuilder';
@@ -35,6 +37,7 @@ export class SelectQueryBuilder<TTable extends PodTable<any> = PodTable<any>> {
   private primaryAlias?: string;
   private joinFilters: QueryCondition[] = [];
   private groupByColumns: ColumnReference[] = [];
+  private havingCondition?: QueryCondition;
 
   constructor(public session: SessionInterface, fields?: SelectFieldMap) {
     if (fields) {
@@ -177,23 +180,50 @@ export class SelectQueryBuilder<TTable extends PodTable<any> = PodTable<any>> {
     return this.addJoin('fullJoin', table, condition);
   }
 
+  crossJoin<TJoinTable extends PodTable<any>>(
+    table: TJoinTable
+  ): SelectQueryBuilder<TTable> {
+    return this.addJoin('crossJoin', table);
+  }
+
   groupBy(...fields: Array<PodColumnBase | string>): SelectQueryBuilder<TTable> {
     const refs = fields.map((field) => this.resolveColumnReference(field));
     this.groupByColumns.push(...refs);
     return this;
   }
 
+  having(
+    condition: QueryCondition | ((fields: Record<string, SelectionAliasExpression>) => QueryCondition)
+  ): SelectQueryBuilder<TTable> {
+    this.havingCondition = typeof condition === 'function'
+      ? condition(this.createSelectedFieldAliases())
+      : condition;
+    return this;
+  }
+
+  private createSelectedFieldAliases(): Record<string, SelectionAliasExpression> {
+    const aliases: Record<string, SelectionAliasExpression> = {};
+
+    for (const alias of Object.keys(this.selectedFields ?? {})) {
+      aliases[alias] = new SelectionAliasExpression(alias);
+    }
+
+    return aliases;
+  }
+
   private addJoin<TJoinTable extends PodTable<any>>(
     type: JoinType,
     table: TJoinTable,
-    condition: any
+    condition?: any
   ): SelectQueryBuilder<TTable> {
     if (type === 'rightJoin' || type === 'fullJoin') {
       throw new Error(`${type} is not yet supported in Solid dialect`);
     }
 
     const alias = this.ensureAliasForTable(table);
-    const resolvedConditions = this.resolveJoinConditions(condition, alias);
+    const resolvedConditions = type === 'crossJoin'
+      ? undefined
+      : this.resolveJoinConditions(condition, alias);
 
     this.joins.push({
       type,
@@ -224,8 +254,12 @@ export class SelectQueryBuilder<TTable extends PodTable<any> = PodTable<any>> {
   }
 
   private resolveJoinConditions(condition: any, joinAlias: string): ResolvedJoinCondition[] {
+    if (this.isQueryCondition(condition)) {
+      return this.resolveJoinConditionExpression(condition, joinAlias);
+    }
+
     if (!condition || typeof condition !== 'object') {
-      throw new Error('JOIN condition must be an object mapping columns');
+      throw new Error('JOIN condition must be an equality expression or column mapping');
     }
 
     const entries = Object.entries(condition) as Array<[string, string | PodColumnBase]>;
@@ -243,6 +277,56 @@ export class SelectQueryBuilder<TTable extends PodTable<any> = PodTable<any>> {
 
       return { left: leftRef, right: rightRef };
     });
+  }
+
+  private resolveJoinConditionExpression(condition: QueryCondition, joinAlias: string): ResolvedJoinCondition[] {
+    if (condition.type === 'logical_expr') {
+      const operator = ((condition as any).operator ?? '').toUpperCase();
+      const expressions = ((condition as any).expressions ?? []) as QueryCondition[];
+
+      if (operator !== 'AND' || expressions.length === 0) {
+        throw new Error('JOIN condition only supports equality expressions combined with AND');
+      }
+
+      return expressions.flatMap((expression) => this.resolveJoinConditionExpression(expression, joinAlias));
+    }
+
+    if (condition.type !== 'binary_expr' || (condition as any).operator !== '=') {
+      throw new Error('JOIN condition only supports equality expressions');
+    }
+
+    const leftRef = this.getConditionColumnReference((condition as any).left);
+    const rightRef = this.getConditionColumnReference((condition as any).right);
+
+    if (!leftRef || !rightRef) {
+      throw new Error('JOIN equality must compare two table columns');
+    }
+
+    if (leftRef.alias !== joinAlias && rightRef.alias !== joinAlias) {
+      throw new Error('JOIN condition must reference the joined table in at least one side');
+    }
+
+    return [{ left: leftRef, right: rightRef }];
+  }
+
+  private getConditionColumnReference(field: unknown, fallbackAlias?: string): ColumnReference | undefined {
+    if (field instanceof PodColumnBase) {
+      return this.resolveColumnReference(field, fallbackAlias);
+    }
+
+    if (typeof field === 'string') {
+      if (field.includes('.')) {
+        return this.resolveColumnReference(field, fallbackAlias);
+      }
+
+      const alias = fallbackAlias ?? this.primaryAlias;
+      const table = alias ? this.aliasToTable.get(alias) : undefined;
+      if (table && field in (table.columns ?? {})) {
+        return this.resolveColumnReference(field, fallbackAlias);
+      }
+    }
+
+    return undefined;
   }
 
   private resolveColumnReference(field: PodColumnBase | string, fallbackAlias?: string): ColumnReference {
@@ -355,6 +439,7 @@ export class SelectQueryBuilder<TTable extends PodTable<any> = PodTable<any>> {
       joins: planJoins.length > 0 ? planJoins : undefined,
       joinFilters: this.joinFilters.length > 0 ? [...this.joinFilters] : undefined,
       groupBy: this.groupByColumns.length > 0 ? [...this.groupByColumns] : undefined,
+      having: this.havingCondition,
       orderBy: this.orderByClauses.length > 0
         ? this.orderByClauses.map((clause) => ({
             rawColumn: clause.column,
@@ -385,13 +470,43 @@ export class SelectQueryBuilder<TTable extends PodTable<any> = PodTable<any>> {
     return this;
   }
 
-  orderBy(column: PodColumnBase | string, direction: 'asc' | 'desc' = 'asc') {
+  private addOrderByClause(column: PodColumnBase | string, direction: 'asc' | 'desc' = 'asc') {
     const columnName = typeof column === 'string' ? column : column.name;
     if (!columnName) {
       throw new Error('ORDER BY requires a valid column name');
     }
 
     this.orderByClauses.push({ column: columnName, direction });
+  }
+
+  orderBy(...args: Array<PodColumnBase | string | OrderByExpression | 'asc' | 'desc'>) {
+    if (args.length === 0) {
+      throw new Error('ORDER BY requires at least one column or expression');
+    }
+
+    if (
+      args.length === 2
+      && (args[0] instanceof PodColumnBase || typeof args[0] === 'string')
+      && (args[1] === 'asc' || args[1] === 'desc')
+    ) {
+      this.addOrderByClause(args[0], args[1]);
+      return this;
+    }
+
+    for (const arg of args) {
+      if (isOrderByExpression(arg)) {
+        this.addOrderByClause(arg.column, arg.direction);
+        continue;
+      }
+
+      if (arg instanceof PodColumnBase || typeof arg === 'string') {
+        this.addOrderByClause(arg, 'asc');
+        continue;
+      }
+
+      throw new Error('ORDER BY received an unsupported argument');
+    }
+
     return this;
   }
 
@@ -400,9 +515,52 @@ export class SelectQueryBuilder<TTable extends PodTable<any> = PodTable<any>> {
     return this;
   }
 
+
+  private buildSPARQLQuery(methodName = 'toSPARQL()') {
+    if (this.sql) {
+      const query = this.sql.queryChunks.join('');
+      const type = inferSPARQLQueryType(query);
+      if (!type) {
+        throw new Error(`${methodName} could not infer SPARQL query type from raw AST input`);
+      }
+      return { type, query, prefixes: {} as Record<string, string> };
+    }
+
+    if (!this.selectedTable) {
+      throw new Error('No table specified for SELECT query');
+    }
+
+    if (this.joins.length > 0) {
+      throw new Error(`${methodName} is not yet supported for JOIN queries in Solid dialect`);
+    }
+
+    if (this.shouldUseProjectionFallback()) {
+      throw new Error(`${methodName} does not support structured selections in Solid dialect`);
+    }
+
+    const converter = this.session.getDialect().getSPARQLConverter?.();
+    if (!converter) {
+      throw new Error(`${methodName} requires dialect SPARQL converter support`);
+    }
+
+    return converter.convertSelectPlan(this.toIR());
+  }
+
+  toSPARQL() {
+    return this.buildSPARQLQuery('toSPARQL()');
+  }
+
+  toSparql() {
+    return this.toSPARQL();
+  }
+
   async execute(): Promise<InferTableData<TTable>[]> {
     if (!this.selectedTable) {
       throw new Error('No table specified for SELECT query');
+    }
+
+    if (this.limitCount === 0) {
+      return [];
     }
 
     if (this.sql) {
@@ -410,30 +568,43 @@ export class SelectQueryBuilder<TTable extends PodTable<any> = PodTable<any>> {
     } else {
       const plan = this.toIR();
       const wherePayload = plan.conditionTree;
+      const hasJoins = this.joins.length > 0;
+      const useAggregateFallback = this.shouldUseAggregateFallback();
+      const useProjectionFallback = this.shouldUseProjectionFallback();
+      const shouldDeferQueryModifiers = hasJoins || useAggregateFallback;
+
+      if (hasJoins || useAggregateFallback || useProjectionFallback) {
+        plan.select = undefined;
+        plan.selectAll = true;
+      }
+
+      const executionPlan = shouldDeferQueryModifiers
+        ? {
+            ...plan,
+            limit: undefined,
+            offset: undefined,
+            orderBy: undefined,
+            ...(useAggregateFallback ? { groupBy: undefined, having: undefined } : {}),
+          }
+        : plan;
+
       const operation: PodOperation = {
         type: 'select',
         table: this.selectedTable,
         where: wherePayload,
-        limit: this.limitCount,
-        offset: this.offsetCount,
-        orderBy: this.orderByClauses.length > 0 ? this.orderByClauses : undefined,
+        limit: shouldDeferQueryModifiers ? undefined : this.limitCount,
+        offset: shouldDeferQueryModifiers ? undefined : this.offsetCount,
+        orderBy: shouldDeferQueryModifiers || this.orderByClauses.length === 0 ? undefined : this.orderByClauses,
         distinct: this.isDistinct || undefined
       };
-      const hasJoins = this.joins.length > 0;
-      const useAggregateFallback = this.shouldUseAggregateFallback();
-
-      if (hasJoins || useAggregateFallback) {
-        plan.select = undefined;
-        plan.selectAll = true;
-      }
-      operation.plan = plan;
+      operation.plan = executionPlan;
 
       if (this.groupByColumns.length === 0 && this.hasMixedAggregateSelection()) {
         throw new Error('Mixed aggregate and non-aggregate selections require groupBy columns');
       }
 
       let intermediateRows: Record<string, any>[];
-      if (!hasJoins && !useAggregateFallback) {
+      if (!hasJoins && !useAggregateFallback && !useProjectionFallback) {
         if (this.selectedFields) {
           operation.select = this.selectedFields;
         }
@@ -442,7 +613,7 @@ export class SelectQueryBuilder<TTable extends PodTable<any> = PodTable<any>> {
       } else {
         if (hasJoins) {
           operation.select = undefined;
-        } else if (!useAggregateFallback) {
+        } else if (!useAggregateFallback && !useProjectionFallback) {
           operation.select = this.selectedFields;
         } else {
           operation.select = undefined;
@@ -461,7 +632,13 @@ export class SelectQueryBuilder<TTable extends PodTable<any> = PodTable<any>> {
       }
 
       if (useAggregateFallback) {
-        return this.handleAggregateFallback(intermediateRows) as InferTableData<TTable>[];
+        let aggregateRows = this.handleAggregateFallback(intermediateRows);
+        aggregateRows = this.applyHavingFilter(aggregateRows);
+        if (shouldDeferQueryModifiers) {
+          aggregateRows = this.applyDeferredOrderBy(aggregateRows);
+          aggregateRows = this.applyDeferredOffsetAndLimit(aggregateRows);
+        }
+        return aggregateRows as InferTableData<TTable>[];
       }
 
       let finalRows = intermediateRows;
@@ -471,51 +648,163 @@ export class SelectQueryBuilder<TTable extends PodTable<any> = PodTable<any>> {
       }
 
       if (this.selectedTable) {
-        finalRows = await this.hydrateInlineColumns(finalRows, this.selectedTable);
+        finalRows = await this.hydrateInlineColumns(finalRows, this.selectedTable, !hasJoins);
         // 处理引用字段：将 URI 转换回 ID
         finalRows = this.resolveReferenceIds(finalRows, this.selectedTable);
+      }
+
+      if (hasJoins) {
+        finalRows = this.applyDeferredOrderBy(finalRows);
       }
 
       if (this.selectedFields) {
         finalRows = finalRows.map((row) => this.projectSelectedRow(row));
       }
 
-      finalRows = this.mergeRowsBySubject(finalRows);
+      finalRows = this.applyDistinctRows(finalRows);
+
+      if (!hasJoins) {
+        finalRows = this.mergeRowsBySubject(finalRows);
+      }
+
+      if (hasJoins) {
+        finalRows = this.applyDeferredOffsetAndLimit(finalRows);
+      }
 
       return finalRows as InferTableData<TTable>[];
     }
   }
 
   private projectSelectedRow(row: Record<string, any>): Record<string, any> {
-    const projected: Record<string, any> = {};
     if (!this.selectedFields) {
       return row;
     }
-    for (const key of Object.keys(this.selectedFields)) {
-      const field = this.selectedFields[key];
-      if (isAggregateExpression(field)) {
-        projected[key] = row[key];
-        continue;
-      }
 
-      let assigned = false;
-      for (const candidate of this.resolveFieldBindingCandidates(key, field)) {
-        if (row[candidate] !== undefined) {
-          projected[key] = row[candidate];
-          assigned = true;
-          break;
-        }
-      }
+    return this.projectFieldMap(row, this.selectedFields);
+  }
 
-      if (!assigned) {
-        projected[key] = row[key];
-      }
+  private projectFieldMap(
+    row: Record<string, any>,
+    fields: SelectFieldMap,
+    allowAliasFallback = true
+  ): Record<string, any> {
+    const projected: Record<string, any> = {};
+    for (const [key, field] of Object.entries(fields)) {
+      projected[key] = this.projectFieldValue(row, key, field, allowAliasFallback);
     }
     return projected;
   }
 
+  private projectFieldValue(
+    row: Record<string, any>,
+    alias: string,
+    field: SelectField,
+    allowAliasFallback = true
+  ): any {
+    if (isAggregateExpression(field)) {
+      return allowAliasFallback ? row[alias] : undefined;
+    }
+
+    if (field instanceof PodTable) {
+      return this.projectTableValue(row, field);
+    }
+
+    if (this.isSelectFieldMap(field)) {
+      const aliases = this.collectSelectionAliases(field);
+      const isJoinedOnlySelection = aliases.size === 1 && !aliases.has(this.primaryAlias ?? '');
+      const projected = this.projectFieldMap(row, field, !isJoinedOnlySelection);
+      if (aliases.size === 1) {
+        const [targetAlias] = Array.from(aliases);
+        if (targetAlias && targetAlias !== this.primaryAlias && this.isProjectedValueEmpty(projected)) {
+          return null;
+        }
+      }
+      return projected;
+    }
+
+    for (const candidate of this.resolveFieldBindingCandidates(alias, field)) {
+      if (row[candidate] !== undefined) {
+        return row[candidate];
+      }
+    }
+
+    return allowAliasFallback ? row[alias] : undefined;
+  }
+
+  private projectTableValue(row: Record<string, any>, table: PodTable<any>): Record<string, any> | null {
+    const alias = this.tableAliases.get(table) ?? table.config.name;
+    const projected: Record<string, any> = {};
+    let hasValue = false;
+
+    for (const columnName of Object.keys(table.columns)) {
+      const candidates = alias === this.primaryAlias
+        ? [columnName, `${alias}.${columnName}`]
+        : [`${alias}.${columnName}`];
+      const match = candidates.find((candidate) => row[candidate] !== undefined);
+      projected[columnName] = match ? row[match] : undefined;
+      if (projected[columnName] !== undefined) {
+        hasValue = true;
+      }
+    }
+
+    if (alias !== this.primaryAlias && !hasValue) {
+      return null;
+    }
+
+    return projected;
+  }
+
+  private isSelectFieldMap(field: SelectField): field is SelectFieldMap {
+    return !!field
+      && typeof field === 'object'
+      && !(field instanceof PodColumnBase)
+      && !(field instanceof PodTable)
+      && !isAggregateExpression(field);
+  }
+
+  private collectSelectionAliases(field: SelectField): Set<string> {
+    if (typeof field === 'string') {
+      const { alias } = this.parseColumnReferenceString(field);
+      return new Set(alias ? [alias] : this.primaryAlias ? [this.primaryAlias] : []);
+    }
+
+    if (field instanceof PodColumnBase) {
+      return new Set([this.resolveColumnReference(field).alias]);
+    }
+
+    if (field instanceof PodTable) {
+      return new Set([this.tableAliases.get(field) ?? field.config.name]);
+    }
+
+    if (!this.isSelectFieldMap(field)) {
+      return new Set();
+    }
+
+    const aliases = new Set<string>();
+    for (const child of Object.values(field)) {
+      for (const alias of this.collectSelectionAliases(child)) {
+        aliases.add(alias);
+      }
+    }
+    return aliases;
+  }
+
+  private isProjectedValueEmpty(value: unknown): boolean {
+    if (value === undefined || value === null) {
+      return true;
+    }
+    if (Array.isArray(value)) {
+      return value.length === 0;
+    }
+    if (typeof value === 'object') {
+      const entries = Object.values(value as Record<string, unknown>);
+      return entries.length > 0 && entries.every((entry) => this.isProjectedValueEmpty(entry));
+    }
+    return false;
+  }
+
   private resolveFieldBindingCandidates(alias: string, field: SelectField): string[] {
-    const candidates = new Set<string>([alias]);
+    const candidates = new Set<string>();
 
     if (typeof field === 'string') {
       const { alias: refAlias, column } = this.parseColumnReferenceString(field);
@@ -526,8 +815,10 @@ export class SelectQueryBuilder<TTable extends PodTable<any> = PodTable<any>> {
       }
     } else if (field instanceof PodColumnBase) {
       const columnRef = this.resolveColumnReference(field);
-      candidates.add(field.name);
       candidates.add(`${columnRef.alias}.${columnRef.column}`);
+      if (!columnRef.alias || columnRef.alias === this.primaryAlias) {
+        candidates.add(field.name);
+      }
     } else if (field && typeof field === 'object') {
       const candidateName = (field as { name?: unknown }).name;
       if (typeof candidateName === 'string') {
@@ -538,14 +829,37 @@ export class SelectQueryBuilder<TTable extends PodTable<any> = PodTable<any>> {
     return Array.from(candidates);
   }
 
+  private shouldUseProjectionFallback(): boolean {
+    if (!this.selectedFields) {
+      return false;
+    }
+
+    const containsStructuredField = (field: SelectField): boolean => {
+      if (field instanceof PodTable) {
+        return true;
+      }
+      if (this.isSelectFieldMap(field)) {
+        return true;
+      }
+      return false;
+    };
+
+    return Object.values(this.selectedFields).some((field) => containsStructuredField(field));
+  }
+
   private shouldUseAggregateFallback(): boolean {
-    // GROUP BY is handled at SPARQL level (both LDP/Comunica and SPARQL endpoint support it)
+    if (this.havingCondition) {
+      return true;
+    }
+
+    if (this.joins.length > 0) {
+      return this.groupByColumns.length > 0 || this.hasAggregateSelection();
+    }
+
     if (this.groupByColumns.length > 0) {
       return false;
     }
 
-    // For pure aggregate queries (no GROUP BY), Comunica seems to have issues with multiple aggregates
-    // So we use JS fallback for these cases
     if (!this.selectedFields) {
       return false;
     }
@@ -790,6 +1104,14 @@ export class SelectQueryBuilder<TTable extends PodTable<any> = PodTable<any>> {
     return undefined;
   }
 
+  private hasAggregateSelection(): boolean {
+    if (!this.selectedFields) {
+      return false;
+    }
+
+    return Object.values(this.selectedFields).some((field) => isAggregateExpression(field));
+  }
+
   private hasMixedAggregateSelection(): boolean {
     if (!this.selectedFields) {
       return false;
@@ -866,17 +1188,20 @@ export class SelectQueryBuilder<TTable extends PodTable<any> = PodTable<any>> {
 
   private async hydrateInlineColumns(
     rows: Record<string, any>[],
-    table: PodTable<any>
+    table: PodTable<any>,
+    mergeRows = true
   ): Promise<Record<string, any>[]> {
     if (!rows.length) {
       return rows;
     }
-    rows = this.mergeRowsBySubject(rows);
     const inlineColumns = (Object.values(table.columns ?? {}) as PodColumnBase[]).filter((col) =>
       this.isInlineObjectColumn(col)
     );
     if (inlineColumns.length === 0) {
       return rows;
+    }
+    if (mergeRows) {
+      rows = this.mergeRowsBySubject(rows);
     }
 
     const predicateToColumn = new Map<string, PodColumnBase>();
@@ -940,7 +1265,7 @@ export class SelectQueryBuilder<TTable extends PodTable<any> = PodTable<any>> {
       }
       if (!childIri || !pred) return;
       const child = childMap.get(childIri) ?? { '@id': childIri, id: this.extractIdFromSubject(childIri, table) };
-      const key = inlineNamespace && pred.startsWith(inlineNamespace) ? pred.slice(inlineNamespace.length) : pred;
+      const key = this.normalizeInlinePredicateKey(pred, inlineNamespace);
       if (obj === undefined) {
         childMap.set(childIri, child);
         return;
@@ -1034,6 +1359,24 @@ export class SelectQueryBuilder<TTable extends PodTable<any> = PodTable<any>> {
     });
   }
 
+  private normalizeInlinePredicateKey(predicate: string, inlineNamespace?: string): string {
+    if (inlineNamespace && predicate.startsWith(inlineNamespace)) {
+      return predicate.slice(inlineNamespace.length);
+    }
+
+    const hashIndex = predicate.lastIndexOf('#');
+    if (hashIndex !== -1 && hashIndex < predicate.length - 1) {
+      return predicate.slice(hashIndex + 1);
+    }
+
+    const slashIndex = predicate.lastIndexOf('/');
+    if (slashIndex !== -1 && slashIndex < predicate.length - 1) {
+      return predicate.slice(slashIndex + 1);
+    }
+
+    return predicate;
+  }
+
   private normalizeInlineObjectValue(value: any): any {
     if (value === null || value === undefined) return undefined;
     if (typeof value === 'object' && 'value' in value) {
@@ -1050,6 +1393,91 @@ export class SelectQueryBuilder<TTable extends PodTable<any> = PodTable<any>> {
     if (typeof value === 'object' && typeof value.id === 'string' && value.id.includes('http')) return value.id;
     if (typeof value === 'object' && typeof value.value === 'string') return value.value;
     return undefined;
+  }
+
+  private applyDeferredOrderBy(rows: Record<string, any>[]): Record<string, any>[] {
+    if (this.orderByClauses.length === 0 || rows.length < 2) {
+      return rows;
+    }
+
+    const sorted = [...rows];
+    sorted.sort((leftRow, rightRow) => {
+      for (const clause of this.orderByClauses) {
+        const leftValue = this.getOrderByValue(leftRow, clause.column);
+        const rightValue = this.getOrderByValue(rightRow, clause.column);
+        const comparison = this.compareOrderByValues(leftValue, rightValue);
+        if (comparison !== 0) {
+          return clause.direction === 'desc' ? -comparison : comparison;
+        }
+      }
+
+      return 0;
+    });
+
+    return sorted;
+  }
+
+  private applyDistinctRows(rows: Record<string, any>[]): Record<string, any>[] {
+    if (!this.isDistinct || rows.length < 2) {
+      return rows;
+    }
+
+    const seen = new Set<string>();
+    const deduped: Record<string, any>[] = [];
+    for (const row of rows) {
+      const key = this.serializeValueForKey(row);
+      if (seen.has(key)) {
+        continue;
+      }
+      seen.add(key);
+      deduped.push(row);
+    }
+
+    return deduped;
+  }
+
+  private applyDeferredOffsetAndLimit(rows: Record<string, any>[]): Record<string, any>[] {
+    const offset = this.offsetCount ?? 0;
+    const offsetRows = offset > 0 ? rows.slice(offset) : rows;
+
+    if (this.limitCount === undefined) {
+      return offsetRows;
+    }
+
+    return offsetRows.slice(0, this.limitCount);
+  }
+
+  private getOrderByValue(row: Record<string, any>, columnName: string): any {
+    if (columnName in row) {
+      return row[columnName];
+    }
+
+    const aliasKey = Object.keys(row).find((key) => key.endsWith(`.${columnName}`));
+    if (aliasKey) {
+      return row[aliasKey];
+    }
+
+    return undefined;
+  }
+
+  private compareOrderByValues(left: any, right: any): number {
+    if (left === right) {
+      return 0;
+    }
+
+    if (left === undefined || left === null) {
+      return 1;
+    }
+
+    if (right === undefined || right === null) {
+      return -1;
+    }
+
+    if (typeof left === 'number' && typeof right === 'number') {
+      return left - right;
+    }
+
+    return String(left).localeCompare(String(right));
   }
 
   private mergeRowsBySubject(rows: Record<string, any>[]): Record<string, any>[] {
@@ -1145,10 +1573,10 @@ export class SelectQueryBuilder<TTable extends PodTable<any> = PodTable<any>> {
 
   private isInlineObjectColumn(column: PodColumnBase): boolean {
     if (!column) return false;
-    if (column.dataType === 'object') return true;
+    if (column.dataType === 'object' || column.dataType === 'json') return true;
     if (column.dataType === 'array') {
       const elementType = (column as any).elementType ?? column.options?.baseType;
-      return elementType === 'object';
+      return elementType === 'object' || elementType === 'json';
     }
     return false;
   }
@@ -1173,6 +1601,11 @@ export class SelectQueryBuilder<TTable extends PodTable<any> = PodTable<any>> {
     },
     baseRows: Record<string, any>[]
   ): Promise<Record<string, any>[]> {
+    if (join.type === 'crossJoin') {
+      const joinRows = await this.session.select().from(join.table) as Record<string, any>[];
+      return this.normalizeJoinRows(join, joinRows);
+    }
+
     const conditions = join.resolvedConditions ?? [];
     if (conditions.length === 0) {
       return [];
@@ -1252,6 +1685,20 @@ export class SelectQueryBuilder<TTable extends PodTable<any> = PodTable<any>> {
     },
     joinRows: Record<string, any>[]
   ): Record<string, any>[] {
+    if (join.type === 'crossJoin') {
+      if (baseRows.length === 0 || joinRows.length === 0) {
+        return [];
+      }
+
+      const merged: Record<string, any>[] = [];
+      for (const baseRow of baseRows) {
+        for (const joinRow of joinRows) {
+          merged.push({ ...baseRow, ...joinRow });
+        }
+      }
+      return merged;
+    }
+
     const conditions = join.resolvedConditions ?? [];
     if (conditions.length === 0) {
       return baseRows;
@@ -1314,6 +1761,14 @@ export class SelectQueryBuilder<TTable extends PodTable<any> = PodTable<any>> {
     return rows.filter((row) => this.joinFilters.every((condition) => this.evaluateCondition(row, condition)));
   }
 
+  private applyHavingFilter(rows: Record<string, any>[]): Record<string, any>[] {
+    if (!this.havingCondition) {
+      return rows;
+    }
+
+    return rows.filter((row) => this.evaluateCondition(row, this.havingCondition!));
+  }
+
   private evaluateCondition(row: Record<string, any>, condition: QueryCondition): boolean {
     switch (condition.type) {
       case 'binary_expr':
@@ -1336,25 +1791,8 @@ export class SelectQueryBuilder<TTable extends PodTable<any> = PodTable<any>> {
       return true;
     }
 
-    // Extract column name and table alias from left
-    let colName: string;
-    let tableAlias: string | undefined;
-    if (typeof left === 'string') {
-      if (left.includes('.')) {
-        [tableAlias, colName] = left.split('.');
-      } else {
-        colName = left;
-      }
-    } else if (left && typeof left === 'object') {
-      colName = left.name;
-      tableAlias = left.table;
-    } else {
-      return true;
-    }
-
-    const columnRef = this.resolveColumnReference(`${tableAlias ?? this.primaryAlias}.${colName}`);
-    const value = this.getRowValueForColumn(row, columnRef);
-    const target = right;
+    const value = this.resolveConditionOperandValue(row, left, this.primaryAlias);
+    const target = this.resolveConditionOperandValue(row, right);
 
     switch (op.toUpperCase()) {
       case '=':
@@ -1385,33 +1823,15 @@ export class SelectQueryBuilder<TTable extends PodTable<any> = PodTable<any>> {
     const op = (condition as any).operator;
     const val = (condition as any).value;
 
-    // For NOT operator, value is another condition
     if (op.toUpperCase() === 'NOT') {
       return !this.evaluateCondition(row, val as QueryCondition);
     }
 
-    // For IS NULL / IS NOT NULL, value is the column reference
     if (!val) {
       return true;
     }
 
-    let colName: string;
-    let tableAlias: string | undefined;
-    if (typeof val === 'string') {
-      if (val.includes('.')) {
-        [tableAlias, colName] = val.split('.');
-      } else {
-        colName = val;
-      }
-    } else if (val && typeof val === 'object' && 'name' in val) {
-      colName = val.name;
-      tableAlias = val.table;
-    } else {
-      return true;
-    }
-
-    const columnRef = this.resolveColumnReference(`${tableAlias ?? this.primaryAlias}.${colName}`);
-    const rowValue = this.getRowValueForColumn(row, columnRef);
+    const rowValue = this.resolveConditionOperandValue(row, val, this.primaryAlias);
 
     switch (op.toUpperCase()) {
       case 'IS NULL':
@@ -1433,6 +1853,23 @@ export class SelectQueryBuilder<TTable extends PodTable<any> = PodTable<any>> {
       return children.some((child: QueryCondition) => this.evaluateCondition(row, child));
     }
     return true;
+  }
+
+  private resolveConditionOperandValue(
+    row: Record<string, any>,
+    operand: unknown,
+    fallbackAlias?: string
+  ): any {
+    if (operand instanceof SelectionAliasExpression) {
+      return row[operand.alias];
+    }
+
+    const columnRef = this.getConditionColumnReference(operand, fallbackAlias);
+    if (columnRef) {
+      return this.getRowValueForColumn(row, columnRef);
+    }
+
+    return operand;
   }
 
   private getColumnKeyCandidates(column: ColumnReference): string[] {

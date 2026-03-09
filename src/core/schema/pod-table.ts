@@ -14,6 +14,7 @@ import {
   ColumnInput, ResolvedColumns, ResolveColumn
 } from './types';
 import { SolidSchema } from './solid-schema';
+import { deepClone } from '../../utils/helpers';
 
 /**
  * PodTable with columns accessible as direct properties.
@@ -351,6 +352,80 @@ export class PodTable<TColumns extends Record<string, PodColumnBase<any, any, an
     const normalized = entries.map((entry) => resolveTermIri(entry)).filter((entry) => entry && entry.length > 0);
     return Array.from(new Set(normalized));
   }
+}
+
+
+function clonePodColumn<TColumn extends PodColumnBase<any, any, any, any>>(column: TColumn): TColumn {
+  const options = deepClone(column.options);
+  let cloned: PodColumnBase<any, any, any, any>;
+
+  switch (column.dataType) {
+    case 'integer':
+      cloned = new PodIntegerColumn(column.name, options);
+      break;
+    case 'datetime':
+      cloned = new PodDateTimeColumn(column.name, options);
+      break;
+    case 'boolean':
+      cloned = new PodBooleanColumn(column.name, options);
+      break;
+    case 'json':
+      cloned = new PodJsonColumn(column.name, options);
+      break;
+    case 'object':
+      cloned = new PodObjectColumn(column.name, options);
+      break;
+    case 'array': {
+      const elementType = (column as any).elementType ?? column.options.baseType ?? 'string';
+      cloned = new PodArrayColumn(column.name, elementType, options);
+      break;
+    }
+    case 'uri':
+      cloned = new PodUriColumn(column.name, options);
+      break;
+    case 'string':
+    default:
+      cloned = new PodStringColumn(column.name, options);
+      break;
+  }
+
+  if ((column as any)._virtualId) {
+    (cloned as any)._virtualId = true;
+  }
+  cloned.relationName = column.relationName;
+  return cloned as TColumn;
+}
+
+export function alias<TColumns extends Record<string, PodColumnBase<any, any, any, any>>>(table: PodTableWithColumns<TColumns>, aliasName: string): PodTableWithColumns<TColumns> {
+  if (typeof aliasName !== 'string' || aliasName.trim().length === 0) {
+    throw new Error('alias() requires a non-empty alias name');
+  }
+
+  const clonedColumns: Record<string, PodColumnBase<any, any, any, any>> = {};
+  for (const [key, column] of Object.entries(table.columns)) {
+    clonedColumns[key] = clonePodColumn(column as PodColumnBase<any, any, any, any>);
+  }
+
+  const aliasedTable = new PodTable(aliasName.trim(), clonedColumns as any, {
+    base: table.config.base,
+    sparqlEndpoint: table.getSparqlEndpoint(),
+    type: table.config.type,
+    namespace: table.config.namespace,
+    typeIndex: table.config.typeIndex,
+    saiRegistryPath: table.config.saiRegistryPath,
+    subClassOf: table.config.subClassOf,
+    subjectTemplate: table.config.subjectTemplate,
+    resourceMode: table.getResourceMode(),
+    autoRegister: table.config.autoRegister,
+    hooks: table.config.hooks,
+  }) as PodTableWithColumns<TColumns>;
+
+  aliasedTable.relations = table.relations;
+  if (table.isInitialized()) {
+    aliasedTable.markInitialized(true);
+  }
+
+  return aliasedTable;
 }
 
 export function podTable<

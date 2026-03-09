@@ -260,12 +260,23 @@ describe('Scenario: Chat Application', () => {
   });
 
   describe('Delete operations', () => {
-    // TODO: Fix SPARQL parse error when deleting by fragment ID
-    it.skip('should delete a message', async () => {
+    it('should require explicit @id for deleting a date-partitioned message', async () => {
       const { eq } = await import('../../../../src/index');
 
-      await db.delete(messageTable)
-        .where(eq(messageTable.id, 'msg-003'));
+      await expect(
+        db.delete(messageTable)
+          .where(eq(messageTable.id, 'msg-003'))
+      ).rejects.toThrow('Use an explicit @id');
+    });
+
+    it('should delete a message by IRI', async () => {
+      const messages = await db.select().from(messageTable);
+      const target = messages.find((m: any) => m.id === 'msg-003');
+
+      expect(target).toBeDefined();
+      expect(target['@id']).toContain('/messages.ttl#msg-003');
+
+      await db.deleteByIri(messageTable, target['@id']);
 
       const remaining = await db.select().from(messageTable);
       const deleted = remaining.find((m: any) => m.id === 'msg-003');

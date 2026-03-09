@@ -61,7 +61,7 @@ function getPodBaseUrl(session: Session): string {
  * Schema 可以复用于查询任意 Pod 的数据，
  * 通过 db.createTable 或 schema.table() 绑定到具体位置
  */
-const profileSchema = solidSchema('profile', {
+const profileSchema = solidSchema({
   id: id(),
   name: string('name').predicate('http://xmlns.com/foaf/0.1/name'),
   bio: string('bio').predicate('http://schema.org/description'),
@@ -69,7 +69,7 @@ const profileSchema = solidSchema('profile', {
   type: 'http://xmlns.com/foaf/0.1/Person'
 });
 
-const agentSchema = solidSchema('agents', {
+const agentSchema = solidSchema({
   id: id(),
   name: string('name').predicate('http://schema.org/name'),
   description: string('description').predicate('http://schema.org/description'),
@@ -105,7 +105,7 @@ async function run(providedSession?: Session) {
     name: 'Test Agent',
     description: 'An agent for testing IRI operations',
     createdAt: new Date()
-  });
+  }).returning();
   
   const testIri = created['@id'];
   console.log(`Created agent with IRI: ${testIri}`);

@@ -7,10 +7,8 @@
  * 3. 在回调中使用 drizzle API 查询最新数据
  */
 
-import { drizzle, podTable, string, datetime } from 'drizzle-solid';
+import { drizzle, podTable, string, datetime, eq } from 'drizzle-solid';
 import { v4 as uuid } from 'uuid';
-import { eq } from 'drizzle-orm';
-
 import { Session } from '@inrupt/solid-client-authn-node';
 import { config as loadEnv } from 'dotenv';
 

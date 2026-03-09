@@ -3,7 +3,7 @@ import { getSolidDataset, getThing, removeThing, saveSolidDatasetAt } from '@inr
 import { TypeIndexManager, type TypeIndexEntry } from '@src/core/typeindex-manager';
 import { resolvePodBase } from '@src/core/utils/pod-root';
 import type { Session } from '@inrupt/solid-client-authn-node';
-import { createTestSession, ensureContainer } from './helpers';
+import { createTestSession, ensureContainer, getSessionPodBase } from './helpers';
 
 const typeIndexCleanupTargets: Array<{ url: string; thingUrl: string }> = [];
 const containerPath = `/typeindex-tests/${Date.now()}/`;
@@ -18,7 +18,7 @@ describe('CSS integration: TypeIndexManager', () => {
     session = await createTestSession();
     const fetchFn = session.fetch.bind(session);
     const webId = session.info.webId!;
-    const podBase = process.env.SOLID_TEST_POD_BASE || resolvePodBase({ webId });
+    const podBase = getSessionPodBase(session) || resolvePodBase({ webId });
     manager = new TypeIndexManager(webId, podBase, fetchFn);
 
     registeredContainerUrl = await ensureContainer(session, containerPath);

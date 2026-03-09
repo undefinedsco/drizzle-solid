@@ -62,7 +62,7 @@
 
 ### 测试
 
-- [测试策略](../TESTING_STRATEGY.md) - 测试方法和覆盖
+- [测试指南](./guides/testing.md) - 测试分层、parity、examples 与 regression 约定
 - [SPARQL 模式设计 - 测试矩阵](./guides/sparql-mode-design.md#5-测试覆盖矩阵) - 测试覆盖矩阵
 
 ### 开发工具
@@ -97,7 +97,7 @@
 
 ### 我想开发新功能
 
-1. [测试策略](../TESTING_STRATEGY.md) - 如何编写测试
+1. [测试指南](./guides/testing.md) - 如何组织 unit / integration / parity / examples / regression
 2. [测试覆盖矩阵](./guides/sparql-mode-design.md#5-测试覆盖矩阵) - 需要覆盖的场景
 3. 相关的 [Agent 指南](../AGENTS.md)
 
@@ -108,6 +108,5 @@
 - **核心设计文档**: 位于 `docs/guides/`
 - **快速开始**: 位于 `docs/` 根目录
 - **归档文档**: 位于 `docs/archive/`
-- **开放规范**: 位于 `openspec/`
 
 如果文档有不清楚的地方，请提 Issue 或 PR！

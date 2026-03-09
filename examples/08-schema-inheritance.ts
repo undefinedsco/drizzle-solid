@@ -280,7 +280,9 @@ async function run(providedSession?: Session) {
   console.log('\n=== Example completed ===');
 }
 
-// 直接运行
-run().catch(console.error);
+// 仅在直接运行时执行
+if (require.main === module) {
+  run().catch(console.error);
+}
 
 export { secretSchema, apiKeySchema, passwordSchema, oauthTokenSchema, run };

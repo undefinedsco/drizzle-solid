@@ -1,0 +1,227 @@
+{
+  "version": 1,
+  "description": "Canonical mapping between explanatory examples, runnable entrypoints, and verification paths.",
+  "examples": [
+    {
+      "id": "01-quick-start",
+      "title": "Quick start CRUD",
+      "entry": "examples/01-quick-start.ts",
+      "type": "walkthrough",
+      "audience": "public",
+      "docs": [
+        "README.md",
+        "examples/README.md"
+      ],
+      "runnable": {
+        "mode": "direct",
+        "script": "example:quick",
+        "export": "run"
+      },
+      "verification": {
+        "status": "covered",
+        "mode": "integration",
+        "path": "tests/integration/css/examples-verification.test.ts",
+        "selector": "01-quick-start.ts should run successfully"
+      }
+    },
+    {
+      "id": "02-relational-query",
+      "title": "Relational query API",
+      "entry": "examples/02-relational-query.ts",
+      "type": "walkthrough",
+      "audience": "public",
+      "docs": [
+        "README.md",
+        "examples/README.md"
+      ],
+      "runnable": {
+        "mode": "direct",
+        "script": "example:query",
+        "export": "run"
+      },
+      "verification": {
+        "status": "covered",
+        "mode": "integration",
+        "path": "tests/integration/css/examples-verification.test.ts",
+        "selector": "02-relational-query.ts should run successfully"
+      }
+    },
+    {
+      "id": "03-zero-config-discovery",
+      "title": "Zero-config discovery viewer flow",
+      "entry": "examples/03-zero-config-discovery.ts",
+      "type": "embedded-scenario",
+      "audience": "public",
+      "docs": [
+        "README.md",
+        "examples/README.md",
+        "docs/guides/data-discovery.md"
+      ],
+      "runnable": {
+        "mode": "embedded",
+        "export": "runBobViewer"
+      },
+      "verification": {
+        "status": "covered",
+        "mode": "integration",
+        "path": "tests/integration/css/examples-verification.test.ts",
+        "selector": "03-zero-config-discovery.ts should run successfully"
+      },
+      "notes": "This example is verified as part of an integration scenario instead of a standalone CLI entrypoint."
+    },
+    {
+      "id": "04-notifications",
+      "title": "Solid notifications",
+      "entry": "examples/04-notifications.ts",
+      "type": "walkthrough",
+      "audience": "public",
+      "docs": [
+        "examples/README.md",
+        "docs/guides/notifications.md",
+        "docs/guides/css-notifications.md"
+      ],
+      "runnable": {
+        "mode": "direct",
+        "script": "example:notifications",
+        "export": "run"
+      },
+      "verification": {
+        "status": "covered",
+        "mode": "integration",
+        "path": "tests/integration/css/examples-verification.test.ts",
+        "selector": "04-notifications.ts should run successfully"
+      }
+    },
+    {
+      "id": "05-data-discovery",
+      "title": "Data discovery API",
+      "entry": "examples/05-data-discovery.ts",
+      "type": "walkthrough",
+      "audience": "public",
+      "docs": [
+        "examples/README.md",
+        "docs/guides/data-discovery.md"
+      ],
+      "runnable": {
+        "mode": "direct",
+        "script": "example:data-discovery",
+        "export": "run"
+      },
+      "verification": {
+        "status": "covered",
+        "mode": "integration",
+        "path": "tests/integration/css/examples-verification.test.ts",
+        "selector": "05-data-discovery.ts should run successfully"
+      }
+    },
+    {
+      "id": "06-federated-query",
+      "title": "Federated query across Pods",
+      "entry": "examples/06-federated-query.ts",
+      "type": "walkthrough",
+      "audience": "public",
+      "docs": [
+        "examples/README.md",
+        "docs/federated-queries.md"
+      ],
+      "runnable": {
+        "mode": "direct",
+        "script": "example:federated",
+        "export": "run"
+      },
+      "verification": {
+        "status": "covered",
+        "mode": "integration",
+        "path": "tests/integration/css/examples-verification.test.ts",
+        "selector": "06-federated-query.ts should run successfully"
+      }
+    },
+    {
+      "id": "07-hooks-and-profile",
+      "title": "Hooks and profile management",
+      "entry": "examples/07-hooks-and-profile.ts",
+      "type": "walkthrough",
+      "audience": "public",
+      "docs": [
+        "examples/README.md",
+        "docs/guides/authentication.md"
+      ],
+      "runnable": {
+        "mode": "direct",
+        "script": "example:hooks",
+        "export": "run"
+      },
+      "verification": {
+        "status": "covered",
+        "mode": "integration",
+        "path": "tests/integration/css/examples-verification.test.ts",
+        "selector": "07-hooks-and-profile.ts should run successfully"
+      }
+    },
+    {
+      "id": "08-iri-based-operations",
+      "title": "IRI-based entity operations",
+      "entry": "examples/08-iri-based-operations.ts",
+      "type": "walkthrough",
+      "audience": "public",
+      "docs": [
+        "examples/README.md",
+        "README.md"
+      ],
+      "runnable": {
+        "mode": "direct",
+        "script": "example:iri",
+        "export": "run"
+      },
+      "verification": {
+        "status": "covered",
+        "mode": "integration",
+        "path": "tests/integration/css/examples-verification.test.ts",
+        "selector": "08-iri-based-operations.ts should run successfully"
+      }
+    },
+    {
+      "id": "08-schema-inheritance",
+      "title": "Schema inheritance",
+      "entry": "examples/08-schema-inheritance.ts",
+      "type": "walkthrough",
+      "audience": "public",
+      "docs": [
+        "examples/README.md"
+      ],
+      "runnable": {
+        "mode": "direct",
+        "script": "example:schema-inheritance",
+        "export": "run"
+      },
+      "verification": {
+        "status": "covered",
+        "mode": "integration",
+        "path": "tests/integration/css/examples-verification.test.ts",
+        "selector": "08-schema-inheritance.ts should run successfully"
+      }
+    },
+    {
+      "id": "09-multi-variable-templates",
+      "title": "Multi-variable subject templates",
+      "entry": "examples/09-multi-variable-templates.ts",
+      "type": "walkthrough",
+      "audience": "public",
+      "docs": [
+        "examples/README.md",
+        "docs/guides/multi-variable-templates.md"
+      ],
+      "runnable": {
+        "mode": "direct",
+        "script": "example:templates",
+        "export": "run"
+      },
+      "verification": {
+        "status": "covered",
+        "mode": "integration",
+        "path": "tests/integration/css/examples-verification.test.ts",
+        "selector": "09-multi-variable-templates.ts should run successfully"
+      }
+    }
+  ]
+}

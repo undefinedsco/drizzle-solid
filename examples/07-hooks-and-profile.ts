@@ -60,7 +60,7 @@ const FOAF_MADE = 'http://xmlns.com/foaf/0.1/made';
  * 
  * Schema 是可复用的，可以在不同的应用场景中使用不同的 hooks
  */
-const agentsSchema = solidSchema('agents', {
+const agentsSchema = solidSchema({
   id: id(),
   name: string('name').predicate('https://schema.org/name'),
   description: string('description').predicate('https://schema.org/description'),

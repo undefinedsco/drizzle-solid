@@ -4,86 +4,87 @@
  */
 
 import { PodColumnBase } from './schema';
-import { BinaryExpression, LogicalExpression, UnaryExpression } from './expressions';
+import { BinaryExpression, LogicalExpression, UnaryExpression, SPARQLExpression } from './expressions';
 
 // 导出新的类型
 export type QueryCondition = BinaryExpression | LogicalExpression | UnaryExpression;
 
 // 定义一个宽松的列类型，接受任何 PodColumnBase 变体
 type AnyColumn = PodColumnBase<any, any, any, any>;
+type ConditionOperand = AnyColumn | SPARQLExpression | string;
 
 // 等于条件
-export function eq(column: AnyColumn | string, value: any): QueryCondition {
+export function eq(column: ConditionOperand, value: any): QueryCondition {
   return new BinaryExpression(column, '=', value);
 }
 
 // 不等于条件
-export function ne(column: AnyColumn | string, value: any): QueryCondition {
+export function ne(column: ConditionOperand, value: any): QueryCondition {
   return new BinaryExpression(column, '!=', value);
 }
 
 // 大于条件
-export function gt(column: AnyColumn | string, value: any): QueryCondition {
+export function gt(column: ConditionOperand, value: any): QueryCondition {
   return new BinaryExpression(column, '>', value);
 }
 
 // 大于等于条件
-export function gte(column: AnyColumn | string, value: any): QueryCondition {
+export function gte(column: ConditionOperand, value: any): QueryCondition {
   return new BinaryExpression(column, '>=', value);
 }
 
 // 小于条件
-export function lt(column: AnyColumn | string, value: any): QueryCondition {
+export function lt(column: ConditionOperand, value: any): QueryCondition {
   return new BinaryExpression(column, '<', value);
 }
 
 // 小于等于条件
-export function lte(column: AnyColumn | string, value: any): QueryCondition {
+export function lte(column: ConditionOperand, value: any): QueryCondition {
   return new BinaryExpression(column, '<=', value);
 }
 
 // LIKE 条件（模糊匹配）
-export function like(column: AnyColumn | string, pattern: string): QueryCondition {
+export function like(column: ConditionOperand, pattern: string): QueryCondition {
   return new BinaryExpression(column, 'LIKE', pattern);
 }
 
 // ILIKE 条件（不区分大小写匹配）
-export function ilike(column: AnyColumn | string, pattern: string): QueryCondition {
+export function ilike(column: ConditionOperand, pattern: string): QueryCondition {
   return new BinaryExpression(column, 'ILIKE', pattern);
 }
 
 // BETWEEN 条件
-export function between(column: AnyColumn | string, min: any, max: any): QueryCondition {
+export function between(column: ConditionOperand, min: any, max: any): QueryCondition {
   return new BinaryExpression(column, 'BETWEEN', [min, max]);
 }
 
 // NOT BETWEEN 条件
-export function notBetween(column: AnyColumn | string, min: any, max: any): QueryCondition {
+export function notBetween(column: ConditionOperand, min: any, max: any): QueryCondition {
   return new BinaryExpression(column, 'NOT BETWEEN', [min, max]);
 }
 
 // REGEX 条件（自定义正则）
-export function regex(column: AnyColumn | string, pattern: string, flags?: string): QueryCondition {
+export function regex(column: ConditionOperand, pattern: string, flags?: string): QueryCondition {
   return new BinaryExpression(column, 'REGEX', { pattern, flags });
 }
 
 // IN 条件
-export function inArray(column: AnyColumn | string, values: any[]): QueryCondition {
+export function inArray(column: ConditionOperand, values: any[]): QueryCondition {
   return new BinaryExpression(column, 'IN', values);
 }
 
 // NOT IN 条件
-export function notInArray(column: AnyColumn | string, values: any[]): QueryCondition {
+export function notInArray(column: ConditionOperand, values: any[]): QueryCondition {
   return new BinaryExpression(column, 'NOT IN', values);
 }
 
 // IS NULL 条件
-export function isNull(column: AnyColumn | string): QueryCondition {
+export function isNull(column: ConditionOperand): QueryCondition {
   return new UnaryExpression('IS NULL', column);
 }
 
 // IS NOT NULL 条件
-export function isNotNull(column: AnyColumn | string): QueryCondition {
+export function isNotNull(column: ConditionOperand): QueryCondition {
   return new UnaryExpression('IS NOT NULL', column);
 }
 

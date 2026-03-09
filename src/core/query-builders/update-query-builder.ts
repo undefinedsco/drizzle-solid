@@ -1,9 +1,15 @@
 import { entityKind, SQL } from 'drizzle-orm';
-import { PodTable, PodColumnBase, InferUpdateData, HookContext } from '../schema';
+import { PodTable, InferUpdateData, HookContext } from '../schema';
 import { PodAsyncSession, PodOperation } from '../pod-session';
 import { QueryCondition } from '../query-conditions';
-import { UpdateQueryPlan } from './types';
-import { buildConditionTreeFromObject } from './helpers';
+import { UpdateQueryPlan, type SelectFieldMap } from './types';
+import {
+  buildConditionTreeFromObject,
+  inferSPARQLQueryType,
+  orderRowsBySubjects,
+  projectReturningRows,
+  resolveRowSubject,
+} from './helpers';
 
 export class UpdateQueryBuilder<TTable extends PodTable<any> = PodTable<any>> {
   static readonly [entityKind] = 'UpdateQueryBuilder';
@@ -12,6 +18,7 @@ export class UpdateQueryBuilder<TTable extends PodTable<any> = PodTable<any>> {
   public whereConditions?: Record<string, any>;
   public sql?: SQL;
   private conditionTree?: QueryCondition;
+  private returningFields?: SelectFieldMap | true;
 
   constructor(
     public session: PodAsyncSession,
@@ -27,8 +34,12 @@ export class UpdateQueryBuilder<TTable extends PodTable<any> = PodTable<any>> {
     return this;
   }
 
+  returning(fields?: SelectFieldMap) {
+    this.returningFields = fields ?? true;
+    return this;
+  }
+
   where(conditions: Record<string, any> | SQL | QueryCondition) {
-    // console.log('[UpdateQueryBuilder] where() received:', conditions);
     if (conditions instanceof SQL) {
       if (!this.sql) {
         this.sql = conditions;
@@ -38,7 +49,6 @@ export class UpdateQueryBuilder<TTable extends PodTable<any> = PodTable<any>> {
       const simple = this.convertQueryConditionToSimple(conditions);
       this.whereConditions = Object.keys(simple).length > 0 ? simple : undefined;
     } else {
-      // Check for @id usage and reject
       if (conditions && typeof conditions === 'object' && '@id' in conditions) {
         throw new Error(
           `Using '@id' in where() is not supported. ` +
@@ -52,11 +62,6 @@ export class UpdateQueryBuilder<TTable extends PodTable<any> = PodTable<any>> {
     return this;
   }
 
-  /**
-   * Internal method that allows @id in conditions.
-   * Used by *ByIri methods internally.
-   * @internal
-   */
   whereByIri(iri: string) {
     this.whereConditions = { '@id': iri };
     this.conditionTree = undefined;
@@ -76,7 +81,6 @@ export class UpdateQueryBuilder<TTable extends PodTable<any> = PodTable<any>> {
         return { [colName]: right };
       }
     }
-    // For complex conditions, temporarily return empty object; can be extended later
     return {};
   }
 
@@ -102,11 +106,49 @@ export class UpdateQueryBuilder<TTable extends PodTable<any> = PodTable<any>> {
     };
   };
 
+
+  private buildSPARQLQuery(methodName = 'toSPARQL()') {
+    if (this.sql) {
+      const query = this.sql.queryChunks.join('');
+      const type = inferSPARQLQueryType(query);
+      if (!type) {
+        throw new Error(`${methodName} could not infer SPARQL query type from raw AST input`);
+      }
+      return { type, query, prefixes: {} as Record<string, string> };
+    }
+
+    const converter = this.session.getDialect().getSPARQLConverter?.();
+    if (!converter) {
+      throw new Error(`${methodName} requires dialect SPARQL converter support`);
+    }
+
+    const plan = this.toIR();
+    return converter.convertUpdate(plan.data, plan.where, plan.table);
+  }
+
+  toSPARQL() {
+    return this.buildSPARQLQuery('toSPARQL()');
+  }
+
+  toSparql() {
+    return this.toSPARQL();
+  }
+
   async execute(): Promise<any[]> {
     if (this.sql) {
+      if (this.returningFields) {
+        throw new Error('returning() is not supported for raw SQL update in Solid dialect');
+      }
       return await this.session.executeSql(this.sql, this.table);
     } else if (this.updateData) {
       const plan = this.toIR();
+      const matchedRows = this.returningFields
+        ? await this.fetchMatchedRows(plan.where)
+        : [];
+      const subjects = matchedRows
+        .map((row) => resolveRowSubject(row))
+        .filter((subject): subject is string => typeof subject === 'string' && subject.length > 0);
+
       const operation: PodOperation = {
         type: 'update',
         table: this.table,
@@ -115,49 +157,69 @@ export class UpdateQueryBuilder<TTable extends PodTable<any> = PodTable<any>> {
         plan
       };
       const results = await this.session.execute(operation);
-      
-      // Call afterUpdate hooks
-      await this.runAfterUpdateHooks(results);
-      
-      return results;
+      const finalResults = this.returningFields
+        ? await this.fetchReturningRowsBySubjects(subjects)
+        : results;
+
+      await this.runAfterUpdateHooks(finalResults);
+
+      return finalResults;
     } else {
       throw new Error('No data specified for UPDATE query');
     }
   }
 
-  /**
-   * Run afterUpdate hooks for all updated records.
-   */
+  private async fetchMatchedRows(where: QueryCondition): Promise<Record<string, any>[]> {
+    return await this.session.select().from(this.table).where(where) as Record<string, any>[];
+  }
+
+  private async fetchReturningRowsBySubjects(subjects: string[]): Promise<any[]> {
+    if (subjects.length === 0) {
+      return [];
+    }
+
+    const rows = await this.session.select().from(this.table).whereByIri(subjects) as Record<string, any>[];
+    const projected = projectReturningRows(orderRowsBySubjects(rows, subjects), this.returningFields);
+
+    const arrayOverrides = Object.entries(this.updateData ?? {}).filter(([, value]) => Array.isArray(value));
+    if (arrayOverrides.length === 0) {
+      return projected;
+    }
+
+    return projected.map((row) => {
+      const normalized = { ...row };
+      for (const [key, value] of arrayOverrides) {
+        if (key in normalized) {
+          normalized[key] = [...(value as unknown[])];
+        }
+      }
+      return normalized;
+    });
+  }
+
   private async runAfterUpdateHooks(results: any[]): Promise<void> {
     const hooks = this.table.config.hooks;
     if (!hooks?.afterUpdate) {
       return;
     }
 
-    // Build hook context
     const ctx = this.buildHookContext();
     if (!ctx) {
       console.warn('[UpdateQueryBuilder] Cannot run hooks: missing session info');
       return;
     }
 
-    // Get the changes that were made
     const changes = (this.updateData ?? {}) as Record<string, unknown>;
 
-    // Run hook for each updated record
     for (const record of results) {
       try {
         await hooks.afterUpdate(ctx, record as Record<string, unknown>, changes);
       } catch (error) {
         console.error('[UpdateQueryBuilder] afterUpdate hook failed:', error);
-        // Don't throw - the update succeeded, just the hook failed
       }
     }
   }
 
-  /**
-   * Build the HookContext from session info.
-   */
   private buildHookContext(): HookContext | null {
     const dialect = this.session.getDialect();
     const webId = dialect.getWebId();

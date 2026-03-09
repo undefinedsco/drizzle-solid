@@ -3,7 +3,30 @@
  */
 
 import { describe, it, expect, beforeAll } from 'vitest';
-import { createTestSession } from '../integration/css/helpers';
+import { createTestSession, ensureContainer } from '../integration/css/helpers';
+
+const TEST_PATH = 'benchmark/v2/';
+const TOTAL_RECORDS = 500;
+const FILTER_TARGET = 50;
+
+function buildLargeDatasetTurtle() {
+  const triples: string[] = [
+    '@prefix schema: <http://schema.org/>.',
+    '@prefix xsd: <http://www.w3.org/2001/XMLSchema#>.',
+  ];
+
+  for (let i = 0; i < TOTAL_RECORDS; i++) {
+    const category = i < FILTER_TARGET ? 'target' : 'other';
+    triples.push(`
+<#item-${i}> a <http://schema.org/BenchItem_LargeDataset>;
+  schema:identifier "${i}";
+  schema:name "Item ${i}";
+  schema:category "${category}";
+  schema:value ${i * 10}.`);
+  }
+
+  return triples.join('\n');
+}
 
 describe('SPARQL Filter Pushdown Test', () => {
   let session: any;
@@ -14,8 +37,18 @@ describe('SPARQL Filter Pushdown Test', () => {
   beforeAll(async () => {
     session = await createTestSession({ shared: false });
     podBase = session.info.webId.split('profile')[0];
-    resourcePath = `${podBase}benchmark/v2/large-dataset.ttl`;
+    await ensureContainer(session, TEST_PATH);
+
+    resourcePath = `${podBase}${TEST_PATH}large-dataset.ttl`;
     sparqlEndpoint = `${resourcePath}/-/sparql`;
+
+    const response = await session.fetch(resourcePath, {
+      method: 'PUT',
+      headers: { 'Content-Type': 'text/turtle' },
+      body: buildLargeDatasetTurtle(),
+    });
+
+    expect(response.ok).toBe(true);
     
     console.log('Testing SPARQL endpoint:', sparqlEndpoint);
   }, 60000);
@@ -87,7 +120,7 @@ describe('SPARQL Filter Pushdown Test', () => {
     console.log(`Raw times ALL: ${times1.map(t => t.toFixed(0)).join(', ')}ms`);
     console.log(`Raw times FILTER: ${times2.map(t => t.toFixed(0)).join(', ')}ms`);
 
-    expect(count1).toBe(500);
-    expect(count2).toBe(50);
+    expect(count1).toBe(TOTAL_RECORDS);
+    expect(count2).toBe(FILTER_TARGET);
   }, 60000);
 });

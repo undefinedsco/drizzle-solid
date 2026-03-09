@@ -11,9 +11,11 @@ import {
 import type { SolidDatabase } from '../../../src/driver';
 import type { Session } from '@inrupt/solid-client-authn-node';
 import { createTestSession, ensureContainer } from './helpers';
+import { isInProcessXpodEnabled } from './xpod-runtime';
 
 const containerPath = `/notifications-test/${Date.now()}/`;
 const schemaNamespace = { prefix: SCHEMA.PREFIX, uri: SCHEMA.NAMESPACE };
+const expectedRealtimeChannel = isInProcessXpodEnabled() ? 'streaming-http' : 'websocket';
 
 vi.setConfig({ testTimeout: 60_000 });
 
@@ -69,7 +71,7 @@ describe('CSS integration: Notifications', () => {
       });
 
       expect(subscription.active).toBe(true);
-      expect(subscription.channel).toBe('websocket');
+      expect(subscription.channel).toBe(expectedRealtimeChannel);
 
       // 等待连接建立
       await new Promise(resolve => setTimeout(resolve, 1000));
@@ -475,7 +477,7 @@ describe('CSS integration: Notifications', () => {
       });
 
       expect(subscription.active).toBe(true);
-      expect(subscription.channel).toBe('websocket');
+      expect(subscription.channel).toBe(expectedRealtimeChannel);
       console.log(`[WS Preferred] Selected channel: ${subscription.channel}`);
 
       subscription.unsubscribe();
@@ -497,7 +499,7 @@ describe('CSS integration: Notifications', () => {
       });
 
       expect(subscription.active).toBe(true);
-      expect(subscription.channel).toBe('websocket');
+      expect(subscription.channel).toBe(expectedRealtimeChannel);
 
       subscription.unsubscribe();
       await ssePreferredDb.disconnect();

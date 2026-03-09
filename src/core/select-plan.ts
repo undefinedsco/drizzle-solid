@@ -2,8 +2,10 @@ import { PodTable, PodColumnBase } from './schema';
 import { AggregateExpression } from './aggregates';
 import { QueryCondition } from './query-conditions';
 
-export type SelectField = PodColumnBase | string | AggregateExpression;
-export type SelectFieldMap = Record<string, SelectField>;
+export type SelectField = PodColumnBase | PodTable<any> | string | AggregateExpression | SelectFieldMap;
+export interface SelectFieldMap {
+  [key: string]: SelectField;
+}
 
 export interface ColumnReference {
   table: PodTable<any>;
@@ -16,7 +18,7 @@ export interface JoinCondition {
   right: ColumnReference;
 }
 
-export type JoinType = 'leftJoin' | 'rightJoin' | 'innerJoin' | 'fullJoin';
+export type JoinType = 'leftJoin' | 'rightJoin' | 'innerJoin' | 'fullJoin' | 'crossJoin';
 
 export interface JoinPlan {
   type: JoinType;
@@ -42,6 +44,7 @@ export interface SelectQueryPlan {
   joins?: JoinPlan[];
   joinFilters?: QueryCondition[];
   groupBy?: ColumnReference[];
+  having?: QueryCondition;
   orderBy?: OrderByDescriptor[];
   distinct?: boolean;
   limit?: number;

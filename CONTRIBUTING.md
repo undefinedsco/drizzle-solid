@@ -8,10 +8,13 @@ Thanks for investing in drizzle-solid. This project targets Drizzle ORM users wh
 3. **Verify** – run `yarn quality` (lint + tests). If you only need unit coverage during iteration, use `SOLID_ENABLE_REAL_TESTS=false yarn test` and always finish with the full suite.
 4. **Document** – refresh `README`, `docs/guides/`, or `examples/` so Drizzle users can understand the new behaviour.
 
-## Integration Tests
-- Jest boots a local Community Solid Server automatically; the setup logic mints client credentials and exposes them via env vars.
-- Before running CSS-backed suites, populate the isolated server runtime with `yarn css:install` so Comunica v2 dependencies live under `.internal/css-runtime` and stay separate from the library’s v4 toolchain.
+## Testing
+- Canonical testing policy lives in `docs/guides/testing.md`. Keep that guide aligned with repository behavior and external documentation snapshots.
+- Unit specs live under `tests/unit` and should cover builder logic, RDF mapping, type helpers, and other fast local behavior.
 - Integration specs live under `tests/integration/css`. Use the helper utilities in `tests/integration/css/helpers.ts` to create sessions, ensure containers, and clean up.
+- Parity triage against upstream Drizzle lives in `tests/fixtures/drizzle-parity/queue.json`; generated artifacts help planning, but maintained suites are the source of truth.
+- Example changes must keep a verification path. `tests/integration/css/examples-verification.test.ts` is the current canonical real-example check.
+- Before running CSS-backed suites, populate the isolated server runtime with `yarn css:install` so Comunica v2 dependencies live under `.internal/css-runtime` and stay separate from the library’s v4 toolchain.
 - Prefer idempotent tests that operate on timestamped containers (`/drizzle-tests/<timestamp>/`) so suites can run in parallel.
 
 ## Pull Requests

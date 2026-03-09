@@ -4,8 +4,10 @@ import { AggregateExpression } from '../aggregates';
 import { PodOperation } from '../pod-dialect';
 import { SQL } from 'drizzle-orm';
 
-export type SelectField = PodColumnBase | string | AggregateExpression;
-export type SelectFieldMap = Record<string, SelectField>;
+export type SelectField = PodColumnBase | PodTable<any> | string | AggregateExpression | SelectFieldMap;
+export interface SelectFieldMap {
+  [key: string]: SelectField;
+}
 
 export interface InsertQueryPlan<TTable extends PodTable<any> = PodTable<any>> {
   table: TTable;
@@ -23,7 +25,7 @@ export interface DeleteQueryPlan<TTable extends PodTable<any> = PodTable<any>> {
   where?: QueryCondition;
 }
 
-export type JoinType = 'leftJoin' | 'rightJoin' | 'innerJoin' | 'fullJoin';
+export type JoinType = 'leftJoin' | 'rightJoin' | 'innerJoin' | 'fullJoin' | 'crossJoin';
 
 export interface ColumnReference {
   table: PodTable<any>;

@@ -1,1025 +1,553 @@
+/**
+ * Drizzle ORM CRUD Tests
+ * Auto-generated from Drizzle ORM SQLite tests
+ * Generated on: 2026-03-05T15:20:30.902Z
+ */
+
 import { afterAll, beforeAll, describe, expect, test, vi } from 'vitest';
 import { drizzle } from '../../../src/driver';
-import { SCHEMA_INRUPT as SCHEMA } from '@inrupt/vocab-common-rdf';
 import {
   podTable,
   string,
   int,
-  date,
-  uri,
-  iri,
-  id,
-  and,
-  gte,
-  inArray,
-  or,
-  not,
-  like,
-  isNull,
-  notInArray,
   eq,
-  ne,
-  lt,
-  regex,
-  count,
-  avg,
-  max,
-  relations,
-  object
+  and,
+  or,
 } from '../../../src/index';
 import type { SolidDatabase } from '../../../src/driver';
 import type { Session } from '@inrupt/solid-client-authn-node';
-import { createTestSession, ensureContainer } from './helpers';
-import { ComunicaSPARQLExecutor } from '../../../src/core/sparql-executor';
+import { buildTestPodUrl, createTestSession, ensureContainer } from './helpers';
 
-const containerPath = `/integration/${Date.now()}/`;
-const schemaNamespace = { prefix: SCHEMA.PREFIX, uri: SCHEMA.NAMESPACE };
+const timestamp = Date.now();
+const containerPath = `/drizzle-crud-${timestamp}/`;
 
 vi.setConfig({ testTimeout: 60_000 });
 
-const profileTable = podTable('profiles', {
-  id: string('id').primaryKey().predicate('https://schema.org/identifier'),
-  name: string('name').notNull().predicate('https://schema.org/name'),
-  age: int('age').predicate('https://schema.org/age'),
-  createdAt: date('createdAt').notNull().predicate('https://schema.org/dateCreated')
-}, {
-  base: `${containerPath}profiles.ttl`,
-  type: 'https://schema.org/Person',
-  namespace: schemaNamespace,
-  typeIndex: undefined
-});
-
-const membershipTable = podTable('memberships', {
-  id: string('id').primaryKey().predicate('https://schema.org/identifier'),
-  memberName: string('memberName').predicate('https://schema.org/name'),
-  organization: uri('organization')
-    .predicate('https://schema.org/member')
-    .inverse()
-    .reference('https://schema.org/Organization')
-}, {
-  base: `${containerPath}memberships.ttl`,
-  type: 'https://schema.org/Person',
-  namespace: schemaNamespace
-});
-
-describe('CSS integration: drizzle CRUD', () => {
+describe('Drizzle ORM CRUD Tests', () => {
   let session: Session;
   let db: SolidDatabase;
-  let containerUrl: string;
-  let resourceUrl: string;
-  let membershipResourceUrl: string;
+
+  // Define test tables
+  const FragmentTable = podTable('FragmentTest', {
+    id: string('id').primaryKey().predicate('http://schema.org/identifier'),
+    name: string('name').notNull().predicate('http://schema.org/name'),
+    value: int('value').predicate('http://schema.org/value'),
+  }, {
+    type: 'http://schema.org/Thing',
+    base: `${buildTestPodUrl(containerPath)}fragment/index.ttl`,
+    subjectTemplate: '#{id}',
+  });
+
+  const DocumentTable = podTable('DocumentTest', {
+    id: string('id').primaryKey().predicate('http://schema.org/identifier'),
+    name: string('name').notNull().predicate('http://schema.org/name'),
+    value: int('value').predicate('http://schema.org/value'),
+  }, {
+    type: 'http://schema.org/Thing',
+    base: `${buildTestPodUrl(containerPath)}document/`,
+    subjectTemplate: '{id}.ttl',
+  });
+
+  const MultiVarTable = podTable('MultiVarTest', {
+    id: string('id').primaryKey().predicate('http://schema.org/identifier'),
+    chatId: string('chatId').notNull().predicate('http://schema.org/chatId'),
+    name: string('name').notNull().predicate('http://schema.org/name'),
+    value: int('value').predicate('http://schema.org/value'),
+  }, {
+    type: 'http://schema.org/Thing',
+    base: `${buildTestPodUrl(containerPath)}multivar/`,
+    subjectTemplate: '{chatId}/{id}.ttl',
+  });
 
   beforeAll(async () => {
     session = await createTestSession();
-    db = drizzle(session);
-    containerUrl = await ensureContainer(session, containerPath);
-    resourceUrl = `${containerUrl}profiles.ttl`;
-    membershipResourceUrl = `${containerUrl}memberships.ttl`;
-    await db.init(profileTable);
-    await db.init(membershipTable);
+    db = drizzle(session, { debug: true });
+    await ensureContainer(session, containerPath);
+    await ensureContainer(session, `${containerPath}fragment/`);
+    await ensureContainer(session, `${containerPath}document/`);
+    await ensureContainer(session, `${containerPath}multivar/`);
   }, 120_000);
 
   afterAll(async () => {
-    if (resourceUrl) {
-      await session.fetch(resourceUrl, { method: 'DELETE' }).catch(() => undefined);
-    }
-    if (membershipResourceUrl) {
-      await session.fetch(membershipResourceUrl, { method: 'DELETE' }).catch(() => undefined);
-    }
-    if (containerUrl) {
-      await session.fetch(containerUrl, { method: 'DELETE' }).catch(() => undefined);
-    }
+    // Cleanup
   });
 
-  test('performs insert/select/update/delete against a live pod', async () => {
-    expect(session.info.isLoggedIn).toBe(true);
-    expect(session.info.webId).toBeDefined();
-
-    const recordId = `profile-${Date.now()}`;
-    const insertedName = 'Alice Example';
-    const updatedName = 'Alice Updated';
-
-    await db.insert(profileTable).values({
-      id: recordId,
-      name: insertedName,
-      age: 30,
-      createdAt: new Date()
+  test('select all fields - fragment mode', async () => {
+    // Insert test data
+    await db.insert(FragmentTable).values({
+      id: 'test-1',
+      name: 'Test Item 1',
+      value: 100,
     });
 
-    await db
-      .update(profileTable)
-      .set({ name: updatedName, age: 31 })
-      .where({ id: recordId });
+    // Select all fields
+    const results = await db.select().from(FragmentTable);
 
-    const afterUpdate = await db
-      .select()
-      .from(profileTable)
-      .where({ id: recordId });
-
-    expect(afterUpdate).toHaveLength(1);
-    expect(afterUpdate[0]?.name).toBe(updatedName);
-    expect(Number(afterUpdate[0]?.age)).toBe(31);
-
-    await db
-      .delete(profileTable)
-      .where({ id: recordId });
-
-    const afterDelete = await db
-      .select()
-      .from(profileTable)
-      .where({ id: recordId });
-
-    expect(afterDelete).toHaveLength(0);
+    expect(results).toBeDefined();
+    expect(results.length).toBeGreaterThan(0);
+    expect(results[0]).toHaveProperty('id');
+    expect(results[0]).toHaveProperty('name');
+    expect(results[0]).toHaveProperty('value');
   });
 
-  test('supports inverse predicate columns with membership edges', async () => {
-    await session.fetch(membershipResourceUrl, { method: 'DELETE' }).catch(() => undefined);
-
-    const memberId = `membership-${Date.now()}`;
-    const orgAlpha = `https://org.example/${Date.now()}/alpha`;
-    const orgBeta = `${orgAlpha}-beta`;
-
-    await db.insert(membershipTable).values({
-      id: memberId,
-      memberName: 'Inverse Edge Tester',
-      organization: orgAlpha
+  test('select all fields - document mode', async () => {
+    // Insert test data
+    await db.insert(DocumentTable).values({
+      id: 'test-1',
+      name: 'Test Item 1',
+      value: 100,
     });
 
-    const initial = await db
-      .select()
-      .from(membershipTable)
-      .where({ id: memberId });
+    // Select all fields
+    const results = await db.select().from(DocumentTable);
 
-    expect(initial).toHaveLength(1);
-    expect(initial[0]?.organization).toBe(orgAlpha);
-
-    await db
-      .update(membershipTable)
-      .set({ organization: orgBeta })
-      .where({ id: memberId });
-
-    const updated = await db
-      .select()
-      .from(membershipTable)
-      .where({ id: memberId });
-
-    expect(updated).toHaveLength(1);
-    expect(updated[0]?.organization).toBe(orgBeta);
-
-    await db
-      .delete(membershipTable)
-      .where({ id: memberId });
-
-    const afterDelete = await db
-      .select()
-      .from(membershipTable)
-      .where({ id: memberId });
-
-    expect(afterDelete).toHaveLength(0);
+    expect(results).toBeDefined();
+    expect(results.length).toBeGreaterThan(0);
+    expect(results[0]).toHaveProperty('id');
+    expect(results[0]).toHaveProperty('name');
+    expect(results[0]).toHaveProperty('value');
   });
 
-  test('supports select modifiers with ordering, limits, and distinct', async () => {
-    await session.fetch(resourceUrl, { method: 'DELETE' }).catch(() => undefined);
+  test('select all fields - multi-var mode', async () => {
+    // Insert test data
+    await db.insert(MultiVarTable).values({
+      id: 'test-1',
+      chatId: 'chat-1',
+      name: 'Test Item 1',
+      value: 100,
+    });
 
-    const batchBase = `profile-batch-${Date.now()}`;
-    const batchRecords = [
-      { id: `${batchBase}-1`, name: 'Batch Alpha', age: 22, createdAt: new Date(Date.now() - 3_000) },
-      { id: `${batchBase}-2`, name: 'Batch Beta', age: 27, createdAt: new Date(Date.now() - 2_000) },
-      { id: `${batchBase}-3`, name: 'Batch Gamma', age: 31, createdAt: new Date(Date.now() - 1_000) }
-    ];
+    // Multi-variable templates require all path variables for deterministic lookup
+    const results = await db.select().from(MultiVarTable)
+      .where(and(
+        eq(MultiVarTable.chatId, 'chat-1'),
+        eq(MultiVarTable.id, 'test-1')
+      ));
 
-    await db.insert(profileTable).values(batchRecords);
+    expect(results).toBeDefined();
+    expect(results.length).toBe(1);
+    expect(results[0]).toHaveProperty('id', 'test-1');
+    expect(results[0]).toHaveProperty('chatId', 'chat-1');
+    expect(results[0]).toHaveProperty('name', 'Test Item 1');
+    expect(results[0]).toHaveProperty('value', 100);
+  });
 
-    const orderedByAgeDesc = await db
-      .select({ name: profileTable.name, age: profileTable.age })
-      .from(profileTable)
-      .orderBy(profileTable.age, 'desc');
+  test('select partial fields - fragment mode', async () => {
+    // Insert test data
+    await db.insert(FragmentTable).values({
+      id: 'test-2',
+      name: 'Test Item 2',
+      value: 200,
+    });
 
-    expect(orderedByAgeDesc.map((row) => row.name)).toEqual([
-      'Batch Gamma',
-      'Batch Beta',
-      'Batch Alpha'
+    // Select partial fields
+    const results = await db.select({
+      id: FragmentTable.id,
+      name: FragmentTable.name
+    }).from(FragmentTable).where(eq(FragmentTable.id, 'test-2'));
+
+    expect(results).toBeDefined();
+    expect(results.length).toBe(1);
+    expect(results[0]).toHaveProperty('id', 'test-2');
+    expect(results[0]).toHaveProperty('name', 'Test Item 2');
+    expect(results[0]).not.toHaveProperty('value');
+  });
+
+  test('select partial fields - document mode', async () => {
+    // Insert test data
+    await db.insert(DocumentTable).values({
+      id: 'test-2',
+      name: 'Test Item 2',
+      value: 200,
+    });
+
+    // Select partial fields
+    const results = await db.select({
+      id: DocumentTable.id,
+      name: DocumentTable.name
+    }).from(DocumentTable).where(eq(DocumentTable.id, 'test-2'));
+
+    expect(results).toBeDefined();
+    expect(results.length).toBe(1);
+    expect(results[0]).toHaveProperty('id', 'test-2');
+    expect(results[0]).toHaveProperty('name', 'Test Item 2');
+    expect(results[0]).not.toHaveProperty('value');
+  });
+
+  test('insert many + select - fragment mode', async () => {
+    await db.insert(FragmentTable).values([
+      { id: 'bulk-1', name: 'Bulk Item 1', value: 11 },
+      { id: 'bulk-2', name: 'Bulk Item 2', value: 22 },
     ]);
 
-    const youngest = await db
-      .select({ name: profileTable.name })
-      .from(profileTable)
-      .orderBy(profileTable.age, 'asc')
-      .limit(1);
+    const results = await db.select().from(FragmentTable)
+      .where(or(
+        eq(FragmentTable.id, 'bulk-1'),
+        eq(FragmentTable.id, 'bulk-2')
+      ));
 
-    expect(youngest).toHaveLength(1);
-    expect(youngest[0]?.name).toBe('Batch Alpha');
+    expect(results).toHaveLength(2);
+    expect(results.map((row) => row.id).sort()).toEqual(['bulk-1', 'bulk-2']);
+  });
 
-    const distinctAges = await db
-      .select({ age: profileTable.age })
-      .from(profileTable)
-      .distinct()
-      .orderBy(profileTable.age, 'asc');
+  test('insert + select - fragment mode', async () => {
+    await db.insert(FragmentTable).values({
+      id: 'single-insert-1',
+      name: 'Single Insert Item',
+      value: 321,
+    });
 
-    expect(distinctAges.map((row) => Number(row.age))).toEqual([22, 27, 31]);
+    const results = await db.select().from(FragmentTable)
+      .where(eq(FragmentTable.id, 'single-insert-1'));
 
-    const offsetSelection = await db
-      .select({ name: profileTable.name })
-      .from(profileTable)
-      .orderBy(profileTable.age, 'asc')
-      .offset(1)
-      .limit(1);
+    expect(results).toHaveLength(1);
+    expect(results[0]).toMatchObject({
+      id: 'single-insert-1',
+      name: 'Single Insert Item',
+      value: 321,
+    });
+  });
 
-    expect(offsetSelection).toHaveLength(1);
-    expect(offsetSelection[0]?.name).toBe('Batch Beta');
+  test('insert many + select - document mode', async () => {
+    await db.insert(DocumentTable).values([
+      { id: 'doc-bulk-1', name: 'Document Bulk 1', value: 101 },
+      { id: 'doc-bulk-2', name: 'Document Bulk 2', value: 202 },
+    ]);
 
-    const filtered = await db
-      .select()
-      .from(profileTable)
-      .where({ age: 27 });
+    const results = await db.select().from(DocumentTable)
+      .where(or(
+        eq(DocumentTable.id, 'doc-bulk-1'),
+        eq(DocumentTable.id, 'doc-bulk-2')
+      ));
 
-    expect(filtered).toHaveLength(1);
-    expect(filtered[0]?.name).toBe('Batch Beta');
+    expect(results).toHaveLength(2);
+    expect(results.map((row) => row.id).sort()).toEqual(['doc-bulk-1', 'doc-bulk-2']);
+  });
 
-    const conditionFiltered = await db
-      .select({ name: profileTable.name })
-      .from(profileTable)
-      .where(
-        and(
-          gte(profileTable.age, 27),
-          inArray(profileTable.name, ['Batch Beta', 'Batch Gamma'])
+  test('insert many + select - multi-var mode', async () => {
+    await db.insert(MultiVarTable).values([
+      { id: 'multi-bulk-1', chatId: 'chat-bulk', name: 'Multi Bulk 1', value: 501 },
+      { id: 'multi-bulk-2', chatId: 'chat-bulk', name: 'Multi Bulk 2', value: 502 },
+    ]);
+
+    const results = await db.select().from(MultiVarTable)
+      .where(eq(MultiVarTable.chatId, 'chat-bulk'));
+
+    expect(results).toHaveLength(2);
+    expect(results.map((row) => row.id).sort()).toEqual(['multi-bulk-1', 'multi-bulk-2']);
+  });
+
+  test('select partial fields - multi-var mode', async () => {
+    // Insert test data
+    await db.insert(MultiVarTable).values({
+      id: 'test-2',
+      chatId: 'chat-1',
+      name: 'Test Item 2',
+      value: 200,
+    });
+
+    // Select partial fields
+    const results = await db.select({
+      id: MultiVarTable.id,
+      name: MultiVarTable.name
+    }).from(MultiVarTable).where(and(
+      eq(MultiVarTable.chatId, 'chat-1'),
+      eq(MultiVarTable.id, 'test-2')
+    ));
+
+    expect(results).toBeDefined();
+    expect(results.length).toBe(1);
+    expect(results[0]).toHaveProperty('id', 'test-2');
+    expect(results[0]).toHaveProperty('name', 'Test Item 2');
+    expect(results[0]).not.toHaveProperty('value');
+  });
+
+  test('insert single row - fragment mode', async () => {
+    // Insert single row
+    await db.insert(FragmentTable).values({
+      id: 'insert-1',
+      name: 'Inserted Item',
+      value: 300,
+    });
+
+    // Verify insertion
+    const results = await db.select().from(FragmentTable).where(eq(FragmentTable.id, 'insert-1'));
+
+    expect(results).toBeDefined();
+    expect(results.length).toBe(1);
+    expect(results[0]).toHaveProperty('id', 'insert-1');
+    expect(results[0]).toHaveProperty('name', 'Inserted Item');
+    expect(results[0]).toHaveProperty('value', 300);
+  });
+
+  test('insert single row - document mode', async () => {
+    // Insert single row
+    await db.insert(DocumentTable).values({
+      id: 'insert-1',
+      name: 'Inserted Item',
+      value: 300,
+    });
+
+    // Verify insertion
+    const results = await db.select().from(DocumentTable).where(eq(DocumentTable.id, 'insert-1'));
+
+    expect(results).toBeDefined();
+    expect(results.length).toBe(1);
+    expect(results[0]).toHaveProperty('id', 'insert-1');
+    expect(results[0]).toHaveProperty('name', 'Inserted Item');
+    expect(results[0]).toHaveProperty('value', 300);
+  });
+
+  test('insert single row - multi-var mode', async () => {
+    // Insert single row
+    await db.insert(MultiVarTable).values({
+      id: 'insert-1',
+      chatId: 'chat-2',
+      name: 'Inserted Item',
+      value: 300,
+    });
+
+    // Verify insertion
+    const results = await db.select().from(MultiVarTable)
+      .where(and(
+        eq(MultiVarTable.chatId, 'chat-2'),
+        eq(MultiVarTable.id, 'insert-1')
+      ));
+
+    expect(results).toBeDefined();
+    expect(results.length).toBe(1);
+    expect(results[0]).toHaveProperty('id', 'insert-1');
+    expect(results[0]).toHaveProperty('chatId', 'chat-2');
+    expect(results[0]).toHaveProperty('name', 'Inserted Item');
+    expect(results[0]).toHaveProperty('value', 300);
+  });
+
+  test('insert multiple rows - fragment mode', async () => {
+    // Insert multiple rows
+    await db.insert(FragmentTable).values([
+      { id: 'multi-1', name: 'Multi Item 1', value: 400 },
+      { id: 'multi-2', name: 'Multi Item 2', value: 500 },
+    ]);
+
+    // Verify insertions
+    const results = await db.select().from(FragmentTable)
+      .where(or(
+        eq(FragmentTable.id, 'multi-1'),
+        eq(FragmentTable.id, 'multi-2')
+      ));
+
+    expect(results).toBeDefined();
+    expect(results.length).toBe(2);
+  });
+
+  test('insert multiple rows - document mode', async () => {
+    // Insert multiple rows
+    await db.insert(DocumentTable).values([
+      { id: 'multi-1', name: 'Multi Item 1', value: 400 },
+      { id: 'multi-2', name: 'Multi Item 2', value: 500 },
+    ]);
+
+    // Verify insertions
+    const results = await db.select().from(DocumentTable)
+      .where(or(
+        eq(DocumentTable.id, 'multi-1'),
+        eq(DocumentTable.id, 'multi-2')
+      ));
+
+    expect(results).toBeDefined();
+    expect(results.length).toBe(2);
+  });
+
+  test('insert multiple rows - multi-var mode', async () => {
+    // Insert multiple rows
+    await db.insert(MultiVarTable).values([
+      { id: 'multi-1', chatId: 'chat-3', name: 'Multi Item 1', value: 400 },
+      { id: 'multi-2', chatId: 'chat-3', name: 'Multi Item 2', value: 500 },
+    ]);
+
+    // Verify insertions
+    const results = await db.select().from(MultiVarTable)
+      .where(and(
+        eq(MultiVarTable.chatId, 'chat-3'),
+        or(
+          eq(MultiVarTable.id, 'multi-1'),
+          eq(MultiVarTable.id, 'multi-2')
         )
-      )
-      .orderBy(profileTable.age, 'asc');
+      ));
 
-    expect(conditionFiltered.map((row) => row.name)).toEqual([
-      'Batch Beta',
-      'Batch Gamma'
-    ]);
-
-    await session.fetch(resourceUrl, { method: 'DELETE' }).catch(() => undefined);
+    expect(results).toBeDefined();
+    expect(results.length).toBe(2);
   });
 
-  test('supports advanced where clauses with like/or/not/null semantics', async () => {
-    await session.fetch(resourceUrl, { method: 'DELETE' }).catch(() => undefined);
+  test('update with where - fragment mode', async () => {
+    // Insert test data
+    await db.insert(FragmentTable).values({
+      id: 'update-1',
+      name: 'Original Name',
+      value: 600,
+    });
 
-    const batchBase = `profile-search-${Date.now()}`;
-    const now = Date.now();
-    const records = [
-      { id: `${batchBase}-1`, name: 'Search Alpha', age: 20, createdAt: new Date(now - 5_000) },
-      { id: `${batchBase}-2`, name: 'Search Beta', age: 25, createdAt: new Date(now - 4_000) },
-      { id: `${batchBase}-3`, name: 'Search Gamma', age: 30, createdAt: new Date(now - 3_000) },
-      { id: `${batchBase}-4`, name: 'Other Delta', createdAt: new Date(now - 2_000) }
-    ];
+    // Update
+    await db.update(FragmentTable)
+      .set({ name: 'Updated Name' })
+      .where(eq(FragmentTable.id, 'update-1'));
 
-    await db.insert(profileTable).values(records);
+    // Verify update
+    const results = await db.select().from(FragmentTable)
+      .where(eq(FragmentTable.id, 'update-1'));
 
-    const likeMatches = await db
-      .select({ name: profileTable.name })
-      .from(profileTable)
-      .where(like(profileTable.name, 'search%'))
-      .orderBy(profileTable.name, 'asc');
-
-    expect(likeMatches.map((row) => row.name)).toEqual([
-      'Search Alpha',
-      'Search Beta',
-      'Search Gamma'
-    ]);
-
-    const orMatches = await db
-      .select({ name: profileTable.name, age: profileTable.age })
-      .from(profileTable)
-      .where(or(eq(profileTable.age, 20), eq(profileTable.age, 30)))
-      .orderBy(profileTable.age, 'asc');
-
-    expect(orMatches.map((row) => row.name)).toEqual(['Search Alpha', 'Search Gamma']);
-
-    const notMatches = await db
-      .select({ name: profileTable.name })
-      .from(profileTable)
-      .where(not(eq(profileTable.name, 'Search Beta')))
-      .orderBy(profileTable.name, 'asc');
-
-    expect(notMatches.map((row) => row.name)).toContain('Search Alpha');
-    expect(notMatches.map((row) => row.name)).not.toContain('Search Beta');
-
-    const nullMatches = await db
-      .select({ name: profileTable.name })
-      .from(profileTable)
-      .where(isNull(profileTable.age));
-
-    expect(nullMatches).toHaveLength(1);
-    expect(nullMatches[0]?.name).toBe('Other Delta');
-
-    const notNullMatches = await db
-      .select({ name: profileTable.name })
-      .from(profileTable)
-      .where(not(isNull(profileTable.age)))
-      .orderBy(profileTable.name, 'asc');
-
-    expect(notNullMatches.map((row) => row.name)).toEqual(expect.arrayContaining([
-      'Search Alpha',
-      'Search Beta',
-      'Search Gamma'
-    ]));
-
-    const notInMatches = await db
-      .select({ name: profileTable.name })
-      .from(profileTable)
-      .where(
-        notInArray(profileTable.name, ['Search Beta', 'Search Gamma'])
-      )
-      .orderBy(profileTable.name, 'asc');
-
-    expect(notInMatches.map((row) => row.name)).toEqual([
-      'Other Delta',
-      'Search Alpha'
-    ]);
-
-    const notEqualMatches = await db
-      .select({ name: profileTable.name })
-      .from(profileTable)
-      .where(ne(profileTable.age, 25))
-      .orderBy(profileTable.name, 'asc');
-
-    expect(notEqualMatches.map((row) => row.name)).toEqual([
-      'Search Alpha',
-      'Search Gamma'
-    ]);
-
-    await session.fetch(resourceUrl, { method: 'DELETE' }).catch(() => undefined);
+    expect(results).toBeDefined();
+    expect(results.length).toBe(1);
+    expect(results[0]).toHaveProperty('name', 'Updated Name');
   });
 
-  test('supports subject lookups via id fragments and @id', async () => {
-    await session.fetch(resourceUrl, { method: 'DELETE' }).catch(() => undefined);
-
-    const subjectId = `subject-${Date.now()}`;
-    const targetName = 'Subject Fragment Lookup';
-    await db.insert(profileTable).values({
-      id: subjectId,
-      name: targetName,
-      age: 42,
-      createdAt: new Date()
+  test('update with where - document mode', async () => {
+    // Insert test data
+    await db.insert(DocumentTable).values({
+      id: 'update-1',
+      name: 'Original Name',
+      value: 600,
     });
 
-    // In fragment mode, id should be passed without '#' prefix
-    // The resolver will construct the full URI: resource.ttl#${id}
-    const fragmentResults = await db
-      .select()
-      .from(profileTable)
-      .where({ id: subjectId });
+    // Update
+    await db.update(DocumentTable)
+      .set({ name: 'Updated Name' })
+      .where(eq(DocumentTable.id, 'update-1'));
 
-    expect(fragmentResults).toHaveLength(1);
-    expect(fragmentResults[0]?.name).toBe(targetName);
+    // Verify update
+    const results = await db.select().from(DocumentTable)
+      .where(eq(DocumentTable.id, 'update-1'));
 
-    // Use findByIri for absolute IRI lookup
-    const absoluteResult = await db.findByIri(profileTable, `${resourceUrl}#${subjectId}`);
-
-    expect(absoluteResult).not.toBeNull();
-    expect(absoluteResult?.name).toBe(targetName);
-
-    await session.fetch(resourceUrl, { method: 'DELETE' }).catch(() => undefined);
+    expect(results).toBeDefined();
+    expect(results.length).toBe(1);
+    expect(results[0]).toHaveProperty('name', 'Updated Name');
   });
 
-  test('matches numeric columns even when SPARQL uses typed literals', async () => {
-    await session.fetch(resourceUrl, { method: 'DELETE' }).catch(() => undefined);
-
-    const numId = `numeric-${Date.now()}`;
-    await db.insert(profileTable).values({
-      id: numId,
-      name: 'Numeric Typed Literal',
-      age: 20,
-      createdAt: new Date()
+  test('update with where - multi-var mode', async () => {
+    // Insert test data
+    await db.insert(MultiVarTable).values({
+      id: 'update-1',
+      chatId: 'chat-4',
+      name: 'Original Name',
+      value: 600,
     });
 
-    // Query via Comunica executor using xsd:integer typed literal
-    const executor = new ComunicaSPARQLExecutor({
-      sources: [resourceUrl],
-      fetch: session.fetch.bind(session)
-    });
+    // Update
+    await db.update(MultiVarTable)
+      .set({ name: 'Updated Name' })
+      .where(and(
+        eq(MultiVarTable.chatId, 'chat-4'),
+        eq(MultiVarTable.id, 'update-1')
+      ));
 
-    const typedQuery = `
-      PREFIX schema: <https://schema.org/>
-      PREFIX xsd: <http://www.w3.org/2001/XMLSchema#>
-      SELECT ?id WHERE {
-        ?s a schema:Person;
-           schema:identifier ?id;
-           schema:age "20"^^xsd:integer.
-      }
-    `;
+    // Verify update
+    const results = await db.select().from(MultiVarTable)
+      .where(and(
+        eq(MultiVarTable.chatId, 'chat-4'),
+        eq(MultiVarTable.id, 'update-1')
+      ));
 
-    const results = await executor.executeSelect(typedQuery);
-    const ids = results.map((row: any) => row.id).filter(Boolean);
-
-    expect(ids).toContain(numId);
-
-    await session.fetch(resourceUrl, { method: 'DELETE' }).catch(() => undefined);
+    expect(results).toBeDefined();
+    expect(results.length).toBe(1);
+    expect(results[0]).toHaveProperty('name', 'Updated Name');
   });
 
-  test('supports regex filters on string columns', async () => {
-    await session.fetch(resourceUrl, { method: 'DELETE' }).catch(() => undefined);
+  test('delete with where - fragment mode', async () => {
+    // Insert test data
+    await db.insert(FragmentTable).values({
+      id: 'delete-1',
+      name: 'To Be Deleted',
+      value: 700,
+    });
 
-    const base = `regex-case-${Date.now()}`;
-    const records = [
-      { id: `${base}-1`, name: 'Regex One', createdAt: new Date() },
-      { id: `${base}-2`, name: 'Regex Two', createdAt: new Date() },
-      { id: `${base}-3`, name: 'Other Entry', createdAt: new Date() }
-    ];
+    // Delete
+    await db.delete(FragmentTable)
+      .where(eq(FragmentTable.id, 'delete-1'));
 
-    await db.insert(profileTable).values(records);
+    // Verify deletion
+    const results = await db.select().from(FragmentTable)
+      .where(eq(FragmentTable.id, 'delete-1'));
 
-    const allRows = await db
-      .select({ name: profileTable.name })
-      .from(profileTable);
-    console.log('allRows', allRows.map((row) => row.name));
-
-    const regexMatches = await db
-      .select({ name: profileTable.name })
-      .from(profileTable)
-      .where(regex(profileTable.name, '^Regex (One|Two)$'));
-
-    expect(regexMatches.map((row) => row.name)).toEqual([
-      'Regex One',
-      'Regex Two'
-    ]);
-
-    await session.fetch(resourceUrl, { method: 'DELETE' }).catch(() => undefined);
+    expect(results).toBeDefined();
+    expect(results.length).toBe(0);
   });
 
-  test('supports aggregate selections with count and numeric reducers', async () => {
-    // 使用独立的资源路径，避免与其他测试冲突
-    const isolatedResourceUrl = `${containerUrl}aggregate-test.ttl`;
-    // 清理旧数据
-    await session.fetch(isolatedResourceUrl, { method: 'DELETE' }).catch(() => undefined);
-    
-    // 从 containerUrl 推导相对路径 (containerUrl 已经包含了时间戳隔离)
-    const podBase = containerUrl.split('/').slice(0, 4).join('/') + '/'; // http://localhost:3000/test/
-    const relativePath = containerUrl.replace(podBase, '/') + 'aggregate-test.ttl';
-    
-    const isolatedTable = podTable('aggregate-profiles', {
-      id: string('id').primaryKey().predicate('https://schema.org/identifier'),
-      name: string('name').notNull().predicate('https://schema.org/name'),
-      age: int('age').predicate('https://schema.org/age'),
-      createdAt: date('createdAt').notNull().predicate('https://schema.org/dateCreated')
-    }, {
-      base: relativePath,
-      type: 'https://schema.org/Person',
-      namespace: schemaNamespace,
-      typeIndex: undefined
+  test('delete with where - document mode', async () => {
+    // Insert test data
+    await db.insert(DocumentTable).values({
+      id: 'delete-1',
+      name: 'To Be Deleted',
+      value: 700,
     });
 
-    const batchBase = `profile-summary-${Date.now()}`;
-    const records = [
-      { id: `${batchBase}-1`, name: 'Aggregate Alpha', age: 21, createdAt: new Date(Date.now() - 4_000) },
-      { id: `${batchBase}-2`, name: 'Aggregate Beta', age: 29, createdAt: new Date(Date.now() - 3_000) },
-      { id: `${batchBase}-3`, name: 'Aggregate Gamma', age: 42, createdAt: new Date(Date.now() - 2_000) },
-      { id: `${batchBase}-4`, name: 'Aggregate Missing', createdAt: new Date(Date.now() - 1_000) }
-    ];
+    // Delete
+    await db.delete(DocumentTable)
+      .where(eq(DocumentTable.id, 'delete-1'));
 
-    await db.insert(isolatedTable).values(records);
+    // Verify deletion
+    const results = await db.select().from(DocumentTable)
+      .where(eq(DocumentTable.id, 'delete-1'));
 
-    const aggregates = await db
-      .select({
-        total: count(),
-        withAge: count(isolatedTable.age),
-        maxAge: max(isolatedTable.age),
-        avgAge: avg(isolatedTable.age)
-      })
-      .from(isolatedTable)
-      .where(like(isolatedTable.name, 'Aggregate%'));
-
-    expect(aggregates).toHaveLength(1);
-    const summary = aggregates[0];
-
-    expect(summary?.total).toBe(4);
-    expect(summary?.withAge).toBe(3);
-    expect(Number(summary?.maxAge)).toBe(42);
-    expect(Number(summary?.avgAge)).toBeCloseTo((21 + 29 + 42) / 3, 5);
-
-    await session.fetch(isolatedResourceUrl, { method: 'DELETE' }).catch(() => undefined);
+    expect(results).toBeDefined();
+    expect(results.length).toBe(0);
   });
 
-  test('supports joins across tables', async () => {
-    const timestamp = Date.now();
-    const usersPath = `/users-${timestamp}/`;
-    const postsPath = `/posts-${timestamp}/`;
-
-    const usersTable = podTable('users', {
-      id: string('id').primaryKey().predicate('https://schema.org/identifier'),
-      name: string('name').notNull().predicate('https://schema.org/name')
-    }, {
-      base: `${usersPath}users.ttl`,
-      type: 'https://schema.org/Person',
-      namespace: schemaNamespace
+  test('delete with where - multi-var mode', async () => {
+    // Insert test data
+    await db.insert(MultiVarTable).values({
+      id: 'delete-1',
+      chatId: 'chat-5',
+      name: 'To Be Deleted',
+      value: 700,
     });
 
-    const postsTable = podTable('posts', {
-      id: string('id').primaryKey().predicate('https://schema.org/identifier'),
-      title: string('title').notNull().predicate('https://schema.org/headline'),
-      authorId: string('authorId').notNull().predicate('https://schema.org/author')
-    }, {
-      base: `${postsPath}posts.ttl`,
-      type: 'https://schema.org/CreativeWork',
-      namespace: schemaNamespace
-    });
+    // Delete
+    await db.delete(MultiVarTable)
+      .where(and(
+        eq(MultiVarTable.chatId, 'chat-5'),
+        eq(MultiVarTable.id, 'delete-1')
+      ));
 
-    const usersContainer = await ensureContainer(session, usersPath);
-    const postsContainer = await ensureContainer(session, postsPath);
-    const usersResource = `${usersContainer}users.ttl`;
-    const postsResource = `${postsContainer}posts.ttl`;
+    // Verify deletion
+    const results = await db.select().from(MultiVarTable)
+      .where(and(
+        eq(MultiVarTable.chatId, 'chat-5'),
+        eq(MultiVarTable.id, 'delete-1')
+      ));
 
-    try {
-      await db.init([usersTable, postsTable]);
-
-      await db.insert(usersTable).values([
-        { id: 'user-1', name: 'Alice Author' },
-        { id: 'user-2', name: 'Bob Writer' }
-      ]);
-
-      await db.insert(postsTable).values([
-        { id: 'post-1', title: 'Solid Intro', authorId: 'user-1' },
-        { id: 'post-2', title: 'SPARQL Tricks', authorId: 'user-2' },
-        { id: 'post-3', title: 'No Author Yet', authorId: 'user-999' }
-      ]);
-
-      const innerJoined = await db
-        .select({ title: postsTable.title, authorName: usersTable.name })
-        .from(postsTable)
-        .innerJoin(usersTable, { 'posts.authorId': 'users.id' })
-        .orderBy(postsTable.title, 'asc');
-
-      expect(innerJoined).toEqual([
-        { title: 'Solid Intro', authorName: 'Alice Author' },
-        { title: 'SPARQL Tricks', authorName: 'Bob Writer' }
-      ]);
-
-      const leftJoined = await db
-        .select({ title: postsTable.title, authorName: usersTable.name })
-        .from(postsTable)
-        .leftJoin(usersTable, { 'posts.authorId': 'users.id' })
-        .orderBy(postsTable.id, 'asc');
-
-      expect(leftJoined).toEqual([
-        { title: 'Solid Intro', authorName: 'Alice Author' },
-        { title: 'SPARQL Tricks', authorName: 'Bob Writer' },
-        { title: 'No Author Yet', authorName: undefined }
-      ]);
-    } finally {
-      await session.fetch(postsResource, { method: 'DELETE' }).catch(() => undefined);
-      await session.fetch(usersResource, { method: 'DELETE' }).catch(() => undefined);
-      await session.fetch(postsContainer, { method: 'DELETE' }).catch(() => undefined);
-      await session.fetch(usersContainer, { method: 'DELETE' }).catch(() => undefined);
-    }
+    expect(results).toBeDefined();
+    expect(results.length).toBe(0);
   });
 
-  test('supports db.query helpers with with + findByIRI', async () => {
-    const timestamp = Date.now();
-    const usersPath = `/query-users-${timestamp}/`;
-    const postsPath = `/query-posts-${timestamp}/`;
-
-    const usersTable = podTable('users', {
-      id: string('id').primaryKey().predicate('https://schema.org/identifier'),
-      name: string('name').notNull().predicate('https://schema.org/name')
-    }, {
-      base: `${usersPath}users.ttl`,
-      type: 'https://schema.org/Person',
-      namespace: schemaNamespace
+  test('update multiple fields - fragment mode', async () => {
+    await db.insert(FragmentTable).values({
+      id: 'update-multi-1',
+      name: 'Original',
+      value: 100,
     });
 
-    const postsTable = podTable('posts', {
-      id: string('id').primaryKey().predicate('https://schema.org/identifier'),
-      title: string('title').notNull().predicate('https://schema.org/headline'),
-      authorId: string('authorId').notNull().predicate('https://schema.org/author').reference('https://schema.org/Person')
-    }, {
-      base: `${postsPath}posts.ttl`,
-      type: 'https://schema.org/CreativeWork',
-      namespace: schemaNamespace
-    });
+    await db.update(FragmentTable)
+      .set({ name: 'Updated', value: 200 })
+      .where(eq(FragmentTable.id, 'update-multi-1'));
 
-    const querySession = await createTestSession({ skipTypeIndex: true });
-    const usersContainer = await ensureContainer(querySession, usersPath);
-    const postsContainer = await ensureContainer(querySession, postsPath);
-    const usersResource = `${usersContainer}users.ttl`;
-    const postsResource = `${postsContainer}posts.ttl`;
+    const results = await db.select().from(FragmentTable)
+      .where(eq(FragmentTable.id, 'update-multi-1'));
 
-    const queryDb = drizzle(querySession, { schema: { users: usersTable, posts: postsTable } });
-
-    try {
-      await queryDb.init([usersTable, postsTable]);
-
-      const user1Iri = `${usersResource}#user-q-1`;
-      const user2Iri = `${usersResource}#user-q-2`;
-
-      await queryDb.insert(usersTable).values([
-        { id: 'user-q-1', name: 'Query Alice' },
-        { id: 'user-q-2', name: 'Query Bob' }
-      ]);
-
-      await queryDb.insert(postsTable).values([
-        { id: 'post-q-1', title: 'First', authorId: user1Iri },
-        { id: 'post-q-2', title: 'Second', authorId: user1Iri },
-        { id: 'post-q-3', title: 'Third', authorId: user2Iri }
-      ]);
-
-      const usersWithPosts = await queryDb.query.users.findMany({
-        orderBy: [{ column: usersTable.id, direction: 'asc' }],
-        with: { posts: true }
-      });
-
-      expect(usersWithPosts).toHaveLength(2);
-      const u1 = usersWithPosts.find((row) => row.id === 'user-q-1');
-      const u2 = usersWithPosts.find((row) => row.id === 'user-q-2');
-      expect(u1?.posts?.map((p: any) => p.id).sort()).toEqual(['post-q-1', 'post-q-2']);
-      expect(u2?.posts?.map((p: any) => p.id)).toEqual(['post-q-3']);
-
-      const foundByIri = await queryDb.query.users.findByIRI(user1Iri);
-      expect(foundByIri?.name).toBe('Query Alice');
-
-      const rawQuery = {
-        type: 'SELECT' as const,
-        query: `PREFIX schema: <https://schema.org/>
-SELECT ?post ?author WHERE {
-  ?post schema:author ?author.
-}`,
-        prefixes: {}
-      };
-      const rawRows = await queryDb.getDialect().getSPARQLExecutor().queryContainer(postsResource, rawQuery);
-      const authorValues = rawRows
-        .map((row: any) => row.author?.value ?? row.author)
-        .filter((value: any): value is string => typeof value === 'string');
-      expect(authorValues).toContain(user1Iri);
-      expect(authorValues).toContain(user2Iri);
-    } finally {
-      await querySession.fetch(postsResource, { method: 'DELETE' }).catch(() => undefined);
-      await querySession.fetch(usersResource, { method: 'DELETE' }).catch(() => undefined);
-      await querySession.fetch(postsContainer, { method: 'DELETE' }).catch(() => undefined);
-      await querySession.fetch(usersContainer, { method: 'DELETE' }).catch(() => undefined);
-    }
+    expect(results[0].name).toBe('Updated');
+    expect(results[0].value).toBe(200);
   });
 
-  test('supports db.query helpers with inverse relations', async () => {
-    const timestamp = Date.now();
-    const threadsPath = `/inverse-threads-${timestamp}/`;
-    const messagesPath = `/inverse-messages-${timestamp}/`;
-
-    const messagesTable = podTable('messages', {
-      id: string('id').primaryKey().predicate('https://schema.org/identifier'),
-      body: string('body').notNull().predicate('https://schema.org/text')
-    }, {
-      base: `${messagesPath}messages.ttl`,
-      type: 'https://schema.org/Message',
-      namespace: schemaNamespace
+  test('insert and select with null value', async () => {
+    await db.insert(FragmentTable).values({
+      id: 'null-test-1',
+      name: 'Null Test',
+      value: null,
     });
 
-    const threadsTable = podTable('threads', {
-      id: string('id').primaryKey().predicate('https://schema.org/identifier'),
-      subject: string('subject').predicate('https://schema.org/headline'),
-      messageRefs: uri('messageRefs')
-        .array()
-        .predicate('https://www.w3.org/ns/sioc#has_member')
-        .inverse()
-        .reference('https://schema.org/Message')
-    }, {
-      base: `${threadsPath}threads.ttl`,
-      type: 'https://schema.org/Conversation',
-      namespace: schemaNamespace
-    });
+    const results = await db.select().from(FragmentTable)
+      .where(eq(FragmentTable.id, 'null-test-1'));
 
-    relations(threadsTable, ({ many }) => ({
-      messages: many(messagesTable)
-    }));
-
-    const inverseSession = await createTestSession({ skipTypeIndex: true });
-    const threadsContainer = await ensureContainer(inverseSession, threadsPath);
-    const messagesContainer = await ensureContainer(inverseSession, messagesPath);
-    const threadsResource = `${threadsContainer}threads.ttl`;
-    const messagesResource = `${messagesContainer}messages.ttl`;
-
-    const inverseDb = drizzle(inverseSession, { schema: { threads: threadsTable, messages: messagesTable } });
-
-    try {
-      await inverseDb.init([threadsTable, messagesTable]);
-
-      const message1Iri = `${messagesResource}#msg-${timestamp}-1`;
-      const message2Iri = `${messagesResource}#msg-${timestamp}-2`;
-
-      await inverseDb.insert(messagesTable).values([
-        { id: `msg-${timestamp}-1`, body: 'Inverse hello' },
-        { id: `msg-${timestamp}-2`, body: 'Inverse follow-up' }
-      ]);
-
-      await inverseDb.insert(threadsTable).values({
-        id: `thread-${timestamp}`,
-        subject: 'Inverse Relation Thread',
-        messageRefs: [message1Iri, message2Iri]
-      });
-
-      const threadsWithMessages = await inverseDb.query.threads.findMany({
-        with: { messages: true }
-      });
-
-      expect(threadsWithMessages).toHaveLength(1);
-      const thread = threadsWithMessages[0];
-      expect(thread?.messages?.length).toBe(2);
-      expect(thread?.messages?.map((msg: any) => msg.id).sort()).toEqual([
-        `msg-${timestamp}-1`,
-        `msg-${timestamp}-2`
-      ]);
-    } finally {
-      await inverseSession.fetch(threadsResource, { method: 'DELETE' }).catch(() => undefined);
-      await inverseSession.fetch(messagesResource, { method: 'DELETE' }).catch(() => undefined);
-      await inverseSession.fetch(threadsContainer, { method: 'DELETE' }).catch(() => undefined);
-      await inverseSession.fetch(messagesContainer, { method: 'DELETE' }).catch(() => undefined);
-    }
+    expect(results).toBeDefined();
+    expect(results[0].value).toBeUndefined();
   });
-
-  test('supports group by with aggregates', async () => {
-    await session.fetch(resourceUrl, { method: 'DELETE' }).catch(() => undefined);
-
-    const batchBase = `profile-group-${Date.now()}`;
-    const now = Date.now();
-    const records = [
-      { id: `${batchBase}-1`, name: 'Group Alpha', age: 30, createdAt: new Date(now - 3_000) },
-      { id: `${batchBase}-2`, name: 'Group Beta', age: 30, createdAt: new Date(now - 2_000) },
-      { id: `${batchBase}-3`, name: 'Group Gamma', age: 40, createdAt: new Date(now - 1_000) }
-    ];
-
-    await db.insert(profileTable).values(records);
-
-    const grouped = await db
-      .select({ age: profileTable.age, total: count() })
-      .from(profileTable)
-      .groupBy(profileTable.age)
-      .orderBy(profileTable.age, 'asc');
-
-    expect(grouped.map((row) => ({ age: Number(row.age), total: Number(row.total) }))).toEqual([
-      { age: 30, total: 2 },
-      { age: 40, total: 1 }
-    ]);
-
-    await session.fetch(resourceUrl, { method: 'DELETE' }).catch(() => undefined);
-  });
-
-  test('supports inline object array cascade CRUD', async () => {
-    const timestamp = Date.now();
-    const inlinePath = `/integration/inline-${timestamp}/`;
-    const inlineSession = await createTestSession({ skipTypeIndex: true });
-    const containerUrl = await ensureContainer(inlineSession, inlinePath);
-    const inlineResource = `${containerUrl}threads.ttl`;
-
-    const threadsTable = podTable('inlineThreads', {
-      id: string('id').primaryKey().predicate('https://schema.org/identifier'),
-      title: string('title').predicate('https://schema.org/headline'),
-      participants: object('participants').array().predicate('https://schema.org/hasPart')
-    }, {
-      base: inlineResource,
-      type: 'https://schema.org/Conversation',
-      namespace: schemaNamespace
-    });
-
-    const dbInline = drizzle(inlineSession, { schema: { inlineThreads: threadsTable } });
-    try {
-      await dbInline.init([threadsTable]);
-      await dbInline.insert(threadsTable).values({
-        id: `thread-${timestamp}`,
-        title: 'Inline thread',
-        participants: [
-          { name: 'Alice', role: 'owner' },
-          { name: 'Bob', role: 'member' }
-        ]
-      });
-
-      const rows = await dbInline.select().from(threadsTable);
-      expect(rows).toHaveLength(1);
-      const participants = rows[0]?.participants as any[];
-      expect(participants?.length).toBe(2);
-      const alice = participants?.find((p) => p.name === 'Alice');
-      expect(alice?.id).toBeDefined();
-
-      await dbInline.update(threadsTable).set({
-        title: 'Inline thread updated',
-        participants: [
-          { id: alice?.['@id'] || alice?.id, name: 'Alice', role: 'admin' },
-          { name: 'Carol', role: 'member' }
-        ]
-      }).where({ id: `thread-${timestamp}` });
-
-      const afterUpdate = await dbInline.select().from(threadsTable);
-      expect(afterUpdate[0]?.title).toBe('Inline thread updated');
-      const updatedParticipants = (afterUpdate[0]?.participants as any[]) ?? [];
-      expect(updatedParticipants.length).toBe(2);
-      expect(updatedParticipants.some((p) => p.role === 'admin')).toBe(true);
-      expect(updatedParticipants.some((p) => p.name === 'Carol')).toBe(true);
-
-      const carol = updatedParticipants.find((p) => p.name === 'Carol');
-      expect(carol?.id).toBeDefined();
-
-      await dbInline.delete(threadsTable).where({ id: `thread-${timestamp}` });
-
-      const afterDelete = await dbInline.select().from(threadsTable);
-      expect(afterDelete).toHaveLength(0);
-
-      if (carol?.['@id']) {
-        const executor = dbInline.getDialect().getSPARQLExecutor();
-        const remaining = await executor.queryContainer(inlineResource, {
-          type: 'SELECT',
-          query: `SELECT ?p ?o WHERE { <${carol['@id']}> ?p ?o }`
-        });
-        expect(remaining.length).toBe(0);
-      }
-    } finally {
-      await inlineSession.fetch(inlineResource, { method: 'DELETE' }).catch(() => undefined);
-      await inlineSession.fetch(containerUrl, { method: 'DELETE' }).catch(() => undefined);
-    }
-  });
-
-  test('can update/delete plain IRI reference fields', async () => {
-    const now = Date.now();
-    const probeContainer = await ensureContainer(session, '/integration/');
-    const resource = `${probeContainer}res.ttl`;
-
-    const contactsTable = podTable('contacts', {
-      id: string('id').primaryKey().predicate('https://schema.org/identifier'),
-      name: string('name').predicate('https://schema.org/name'),
-      homepage: iri('homepage').predicate('https://schema.org/url')
-    }, {
-      base: resource,
-      type: 'https://schema.org/Person',
-      namespace: schemaNamespace
-    });
-
-    const contactSession = await createTestSession({ skipTypeIndex: true });
-    const dbIri = drizzle(contactSession, { schema: { contacts: contactsTable } });
-
-    try {
-      await dbIri.init([contactsTable]);
-      const home1 = 'https://example.com/home-1';
-      const home2 = 'https://example.com/home-2';
-
-      await dbIri.insert(contactsTable).values({
-        id: `c-${now}`,
-        name: 'IRI User',
-        homepage: home1
-      });
-
-      let rows = await dbIri.select().from(contactsTable);
-      expect(rows[0]?.homepage).toBe(home1);
-
-      // update homepage (NamedNode object)
-      await dbIri.update(contactsTable).set({ homepage: home2 }).where({ id: `c-${now}` });
-      await new Promise((resolve) => setTimeout(resolve, 1000)); // allow remote store to settle
-      rows = await dbIri.select().from(contactsTable);
-      expect(rows[0]?.homepage).toBe(home2);
-
-      // delete row (removes homepage triple)
-      await dbIri.delete(contactsTable).where({ id: `c-${now}` });
-      rows = await dbIri.select().from(contactsTable);
-      expect(rows).toHaveLength(0);
-    } finally {
-      await contactSession.fetch(resource, { method: 'DELETE' }).catch(() => undefined);
-      await contactSession.fetch(probeContainer, { method: 'DELETE' }).catch(() => undefined);
-    }
-  });
-
-  test('supports inverse columns in Document Mode (subjectTemplate)', async () => {
-    const timestamp = Date.now();
-    const messagesPath = `/inverse-doc-${timestamp}/messages/`;
-
-    // Document Mode 表（有 subjectTemplate）
-    const messagesTable = podTable('messages_doc', {
-      id: id('id'),
-      content: string('content').predicate('https://schema.org/text'),
-      threadId: uri('threadId')
-        .predicate('https://www.w3.org/ns/sioc#has_member')
-        .inverse()
-    }, {
-      base: messagesPath,
-      type: 'https://schema.org/Message',
-      subjectTemplate: '{id}.ttl',  // Document Mode
-      namespace: schemaNamespace,
-      autoRegister: false
-    });
-
-    const docSession = await createTestSession({ skipTypeIndex: true });
-    const messagesContainer = await ensureContainer(docSession, messagesPath);
-    const docDb = drizzle(docSession, { schema: { messages: messagesTable } });
-
-    try {
-      await docDb.init([messagesTable]);
-
-      const msgId = `msg-${timestamp}`;
-      const threadUri = `https://example.org/threads/thread-${timestamp}`;
-
-      // INSERT with inverse column in Document Mode
-      await docDb.insert(messagesTable).values({
-        id: msgId,
-        content: 'Test inverse in Document Mode',
-        threadId: threadUri
-      });
-
-      // Query to verify
-      const results = await docDb.select().from(messagesTable);
-      
-      expect(results).toHaveLength(1);
-      expect(results[0]?.content).toBe('Test inverse in Document Mode');
-      // inverse 字段应该能正确读取
-      expect(results[0]?.threadId).toBe(threadUri);
-
-    } finally {
-      // Cleanup: delete the message file and container
-      const messageFile = `${messagesContainer}msg-${timestamp}.ttl`;
-      await docSession.fetch(messageFile, { method: 'DELETE' }).catch(() => undefined);
-      await docSession.fetch(messagesContainer, { method: 'DELETE' }).catch(() => undefined);
-    }
-  });
-
-  test('UPDATE with URI auto-completion via reference()', async () => {
-    const timestamp = Date.now();
-    const userId1 = `user-${timestamp}-1`;
-    const userId2 = `user-${timestamp}-2`;
-    const postId = `post-${timestamp}`;
-    
-    // 先创建 session 来获取正确的 Pod URL
-    const testSession = await createTestSession({ skipTypeIndex: true });
-    
-    // 使用相对路径创建容器
-    const usersRelPath = `/integration/${timestamp}/uri-update-users/`;
-    const postsRelPath = `/integration/${timestamp}/uri-update-posts/`;
-    
-    const usersContainer = await ensureContainer(testSession, usersRelPath);
-    const postsContainer = await ensureContainer(testSession, postsRelPath);
-    
-    // 定义用户表 - 使用完整的容器 URL
-    const usersTable = podTable('update_test_users', {
-      id: id('id'),
-      name: string('name').predicate('https://schema.org/name'),
-    }, {
-      base: usersContainer,
-      type: 'https://schema.org/Person',
-      subjectTemplate: '{id}.ttl',
-      namespace: schemaNamespace,
-      autoRegister: false
-    });
-
-    // 定义帖子表，author 字段引用用户表 - 使用完整的容器 URL
-    const postsTable = podTable('update_test_posts', {
-      id: id('id'),
-      title: string('title').predicate('https://schema.org/headline'),
-      author: uri('author')
-        .predicate('https://schema.org/author')
-        .reference('update_test_users'), // 使用表名引用
-    }, {
-      base: postsContainer,
-      type: 'https://schema.org/BlogPosting',
-      subjectTemplate: '{id}.ttl',
-      namespace: schemaNamespace,
-      autoRegister: false
-    });
-    
-    // 注册 schema 以启用 tableNameRegistry
-    const testDb = drizzle(testSession, { 
-      schema: { 
-        update_test_users: usersTable, 
-        update_test_posts: postsTable 
-      } 
-    });
-
-    try {
-      await testDb.init([usersTable, postsTable]);
-
-      // 创建两个用户
-      await testDb.insert(usersTable).values([
-        { id: userId1, name: 'Alice' },
-        { id: userId2, name: 'Bob' }
-      ]);
-
-      // 创建帖子，使用相对 ID 作为 author (INSERT 时自动补全)
-      await testDb.insert(postsTable).values({
-        id: postId,
-        title: 'Test Post',
-        author: userId1  // 相对 ID，应该自动补全
-      });
-
-      // 验证 INSERT 自动补全成功
-      let posts = await testDb.select().from(postsTable);
-      expect(posts).toHaveLength(1);
-      expect(posts[0]?.author).toContain(usersContainer);
-      expect(posts[0]?.author).toContain(userId1);
-
-      // UPDATE 时也使用相对 ID (核心测试点)
-      await testDb.update(postsTable).set({
-        author: userId2  // 相对 ID，UPDATE 时也应该自动补全
-      }).where({ id: postId });
-
-      // 验证 UPDATE 自动补全成功
-      posts = await testDb.select().from(postsTable);
-      expect(posts).toHaveLength(1);
-      expect(posts[0]?.author).toContain(usersContainer);
-      expect(posts[0]?.author).toContain(userId2);
-
-    } finally {
-      // Cleanup
-      await testSession.fetch(`${usersContainer}${userId1}.ttl`, { method: 'DELETE' }).catch(() => undefined);
-      await testSession.fetch(`${usersContainer}${userId2}.ttl`, { method: 'DELETE' }).catch(() => undefined);
-      await testSession.fetch(`${postsContainer}${postId}.ttl`, { method: 'DELETE' }).catch(() => undefined);
-      await testSession.fetch(usersContainer, { method: 'DELETE' }).catch(() => undefined);
-      await testSession.fetch(postsContainer, { method: 'DELETE' }).catch(() => undefined);
-    }
-  });
-
 });

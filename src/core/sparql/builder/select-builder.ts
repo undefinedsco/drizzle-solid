@@ -4,6 +4,8 @@ import { SelectQueryPlan } from '../../select-plan';
 import { SPARQLQuery } from '../types';
 import { getPredicateForColumn, resolveColumn, formatValue } from '../helpers';
 import { AggregateExpression, isAggregateExpression } from '../../aggregates';
+import { QueryCondition } from '../../query-conditions';
+import { BinaryExpression, LogicalExpression, UnaryExpression, SelectionAliasExpression } from '../../expressions';
 import type { UriResolver } from '../../uri';
 import { UriResolverImpl } from '../../uri';
 import { ExpressionBuilder } from './expression-builder';
@@ -71,6 +73,10 @@ export class SelectBuilder {
       }));
     }
 
+    if (Array.isArray(ast.having) && ast.having.length > 0) {
+      selectQuery.having = ast.having;
+    }
+
     if (ast.distinct) {
       selectQuery.distinct = true;
     }
@@ -109,10 +115,203 @@ export class SelectBuilder {
       offset: plan.offset,
       orderBy: orderByDescriptors,
       groupBy: groupByColumns,
+      having: this.buildHavingExpressions(plan),
       distinct: plan.distinct
     };
 
     return this.convertSelect(ast, plan.baseTable, targetGraph, fromSources, allowGraphVariable);
+  }
+
+  private buildHavingExpressions(plan: SelectQueryPlan): any[] | undefined {
+    if (!plan.having) {
+      return undefined;
+    }
+
+    const expression = this.buildHavingExpression(plan.having, plan.select, plan.baseTable);
+    if (!expression) {
+      return undefined;
+    }
+
+    const prefixLines = Object.entries(this.prefixes)
+      .map(([prefix, uri]) => `PREFIX ${prefix}: <${uri}>`)
+      .join('\n');
+    const groupVars = plan.groupBy?.map((ref) => `?${ref.column}`) ?? [];
+    const selectVars = groupVars.length > 0 ? groupVars.join(' ') : '?subject';
+    const groupByClause = groupVars.length > 0 ? ` GROUP BY ${groupVars.join(' ')}` : '';
+    const dummyQuery = `${prefixLines}\nSELECT ${selectVars} WHERE { ?subject ?predicate ?object . }${groupByClause} HAVING (${expression})`;
+    const parser = new (sparqljs as any).Parser({ skipUngroupedVariableCheck: true });
+    const parsed = parser.parse(dummyQuery);
+    return parsed.having;
+  }
+
+  private buildHavingExpression(
+    condition: QueryCondition,
+    selectFields: SelectQueryPlan['select'],
+    table: PodTable
+  ): string {
+    switch (condition.type) {
+      case 'logical_expr':
+        return this.buildHavingLogicalExpression(condition as LogicalExpression, selectFields, table);
+      case 'unary_expr':
+        return this.buildHavingUnaryExpression(condition as UnaryExpression, selectFields, table);
+      case 'binary_expr':
+        return this.buildHavingBinaryExpression(condition as BinaryExpression, selectFields, table);
+      default:
+        return '';
+    }
+  }
+
+  private buildHavingLogicalExpression(
+    condition: LogicalExpression,
+    selectFields: SelectQueryPlan['select'],
+    table: PodTable
+  ): string {
+    const op = condition.operator === 'OR' ? ' || ' : ' && ';
+    const parts = (condition.expressions ?? [])
+      .map((child) => this.buildHavingExpression(child as QueryCondition, selectFields, table))
+      .filter((value) => value.length > 0);
+
+    if (parts.length === 0) {
+      return '';
+    }
+
+    return `(${parts.join(op)})`;
+  }
+
+  private buildHavingUnaryExpression(
+    condition: UnaryExpression,
+    selectFields: SelectQueryPlan['select'],
+    table: PodTable
+  ): string {
+    const op = condition.operator.toUpperCase();
+    if (op === 'NOT') {
+      const child = this.buildHavingExpression(condition.value as QueryCondition, selectFields, table);
+      return child ? `!(${child})` : '';
+    }
+
+    if (op === 'EXISTS' || op === 'NOT EXISTS') {
+      const expr = `EXISTS { ${String(condition.value)} }`;
+      return op === 'NOT EXISTS' ? `!(${expr})` : expr;
+    }
+
+    const operand = this.buildHavingOperand(condition.value, selectFields, table);
+    if (!operand) {
+      return '';
+    }
+
+    if (op === 'IS NULL') {
+      return `!(BOUND(${operand}))`;
+    }
+    if (op === 'IS NOT NULL') {
+      return `BOUND(${operand})`;
+    }
+
+    return '';
+  }
+
+  private buildHavingBinaryExpression(
+    condition: BinaryExpression,
+    selectFields: SelectQueryPlan['select'],
+    table: PodTable
+  ): string {
+    const left = this.buildHavingOperand(condition.left, selectFields, table);
+    if (!left) {
+      return '';
+    }
+
+    const operator = condition.operator.toUpperCase();
+    if (operator === 'BETWEEN' || operator === 'NOT BETWEEN') {
+      const values = Array.isArray(condition.right) ? condition.right : [];
+      if (values.length !== 2) {
+        return '';
+      }
+      const minValue = this.buildHavingOperand(values[0], selectFields, table);
+      const maxValue = this.buildHavingOperand(values[1], selectFields, table);
+      const expr = `(${left} >= ${minValue} && ${left} <= ${maxValue})`;
+      return operator === 'NOT BETWEEN' ? `!${expr}` : expr;
+    }
+
+    if (operator === 'IN' || operator === 'NOT IN') {
+      const values = Array.isArray(condition.right) ? condition.right : [];
+      const formatted = values.map((value) => this.buildHavingOperand(value, selectFields, table)).join(', ');
+      const expr = `${left} IN (${formatted})`;
+      return operator === 'NOT IN' ? `!(${expr})` : expr;
+    }
+
+    const right = this.buildHavingOperand(condition.right, selectFields, table);
+    if (!right) {
+      return '';
+    }
+
+    return `${left} ${condition.operator} ${right}`;
+  }
+
+  private buildHavingOperand(
+    operand: unknown,
+    selectFields: SelectQueryPlan['select'],
+    table: PodTable
+  ): string {
+    if (operand instanceof SelectionAliasExpression) {
+      return this.buildHavingAliasOperand(operand.alias, selectFields, table);
+    }
+
+    if (typeof operand === 'string' && selectFields && operand in selectFields) {
+      return this.buildHavingAliasOperand(operand, selectFields, table);
+    }
+
+    if (operand instanceof PodColumnBase) {
+      return `?${resolveColumn(operand, table).name}`;
+    }
+
+    if (operand && typeof operand === 'object' && 'name' in (operand as Record<string, unknown>)) {
+      return `?${resolveColumn(operand, table).name}`;
+    }
+
+    if (typeof operand === 'string' && table.columns[operand]) {
+      return `?${resolveColumn(operand, table).name}`;
+    }
+
+    return String(formatValue(operand, undefined, this.uriResolver, this.getUriContext()));
+  }
+
+  private buildHavingAliasOperand(
+    alias: string,
+    selectFields: SelectQueryPlan['select'],
+    table: PodTable
+  ): string {
+    const field = selectFields?.[alias];
+    if (!field) {
+      return `?${alias}`;
+    }
+
+    if (isAggregateExpression(field)) {
+      return this.buildAggregateOperand(field, table);
+    }
+
+    if (field instanceof PodColumnBase || typeof field === 'string' || (field && typeof field === 'object' && 'name' in (field as Record<string, unknown>))) {
+      return `?${resolveColumn(field, table).name}`;
+    }
+
+    return `?${alias}`;
+  }
+
+  private buildAggregateOperand(aggregate: AggregateExpression, table: PodTable): string {
+    const distinct = aggregate.distinct ? 'DISTINCT ' : '';
+    if (!aggregate.column) {
+      return `${aggregate.func.toUpperCase()}(*)`;
+    }
+
+    const column = resolveColumn(aggregate.column, table);
+    return `${aggregate.func.toUpperCase()}(${distinct}?${column.name})`;
+  }
+
+  private getUriContext() {
+    if (!this.tableContext) return undefined;
+    return {
+      baseUri: this.tableContext.baseUri,
+      tableRegistry: this.tableContext.tableRegistry,
+      tableNameRegistry: this.tableContext.tableNameRegistry,
+    };
   }
 
   // Migrated from PodDialect to handle simple object queries
@@ -152,10 +351,10 @@ export class SelectBuilder {
       }
     });
 
-    if (operation.limit) {
+    if (typeof operation.limit === 'number') {
       selectQuery.limit = operation.limit;
     }
-    if (operation.offset) {
+    if (typeof operation.offset === 'number') {
       selectQuery.offset = operation.offset;
     }
     if (operation.orderBy && operation.orderBy.length > 0) {
