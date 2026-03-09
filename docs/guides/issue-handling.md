@@ -1,5 +1,7 @@
 # Issue Handling Guidelines
 
+在开始处理 issue 之前，先按 `docs/guides/issue-triage.md` 判断主归属：代码、文档、工具或决策。
+
 本文档定义了处理用户报告的 Issue 的标准流程和最佳实践。
 
 ## Issue 分析流程

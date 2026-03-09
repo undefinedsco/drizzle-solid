@@ -86,6 +86,17 @@ Context7 的 `Library` 和 `Skills` 不是一回事：
 - 未来 public skills 的默认决策不合理
 - 迁移指南缺失关键场景
 
+## 问题分型规范
+
+在作为权威中心处理外部反馈时，先按 `kind` 分型：
+
+- `kind:code`
+- `kind:docs`
+- `kind:tooling`
+- `kind:decision`
+
+具体规则见 `docs/guides/issue-triage.md`。
+
 ## 推荐 issue 分类
 
 建议使用以下标签进行分流：

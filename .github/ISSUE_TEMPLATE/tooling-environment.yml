@@ -1,0 +1,62 @@
+name: Tooling / Environment Problem
+description: Report install, workflow, CI, local runtime, release, Context7 sync, or developer tooling issues
+title: "[tooling] "
+body:
+  - type: dropdown
+    id: area
+    attributes:
+      label: Main area
+      options:
+        - install / dependencies
+        - local xpod / CSS runtime
+        - tests / examples verification
+        - CI / GitHub Actions
+        - release / publishing
+        - Context7 sync
+        - scripts / developer workflow
+    validations:
+      required: true
+
+  - type: textarea
+    id: problem
+    attributes:
+      label: What is broken?
+      description: Describe the tooling or environment issue.
+      placeholder: yarn test:integration fails because...
+    validations:
+      required: true
+
+  - type: textarea
+    id: environment
+    attributes:
+      label: Environment details
+      description: Share OS, Node/Yarn version, relevant env vars, CI job link, or runtime details.
+      placeholder: macOS 15, Node 20, Yarn 1.22, xpod 0.2.0-preview.2...
+
+  - type: textarea
+    id: reproduction
+    attributes:
+      label: Command or workflow to reproduce
+      description: Share the exact command, workflow run, or setup steps.
+      placeholder: |
+        ```bash
+        yarn quality
+        ```
+    validations:
+      required: true
+
+  - type: textarea
+    id: expected
+    attributes:
+      label: Expected outcome
+      description: Describe the expected successful behavior.
+
+  - type: checkboxes
+    id: checks
+    attributes:
+      label: Before submitting
+      options:
+        - label: I included the exact command, workflow, or setup path that fails
+          required: true
+        - label: I understand tooling issues are tracked in this repository as part of the authoritative support flow
+          required: true

@@ -1,0 +1,62 @@
+name: Runtime / API Bug
+description: Report incorrect library behavior, API bugs, query errors, or type/runtime mismatches
+title: "[bug] "
+body:
+  - type: dropdown
+    id: area
+    attributes:
+      label: Main area
+      options:
+        - core API
+        - query builder
+        - modeling / IRI resolution
+        - migration compatibility
+        - examples behavior
+        - testing behavior
+    validations:
+      required: true
+
+  - type: textarea
+    id: problem
+    attributes:
+      label: What is the incorrect behavior?
+      description: Describe the actual behavior and why you believe it is wrong.
+      placeholder: When I call entity(table, iri).update(...), the library...
+    validations:
+      required: true
+
+  - type: textarea
+    id: expected
+    attributes:
+      label: Expected behavior
+      description: Describe the result you expected from the current public API or docs.
+    validations:
+      required: true
+
+  - type: textarea
+    id: reproduction
+    attributes:
+      label: Minimal reproduction
+      description: Please share the smallest schema + code sample that reproduces the problem.
+      placeholder: |
+        ```ts
+        // schema + query sample
+        ```
+    validations:
+      required: true
+
+  - type: textarea
+    id: docs_ref
+    attributes:
+      label: Related docs or examples
+      description: Optional. Link the README, guide, example, or migration page that led you to this expectation.
+
+  - type: checkboxes
+    id: checks
+    attributes:
+      label: Before submitting
+      options:
+        - label: I checked the current README and guides first
+          required: true
+        - label: I included a minimal reproduction instead of only a stack trace
+          required: true

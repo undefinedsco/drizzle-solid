@@ -1,5 +1,8 @@
 blank_issues_enabled: true
 contact_links:
+  - name: Issue triage guide
+    url: https://github.com/undefinedsco/drizzle-solid/blob/main/docs/guides/issue-triage.md
+    about: Read how we classify code, docs, tooling, and decision issues before filing.
   - name: Context7 & Skills guide
     url: https://github.com/undefinedsco/drizzle-solid/blob/main/docs/guides/context7-and-skills.md
     about: Read the current Context7 publication scope, skills plan, and feedback workflow before filing.

@@ -242,6 +242,7 @@ If you already know `drizzle-orm`, start here:
 - `docs/guides/installation.md` — installation and SPARQL engine setup
 - `docs/guides/migrating-from-drizzle-orm.md` — migration guide for Drizzle users
 - `docs/guides/context7-and-skills.md` — Context7 publication scope, skills plan, and feedback flow
+- `docs/guides/issue-triage.md` — classify code, docs, tooling, and decision issues
 - `examples/README.md` — curated runnable examples
 - `docs/guides/data-discovery.md` — discovery workflows
 - `docs/guides/notifications.md` — notification flows

@@ -1,5 +1,5 @@
 name: Skills / Guidance Feedback
-description: Report missing or incorrect guidance in docs, examples, Context7, or future public skills
+description: Report missing or incorrect guidance in docs, examples, Context7, migration, modeling, or future public skills
 title: "[guidance] "
 body:
   - type: dropdown
