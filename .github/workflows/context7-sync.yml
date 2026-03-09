@@ -20,7 +20,7 @@ jobs:
         with:
           operation: 'refresh'  # 'add' for first time, 'refresh' for updates
           library-name: 'drizzle-solid'
-          library-url: 'https://github.com/Drizzle-Solid/drizzle-solid'
+          library-url: 'https://github.com/undefinedsco/drizzle-solid'
           docs-path: 'docs/'
           examples-path: 'examples/'
         env:

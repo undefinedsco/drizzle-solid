@@ -1,24 +1,30 @@
 // SPARQL query executor using Comunica Solid
-import './comunica-patch'; // 导入 Comunica 兼容性补丁
-import { QueryEngine } from '@comunica/query-sparql-solid';
 import { SPARQLQuery } from '../types/sparql-types';
+import {
+  getConfiguredSparqlEngineFactory,
+  type SPARQLQueryEngine,
+  type SPARQLQueryEngineFactory,
+} from './sparql-engine';
 
 export interface SPARQLExecutorConfig {
   sources: string[];
   fetch?: typeof fetch;
   logging?: boolean;
+  createQueryEngine?: SPARQLQueryEngineFactory;
 }
 
 export class ComunicaSPARQLExecutor {
   protected sources: string[];
   protected fetchFn: typeof fetch;
   protected logging: boolean;
-  private engine: QueryEngine | null = null;
+  private createQueryEngine: SPARQLQueryEngineFactory;
+  private engine: SPARQLQueryEngine | null = null;
 
   constructor(config: SPARQLExecutorConfig) {
     this.sources = [...config.sources];
     this.fetchFn = this.createSafeFetch(config.fetch || fetch);
     this.logging = config.logging || false;
+    this.createQueryEngine = getConfiguredSparqlEngineFactory(config.createQueryEngine);
   }
 
   private formatError(error: unknown): string {
@@ -140,9 +146,9 @@ export class ComunicaSPARQLExecutor {
   }
 
   // Initialize Comunica engine
-  private async initEngine(): Promise<QueryEngine> {
+  private async initEngine(): Promise<SPARQLQueryEngine> {
     if (!this.engine) {
-      this.engine = new QueryEngine();
+      this.engine = await this.createQueryEngine();
     }
     return this.engine;
   }
@@ -216,7 +222,7 @@ export class ComunicaSPARQLExecutor {
   }
 
   // Execute SELECT query
-  private async executeSelectInternal(sparqlQuery: SPARQLQuery, engine: QueryEngine): Promise<any[]> {
+  private async executeSelectInternal(sparqlQuery: SPARQLQuery, engine: SPARQLQueryEngine): Promise<any[]> {
     try {
       // 确保有有效的 sources
       if (this.sources.length === 0) {
@@ -268,7 +274,7 @@ export class ComunicaSPARQLExecutor {
   }
 
   // Execute ASK query
-  private async executeAskInternal(sparqlQuery: SPARQLQuery, engine: QueryEngine): Promise<any[]> {
+  private async executeAskInternal(sparqlQuery: SPARQLQuery, engine: SPARQLQueryEngine): Promise<any[]> {
     try {
       if (this.logging) {
         console.log(`[Comunica] Executing ASK query:`, sparqlQuery.query);
@@ -295,7 +301,7 @@ export class ComunicaSPARQLExecutor {
   }
 
   // Execute UPDATE query (INSERT/UPDATE/DELETE) - 改进版本处理409冲突
-  private async executeUpdate(sparqlQuery: SPARQLQuery, engine: QueryEngine): Promise<any[]> {
+  private async executeUpdate(sparqlQuery: SPARQLQuery, engine: SPARQLQueryEngine): Promise<any[]> {
     try {
       if (this.logging) {
         console.log(`[Simple] Executing ${sparqlQuery.type} query:`, sparqlQuery.query);
@@ -479,7 +485,7 @@ export class ComunicaSPARQLExecutor {
     }
   }
 
-  private async invalidateCache(engine: QueryEngine, source: string | undefined): Promise<void> {
+  private async invalidateCache(engine: SPARQLQueryEngine, source: string | undefined): Promise<void> {
     const invalidate = (engine as unknown as { invalidateHttpCache?: (url?: string) => Promise<void> }).invalidateHttpCache;
     if (typeof invalidate === 'function') {
       try {

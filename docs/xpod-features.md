@@ -146,6 +146,26 @@ const users = podTable('users', {
 });
 ```
 
+如果 `xpod` 和 `drizzle-solid` 在同一进程里，而你不想让应用再单独安装一份 Comunica，可以把 `xpod` 那边的依赖路径注入给 `drizzle-solid`：
+
+```ts
+import { createRequire } from 'node:module';
+import {
+  drizzle,
+  createNodeModuleSparqlEngineFactory,
+} from '@undefineds.co/drizzle-solid';
+
+const requireFromHere = createRequire(import.meta.url);
+
+const db = drizzle(session, {
+  sparql: {
+    createQueryEngine: createNodeModuleSparqlEngineFactory(
+      requireFromHere.resolve('@undefineds.co/xpod/package.json')
+    ),
+  },
+});
+```
+
 ### Sidecar 模式的优势
 
 1. **路径一致性**：SPARQL endpoint 路径与资源路径直接关联，易于理解和使用

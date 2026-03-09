@@ -1,8 +1,9 @@
+import { type DrizzleConfig } from 'drizzle-orm/utils';
 import { PodDatabase } from './core/pod-database';
 import { PodAsyncSession } from './core/pod-session';
 import { PodDialect, type SolidAuthSession, type PodDialectConfig } from './core/pod-dialect';
-import { type DrizzleConfig } from 'drizzle-orm/utils';
 import type { ChannelType } from './core/notifications';
+import type { SPARQLQueryEngineFactory } from './core/sparql-engine';
 
 // Solid Pod 数据库类型
 export type SolidDatabase<TSchema extends Record<string, unknown> = Record<string, never>> = PodDatabase<TSchema>;
@@ -13,6 +14,14 @@ export interface SolidDrizzleConfig<TSchema extends Record<string, unknown> = Re
   notifications?: {
     /** 通道偏好顺序，默认 ['streaming-http', 'websocket'] */
     preferredChannels?: ChannelType[];
+  };
+  /** SPARQL 执行器配置 */
+  sparql?: {
+    /**
+     * 自定义 QueryEngine 工厂。
+     * 可用于复用宿主应用或 xpod 自身安装的 Comunica。
+     */
+    createQueryEngine?: SPARQLQueryEngineFactory;
   };
   /** Disable Solid Interop discovery (optional) */
   disableInteropDiscovery?: boolean;
@@ -36,37 +45,32 @@ export function drizzle<TSchema extends Record<string, unknown> = Record<string,
   session: SolidAuthSession,
   config?: SolidDrizzleConfig<TSchema>
 ): SolidDatabase<TSchema> {
-  // 验证session
   if (!session || !session.info.isLoggedIn) {
     throw new Error('需要有效的已认证Session');
   }
 
-  // 创建PodDialect，传递 notifications 配置
   const dialectConfig: PodDialectConfig = {
     session,
     preferredChannels: config?.notifications?.preferredChannels,
+    createQueryEngine: config?.sparql?.createQueryEngine,
     disableInteropDiscovery: config?.disableInteropDiscovery,
     storageTTL: config?.storageTTL,
     debug: config?.debug,
   };
   const dialect = new PodDialect(dialectConfig);
-  
-  // 可选：自动连接到 Pod
+
   if (config?.autoConnect) {
     dialect.connect().catch(console.error);
   }
-  
-  // 如果有 schema，设置表注册表（用于 URI 引用自动补全）
+
   if (config?.schema) {
     dialect.setSchema(config.schema as Record<string, unknown>);
   }
-  
-  // 创建PodAsyncSession和PodDatabase
+
   const podSession = new PodAsyncSession(dialect);
   return new PodDatabase<TSchema>(dialect, podSession, config?.schema);
 }
 
-// 导出类型
 export type { PodDatabase };
 export { PodDatabase as Database };
 export type { SolidAuthSession };

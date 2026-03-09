@@ -19,6 +19,7 @@ import type { ResourceResolver, ResourceResolverFactoryImpl } from './resource-r
 import { PodRuntime } from './runtime/pod-runtime';
 import { PodServices } from './services/pod-services';
 import { DebugLogger, setGlobalDebugLogger } from './utils/debug-logger';
+import type { SPARQLQueryEngineFactory } from './sparql-engine';
 
 // 最小 Solid Session 接口定义
 export interface SolidAuthSession {
@@ -37,6 +38,7 @@ import type { ChannelType } from './notifications';
 export interface PodDialectConfig {
   session: SolidAuthSession;
   typeIndex?: TypeIndexConfig;
+  createQueryEngine?: SPARQLQueryEngineFactory;
   disableInteropDiscovery?: boolean;
   /**
    * 通知通道偏好顺序，默认 ['streaming-http', 'websocket']
@@ -135,6 +137,7 @@ export class PodDialect {
     this.services = new PodServices({
       runtime: this.runtime,
       clientId,
+      createQueryEngine: config.createQueryEngine,
       disableInteropDiscovery: config.disableInteropDiscovery,
       listContainerResources: (containerUrl) => this.listContainerResources(containerUrl),
       findSubjectsForCondition: (condition, table, resourceUrl) =>
@@ -653,7 +656,8 @@ export class PodDialect {
         const unauthExecutor = new ComunicaSPARQLExecutor({
           sources: [endpoint],
           fetch: fetch, // Use standard fetch without auth
-          logging: false
+          logging: false,
+          createQueryEngine: this.config.createQueryEngine
         });
         return await unauthExecutor.executeQueryWithSource(sparqlQuery, endpoint);
       }

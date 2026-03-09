@@ -1,11 +1,12 @@
 import { ASTToSPARQLConverter } from '../ast-to-sparql';
-import { ComunicaSPARQLExecutor, SolidSPARQLExecutor } from '../sparql-executor';
-import { TypeIndexManager } from '../typeindex-manager';
 import { CompositeDiscovery, InteropDiscovery, TypeIndexDiscovery, type DataDiscovery } from '../discovery';
-import { DrizzleShapeManager, type ShapeManager } from '../shape';
-import { ResourceResolverFactoryImpl } from '../resource-resolver';
-import { ExecutionStrategyFactoryImpl } from '../execution';
 import { LdpExecutor } from '../execution/ldp-executor';
+import { ExecutionStrategyFactoryImpl } from '../execution';
+import { ResourceResolverFactoryImpl } from '../resource-resolver';
+import { DrizzleShapeManager, type ShapeManager } from '../shape';
+import { ComunicaSPARQLExecutor, SolidSPARQLExecutor } from '../sparql-executor';
+import type { SPARQLQueryEngineFactory } from '../sparql-engine';
+import { TypeIndexManager } from '../typeindex-manager';
 import { UriResolverImpl } from '../uri';
 import type { PodTable } from '../schema';
 import type { QueryCondition } from '../query-conditions';
@@ -14,6 +15,7 @@ import type { PodRuntime } from '../runtime/pod-runtime';
 export interface PodServiceOptions {
   runtime: PodRuntime;
   clientId?: string;
+  createQueryEngine?: SPARQLQueryEngineFactory;
   disableInteropDiscovery?: boolean;
   listContainerResources: (containerUrl: string) => Promise<string[]>;
   findSubjectsForCondition: (
@@ -47,6 +49,7 @@ export class PodServices {
       sources: [podUrl],
       fetch: fetchFn,
       logging: false,
+      createQueryEngine: options.createQueryEngine,
     });
 
     this.ldpExecutor = new LdpExecutor(this.sparqlExecutor, fetchFn, this.uriResolver);
@@ -68,6 +71,7 @@ export class PodServices {
       sparqlConverter: this.sparqlConverter,
       sessionFetch: fetchFn,
       podUrl,
+      createQueryEngine: options.createQueryEngine,
       ldpExecutor: this.ldpExecutor,
       uriResolver: this.uriResolver,
       getResolver: (table) => this.resolverFactory.getResolver(table),

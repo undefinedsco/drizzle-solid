@@ -1,112 +1,36 @@
 # drizzle-solid 文档索引
 
-## 🚀 快速开始
+## 快速入口
+- `README.md`：项目定位、能力边界、安装概览
+- `docs/guides/installation.md`：安装、认证、SPARQL 引擎装配
+- `docs/quick-start-local.md`：本地 CSS / xpod 开发路径
+- `docs/api/README.md`：当前公共 API 参考
 
-- [快速开始（本地）](./quick-start-local.md) - 本地开发快速入门
-- [快速开始（CSS）](./quick-start-css.md) - 连接 CSS Pod 服务器
+## 核心指南
+- `docs/guides/concepts.md`：Solid / Pod / subjectTemplate 基础概念
+- `docs/guides/authentication.md`：认证与 Session 使用方式
+- `docs/guides/multi-variable-templates.md`：多变量模板与确定性 mutation 语义
+- `docs/guides/data-discovery.md`：数据发现与互操作能力
+- `docs/guides/testing.md`：测试分层、examples、parity 约定
+- `docs/guides/issue-handling.md`：Issue 复现、修复、回归流程
 
-## 📚 核心概念
+## xpod 与服务能力
+- `docs/xpod-features.md`：xpod 能力矩阵、sidecar SPARQL、迁移建议
+- `docs/guides/css-notifications.md`：Solid Notifications 设计与实现细节
+- `docs/federated-queries.md`：联邦查询说明
 
-### 架构设计
+## 设计与路线
+- `ACTION-PLAN.md`：当前执行计划
+- `docs/PROGRESS.md`：阶段性进展
+- `docs/designs/drizzle-to-sparql.md`：Drizzle → SPARQL 转换设计
+- `docs/designs/xpod-architecture-v2.md`：xpod 相关架构设计
+- `docs/designs/drizzle-solid-v2-roadmap.md`：中长期路线图
 
-- [架构概览](./architecture.md) - 整体架构设计
-- [SPARQL 模式设计](./guides/sparql-mode-design.md) - 包含测试覆盖矩阵
+## 归档
+- `docs/archive/`：历史调研与废弃设计文档
 
-### Resource Mode（资源模式）
-
-- [核心概念 - Subject（Document vs Fragment）](./guides/concepts.md#subjectdocument-vs-fragment) ⭐ **重要**
-  - Fragment 模式：单文件多资源（`/data/tags.ttl#tag-1`）
-  - Document 模式：多文件单资源（`/data/users/alice.ttl`）
-  - `base` 与 `subjectTemplate` 配置详解
-  - 常见配置错误与正确写法
-
-### Execution Mode（执行策略）
-
-- **LDP Mode**: 标准 Solid LDP 协议（默认）
-- **SPARQL Mode**: SELECT 查询增强（需要 xpod）
-
-## 🔧 功能指南
-
-### 数据发现与 SAI
-
-- [数据发现与 SAI 互操作](./guides/data-discovery.md) - 动态发现 Pod 中的数据位置
-  - TypeIndex vs SAI 对比
-  - DataLocation 结构（Container 为中心）
-  - Shape 选择机制
-  - 跨 Pod 数据访问
-
-### SPARQL 模式
-
-- [SPARQL 模式设计](./guides/sparql-mode-design.md) ⭐ **最完整的 SPARQL 模式文档**
-  - 什么是 SPARQL 模式？
-  - 与 LDP 模式的对比
-  - Graph 处理详解
-  - 执行策略路由
-  - 使用场景和最佳实践
-
-### xpod 集成
-
-- [xpod 特性文档](./xpod-features.md) - xpod（扩展 CSS）的功能说明
-  - Quadstore 架构
-  - SPARQL 端点
-  - 性能优化
-  - 迁移指南
-
-### 其他功能
-
-- [CSS Notifications](./guides/css-notifications.md) - Solid Notifications 支持
-- [JOIN 设计](./guides/right-full-join-sparql-design.md) - JOIN 查询实现
-- [Drizzle to SPARQL](./designs/drizzle-to-sparql.md) - SQL → SPARQL 转换
-
-## 📖 开发指南
-
-### 测试
-
-- [测试指南](./guides/testing.md) - 测试分层、parity、examples 与 regression 约定
-- [SPARQL 模式设计 - 测试矩阵](./guides/sparql-mode-design.md#5-测试覆盖矩阵) - 测试覆盖矩阵
-
-### 开发工具
-
-- [Agent 指南](../AGENTS.md) - AI Agent 使用说明
-- [Claude 指南](../CLAUDE.md) - Claude 开发助手
-- [Gemini 指南](../GEMINI.md) - Gemini 开发助手
-
-## 🗃️ 归档文档
-
-历史调研和设计文档：
-
-- [SPARQL 调研结果](./archive/solid-sparql-investigation-results.md)
-- [SPARQL 原生分析](./archive/solid-sparql-native-analysis.md)
-- [SPARQL 原生支持结论](./archive/solid-sparql-native-support-conclusion.md)
-- [SPARQL 现实检查](./archive/solid-sparql-reality-check.md)
-- [SPARQL 结论](./archive/solid-sparql-conclusion.md)
-
-## 🎯 文档导航建议
-
-### 我想了解 SPARQL 模式
-
-1. 从 [SPARQL 模式设计](./guides/sparql-mode-design.md) 开始（最全面）
-2. 如果使用 xpod，阅读 [xpod 特性](./xpod-features.md)
-3. 查看 [测试覆盖矩阵](./guides/sparql-mode-design.md#5-测试覆盖矩阵)
-
-### 我想了解技术实现
-
-1. [架构概览](./architecture.md) - 整体设计
-2. [SPARQL 模式设计](./guides/sparql-mode-design.md) - 执行策略和测试矩阵
-3. [SPARQL 模式设计](./guides/sparql-mode-design.md) - 详细实现
-
-### 我想开发新功能
-
-1. [测试指南](./guides/testing.md) - 如何组织 unit / integration / parity / examples / regression
-2. [测试覆盖矩阵](./guides/sparql-mode-design.md#5-测试覆盖矩阵) - 需要覆盖的场景
-3. 相关的 [Agent 指南](../AGENTS.md)
-
----
-
-## 📝 文档维护
-
-- **核心设计文档**: 位于 `docs/guides/`
-- **快速开始**: 位于 `docs/` 根目录
-- **归档文档**: 位于 `docs/archive/`
-
-如果文档有不清楚的地方，请提 Issue 或 PR！
+## 阅读顺序建议
+- 新用户：`README.md` → `docs/guides/installation.md` → `docs/api/README.md`
+- 做数据建模：`docs/guides/concepts.md` → `docs/guides/multi-variable-templates.md`
+- 做 xpod 集成：`docs/xpod-features.md` → `docs/api/README.md`
+- 做测试与发布：`docs/guides/testing.md` → `ACTION-PLAN.md`

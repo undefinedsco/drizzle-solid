@@ -66,6 +66,14 @@ export {
 // Profile 管理（工具类，可在 hooks 中使用）
 export { ProfileManager } from './core/profile-manager';
 
+export {
+  configureSparqlEngine,
+  createNodeModuleSparqlEngineFactory,
+  type SPARQLEngineConfig,
+  type SPARQLQueryEngine,
+  type SPARQLQueryEngineFactory,
+} from './core/sparql-engine';
+
 // 查询构建器
 export {
   SelectQueryBuilder,

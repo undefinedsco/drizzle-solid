@@ -102,10 +102,26 @@ That means application design starts with questions like:
 ### Install
 
 ```bash
-yarn add @undefineds.co/drizzle-solid
-# or
-npm install @undefineds.co/drizzle-solid
+yarn add @undefineds.co/drizzle-solid drizzle-orm
+# optional, when you want the default LDP/SPARQL client engine in the app
+yarn add @comunica/query-sparql-solid
 ```
+
+```bash
+# or with npm
+npm install @undefineds.co/drizzle-solid drizzle-orm
+npm install @comunica/query-sparql-solid
+```
+
+`@comunica/query-sparql-solid` is now an **optional peer dependency**.
+
+Install it directly in the consuming app when you use LDP-backed query resolution, raw `executeSPARQL()`, or other flows that need the built-in SPARQL client. If you already ship that engine elsewhere (for example through `xpod`), inject it instead of forcing a second copy.
+
+Current compatibility stance:
+
+- **Officially supported**: `@comunica/query-sparql-solid` **4.x**
+- **Not currently part of the public support matrix**: `3.x`
+- The codebase contains a few compatibility shims for different binding shapes, but we should not advertise `3.x` as supported until we add an explicit test matrix and widen the peer range.
 
 > In this repository, the examples import `drizzle-solid` through a local TypeScript path alias. In external applications, import the published package name: `@undefineds.co/drizzle-solid`.
 
@@ -263,7 +279,29 @@ On plain CSS, `drizzle-solid` keeps working, but many queries are resolved throu
 
 `xpod` adds a Solid-compatible SPARQL sidecar and is the recommended development/runtime target when you want stronger query pushdown and a lower-friction local setup.
 
-See `docs/xpod-features.md` for more detail.
+If `xpod` already carries its own Comunica stack, you can point `drizzle-solid` at that copy instead of installing another one in the app:
+
+```ts
+import { createRequire } from 'node:module';
+import {
+  drizzle,
+  createNodeModuleSparqlEngineFactory,
+} from '@undefineds.co/drizzle-solid';
+
+const requireFromHere = createRequire(import.meta.url);
+
+const db = drizzle(session, {
+  sparql: {
+    createQueryEngine: createNodeModuleSparqlEngineFactory(
+      requireFromHere.resolve('@undefineds.co/xpod/package.json')
+    ),
+  },
+});
+```
+
+The same factory can also be registered globally via `configureSparqlEngine(...)` when you want one process-wide default.
+
+See `docs/xpod-features.md` and `docs/api/README.md` for more detail.
 
 ## Verified examples
 
@@ -290,20 +328,22 @@ Current supported surface includes:
 
 - CRUD builders: `select`, `insert`, `update`, `delete`
 - Read-oriented query facade: `db.query.*.findMany`, `findFirst`, `findById`, `findByIRI`, `count`
+- Exact-target APIs: `findByIri`, `updateByIri`, `deleteByIri`, `subscribeByIri`
 - Conditions: `eq`, `ne`, `gt`, `gte`, `lt`, `lte`, `like`, `ilike`, `inArray`, `exists`, `and`, `or`, `not`
-- Query features: joins, ordering, limits, offsets, distinct
-- Aggregations: `count`, `sum`, `avg`, `min`, `max`
+- Query features: joins, ordering, limits, offsets, distinct, aggregation helpers
+- Builder inspection via `toSPARQL()` / `toSparql()`
+- Raw **SPARQL** workflows through `execute()` / `executeSPARQL()` where you need explicit graph-native control
 - Batch and `returning()` support where implemented by the dialect
-- Raw **SPARQL** workflows where you need explicit graph-native control
 
 Not the mainline contract:
 
+- `toSQL()` compatibility aliases
 - raw SQL as the primary abstraction
 - transaction semantics identical to SQL databases
 - implicit scan-based `updateMany/deleteMany` on backends that do not support set-based mutation
 - driver-specific DDL, auto-increment, foreign keys, or SQL engine behaviors
 
-The migration goal is API familiarity with low migration cost, but the execution model remains Solid/SPARQL-native rather than semantics-faking SQL emulation.
+The migration goal is API familiarity with low migration cost, but the execution model remains Solid/SPARQL-native rather than semantics-faking SQL emulation. See `docs/api/README.md` for the current public surface and runtime wiring options.
 
 ## Discovery, interoperability, and federation
 
@@ -329,6 +369,7 @@ Useful starting points:
 - `docs/quick-start-local.md` — local setup guide
 - `docs/guides/data-discovery.md` — discovery workflows
 - `docs/guides/issue-handling.md` — issue reproduction and regression workflow
+- `docs/api/README.md` — public API and runtime wiring reference
 - `docs/guides/testing.md` — test conventions and coverage strategy
 - `ACTION-PLAN.md` — current parity and implementation plan
 
