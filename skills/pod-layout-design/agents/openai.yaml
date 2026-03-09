@@ -1,0 +1,6 @@
+interface:
+  display_name: "Pod Layout Design"
+  short_description: "Choose base paths, subjectTemplate, and IRI layout"
+  default_prompt: "Use $pod-layout-design to propose a base path and subjectTemplate for this Solid data model."
+policy:
+  allow_implicit_invocation: true

@@ -1,0 +1,6 @@
+interface:
+  display_name: "drizzle-solid Testing"
+  short_description: "Place tests in the right layer with durable proof"
+  default_prompt: "Use $drizzle-solid-testing to decide where this drizzle-solid behavior should be tested."
+policy:
+  allow_implicit_invocation: true

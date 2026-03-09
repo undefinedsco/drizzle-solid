@@ -1,0 +1,6 @@
+interface:
+  display_name: "drizzle-solid Migration"
+  short_description: "Translate Drizzle habits to Solid-native patterns"
+  default_prompt: "Use $drizzle-solid-migration to convert this Drizzle-style code into current drizzle-solid patterns."
+policy:
+  allow_implicit_invocation: true

@@ -243,6 +243,7 @@ If you already know `drizzle-orm`, start here:
 - `docs/guides/migrating-from-drizzle-orm.md` — migration guide for Drizzle users
 - `docs/guides/context7-and-skills.md` — Context7 publication scope, skills plan, and feedback flow
 - `docs/guides/issue-triage.md` — classify code, docs, tooling, and decision issues
+- `skills/README.md` — canonical public skill pack source for future Context7 Skills publishing
 - `examples/README.md` — curated runnable examples
 - `docs/guides/data-discovery.md` — discovery workflows
 - `docs/guides/notifications.md` — notification flows
