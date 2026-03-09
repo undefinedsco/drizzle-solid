@@ -252,7 +252,7 @@ export class PodDialect {
     this.ldpExecutor.setTableRegistry(tableRegistry, tableNameRegistry);
     this.ldpExecutor.setBaseUri(this.podUrl);
     
-    // Also set table registry for SPARQL converter (for reference URI resolution in queries)
+    // Also set table registry for SPARQL converter (for link URI resolution in queries)
     this.sparqlConverter.setTableRegistry(tableRegistry, tableNameRegistry, this.podUrl);
   }
 

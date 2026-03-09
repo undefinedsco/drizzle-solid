@@ -7,7 +7,7 @@
  * 3. 设计理念和最佳实践
  */
 
-import { drizzle, podTable, string, datetime, eq, and } from 'drizzle-solid';
+import { pod, podTable, string, datetime, eq, and } from 'drizzle-solid';
 import { Session } from '@inrupt/solid-client-authn-node';
 import { config as loadEnv } from 'dotenv';
 import { v4 as uuid } from 'uuid';
@@ -29,7 +29,7 @@ async function getAuthenticatedSession(): Promise<Session> {
     clientId,
     clientSecret,
     oidcIssuer,
-    tokenType: 'DPoP'
+    tokenType: 'DPoP',
   });
 
   if (!session.info.isLoggedIn) {
@@ -40,7 +40,9 @@ async function getAuthenticatedSession(): Promise<Session> {
 }
 
 function getPodBaseUrl(session: Session): string {
-  if (!session.info.webId) throw new Error('No WebID');
+  if (!session.info.webId) {
+    throw new Error('No WebID');
+  }
   return session.info.webId.split('profile')[0];
 }
 
@@ -49,11 +51,6 @@ async function run(providedSession?: Session) {
   const podBase = getPodBaseUrl(session);
   console.log(`Connected to Pod: ${podBase}`);
 
-  // 定义 Message 表，使用多变量模板按 chatId 分区
-  // 存储结构：
-  // /data/chats/
-  //   /chat-1/messages.ttl  <- chat-1 的所有消息
-  //   /chat-2/messages.ttl  <- chat-2 的所有消息
   const Message = podTable('Message', {
     id: string('id').primaryKey(),
     chatId: string('chatId').predicate('http://example.org/chatId'),
@@ -61,85 +58,81 @@ async function run(providedSession?: Session) {
     timestamp: datetime('timestamp').predicate('http://schema.org/dateCreated'),
   }, {
     base: `${podBase}data/chats/`,
-    subjectTemplate: '{chatId}/messages.ttl#{id}',  // 多变量模板
-    type: 'http://schema.org/Message'
+    subjectTemplate: '{chatId}/messages.ttl#{id}',
+    type: 'http://schema.org/Message',
   });
 
-  const db = drizzle(session);
-  await db.init([Message]);
+  const client = pod(session);
+  await client.init(Message);
+
+  const messages = client.collection(Message);
 
   console.log('\n=== 1. 插入数据到不同的 chat ===');
 
-  // 插入 chat-1 的消息
   const msg1Id = uuid();
-  await db.insert(Message).values({
+  await messages.create({
     id: msg1Id,
     chatId: 'chat-1',
     content: 'Hello from chat 1',
-    timestamp: new Date('2024-03-04T10:00:00Z')
+    timestamp: new Date('2024-03-04T10:00:00Z'),
   });
   console.log(`✅ Inserted message to chat-1: ${msg1Id}`);
 
   const msg2Id = uuid();
-  await db.insert(Message).values({
+  await messages.create({
     id: msg2Id,
     chatId: 'chat-1',
     content: 'Second message in chat 1',
-    timestamp: new Date('2024-03-04T10:05:00Z')
+    timestamp: new Date('2024-03-04T10:05:00Z'),
   });
   console.log(`✅ Inserted message to chat-1: ${msg2Id}`);
 
-  // 插入 chat-2 的消息
   const msg3Id = uuid();
-  await db.insert(Message).values({
+  await messages.create({
     id: msg3Id,
     chatId: 'chat-2',
     content: 'Hello from chat 2',
-    timestamp: new Date('2024-03-04T10:10:00Z')
+    timestamp: new Date('2024-03-04T10:10:00Z'),
   });
   console.log(`✅ Inserted message to chat-2: ${msg3Id}`);
 
   console.log('\n=== 2. 查询方式 1: 提供部分变量（查询某个 chat 的所有消息）===');
-  const chat1Messages = await db.select()
-    .from(Message)
-    .where(eq(Message.chatId, 'chat-1'));
+  const chat1Messages = await messages.list({
+    where: eq(Message.chatId, 'chat-1'),
+  });
 
   console.log(`Found ${chat1Messages.length} messages in chat-1:`);
-  chat1Messages.forEach(msg => {
+  chat1Messages.forEach((msg) => {
     console.log(`  - [${msg.timestamp}] ${msg.content}`);
   });
 
   console.log('\n=== 3. 查询方式 2: 提供所有变量（精确查询）===');
-  const exactMessage = await db.select()
-    .from(Message)
-    .where(
-      and(
-        eq(Message.id, msg1Id),
-        eq(Message.chatId, 'chat-1')
-      )
-    );
+  const exactMessage = await messages.list({
+    where: and(
+      eq(Message.id, msg1Id),
+      eq(Message.chatId, 'chat-1'),
+    ),
+    limit: 1,
+  });
 
-  console.log(`Found exact message:`);
+  console.log('Found exact message:');
   console.log(`  - ID: ${exactMessage[0].id}`);
   console.log(`  - Content: ${exactMessage[0].content}`);
 
   console.log('\n=== 4. 查询方式 3: 使用完整 URI（最高效）===');
-  // 构造完整 URI（实际场景中通常从通知、链接等获取）
   const fullUri = `${podBase}data/chats/chat-1/messages.ttl#${msg1Id}`;
   console.log(`Querying with full URI: ${fullUri}`);
 
-  const messageByUri = await db.select()
-    .from(Message)
-    .where(eq(Message.id, fullUri));
+  const messageByUri = await client.entity(Message, fullUri).get();
 
-  console.log(`Found message by URI:`);
-  console.log(`  - Content: ${messageByUri[0].content}`);
+  console.log('Found message by URI:');
+  console.log(`  - Content: ${messageByUri?.content}`);
 
   console.log('\n=== 5. 错误示例：只提供短 id（会报错）===');
   try {
-    await db.select()
-      .from(Message)
-      .where(eq(Message.id, msg1Id));
+    await messages.list({
+      where: eq(Message.id, msg1Id),
+    });
     console.log('❌ Should have thrown an error');
   } catch (error: any) {
     console.log('✅ Expected error:');
@@ -152,13 +145,8 @@ async function run(providedSession?: Session) {
   console.log('3. 部分变量查询：O(n) - 扫描子容器');
   console.log('4. 缺少变量时报错：避免意外的全容器扫描');
   console.log('\n详细文档：docs/guides/multi-variable-templates.md');
-
-  // 清理（可选）
-  // await db.delete(Message).where(eq(Message.chatId, 'chat-1'));
-  // await db.delete(Message).where(eq(Message.chatId, 'chat-2'));
 }
 
-// 仅在直接运行时执行
 if (require.main === module) {
   run().catch(console.error);
 }

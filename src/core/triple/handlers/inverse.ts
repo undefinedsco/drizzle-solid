@@ -38,12 +38,12 @@ export class InverseHandler implements ColumnHandler {
   }
 
   formatValue(value: unknown, column: PodColumnBase, context?: BuildContext): RdfTerm {
-    // 如果是 URI 引用类型，使用 UriResolver 解析
-    if (column.options?.referenceTarget || column.dataType === 'uri' || column.isReference?.()) {
+    // 如果是 URI 链接类型，使用 UriResolver 解析
+    if (column.options?.linkTarget || column.dataType === 'uri' || column.isLink?.()) {
       const uri = String(value);
       const uriContext = this.toUriContext(context);
       const resolver = context?.uriResolver ?? new UriResolverImpl();
-      const resolved = resolver.resolveReference(uri, column, uriContext);
+      const resolved = resolver.resolveLink(uri, column, uriContext);
 
       return {
         termType: 'NamedNode',
@@ -59,7 +59,7 @@ export class InverseHandler implements ColumnHandler {
       };
     }
 
-    // 如果不是引用，作为普通字面量
+    // 如果不是链接列，作为普通字面量
     return {
       termType: 'Literal',
       value: String(value),

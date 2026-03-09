@@ -38,7 +38,7 @@ const threadTable = podTable('threads', {
     .array()
     .predicate('https://www.w3.org/ns/sioc#has_member')
     .inverse()
-    .reference('https://schema.org/Message')
+    .link('https://schema.org/Message')
 }, {
   base: 'idp:///threads.ttl',
   type: 'https://schema.org/Conversation',

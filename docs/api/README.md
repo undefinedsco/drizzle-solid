@@ -1,12 +1,40 @@
 # API 参考
 
-这份文档描述当前对外推荐的 `drizzle-solid` 公共 API，以及和 Drizzle 对齐时需要注意的 Solid 语义边界。
+这份文档描述当前推荐的 `drizzle-solid` 公共 API。
 
-## 入口
+新的重点不是强推新的构造函数名字，而是把语义讲清楚：
+
+- Resource / Document / Entity / IRI
+- Link 而不是 SQL foreign-key 心智
+- list/filter 读取 与 exact-target mutation 的区分
+- SPARQL 而不是 raw SQL 的 escape hatch
+
+仓库文档与 examples 默认先展示 semantic-first surface（`pod()` / `collection()` / `entity()`），再补充 Drizzle-shaped surface。
+
+## 构造入口
+
+### `pod(session, config?)`
+
+`pod()` 是建立在同一运行时之上的语义优先 façade。
+
+仓库里的新文档和 examples 默认用它来表达这些对象：
+
+- `collection(table)`
+- `entity(table, iri)`
+- `bind(schema, options)`
+
+```ts
+import { pod } from '@undefineds.co/drizzle-solid';
+
+const client = pod(session, {
+  schema,
+  autoConnect: false,
+});
+```
 
 ### `drizzle(session, config?)`
 
-创建数据库实例。
+这是同一运行时上的 Drizzle-aligned 标准构造入口。
 
 ```ts
 import { drizzle } from '@undefineds.co/drizzle-solid';
@@ -14,7 +42,6 @@ import { drizzle } from '@undefineds.co/drizzle-solid';
 const db = drizzle(session, {
   schema,
   autoConnect: false,
-  debug: false,
   sparql: {
     createQueryEngine,
   },
@@ -22,7 +49,7 @@ const db = drizzle(session, {
 ```
 
 常用配置：
-- `schema`: 传入表注册表，启用 `db.query.<table>` facade 和引用补全
+- `schema`: 传入表注册表，启用 link 解析和 Drizzle-shaped 查询层
 - `autoConnect`: 是否自动连接 Pod
 - `debug`: 输出调试日志
 - `sparql.createQueryEngine`: 注入自定义 SPARQL QueryEngine 工厂
@@ -30,74 +57,136 @@ const db = drizzle(session, {
 
 ### `solid({ webId, fetch })`
 
-为轻量场景创建 inline session，不依赖 Inrupt `Session` 实例：
+这是轻量 inline session helper，用于先构造一个最小 Solid session：
 
 ```ts
-import { solid, drizzle } from '@undefineds.co/drizzle-solid';
+import { pod, solid } from '@undefineds.co/drizzle-solid';
 
 const session = solid({
   webId: 'https://alice.example/profile/card#me',
   fetch: authenticatedFetch,
 });
 
-const db = drizzle(session);
+const client = pod(session);
 ```
 
 ## 建模
 
 ### `podTable(name, columns, config)`
 
-推荐的建模入口。关键配置：
+当前仍然是主要建模入口。
+
+关键配置：
 - `base`: 资源文件或容器路径
 - `subjectTemplate`: subject 生成模板
 - `type`: RDF class IRI
 - `namespace`: 可选命名空间配置
 - `sparqlEndpoint`: 显式指定 sidecar endpoint
 
-### `solidSchema(...)` + `db.createTable(...)`
+列级链接字段统一写成 `uri(...).link(target)`。
 
-适合复用 schema、把布局绑定延后到运行时的场景。
+### `solidSchema(...)`
 
-## 查询与写入
+适合定义可复用 schema。
 
-### CRUD builders
+如果你使用 `pod()` façade：
 
-主线 API：
+```ts
+const profileTable = client.bind(profileSchema, {
+  base: 'https://alice.example/profile/card',
+});
+```
+
+如果你保持 `drizzle()` 入口：
+
+```ts
+const profileTable = db.createTable(profileSchema, {
+  base: 'https://alice.example/profile/card',
+});
+```
+
+## Drizzle-shaped surface
+
+如果你保持 Drizzle 风格 builder / query 代码形状，这一层仍然是正式支持的公共 API。
+
+### Query builders
+
+当前仍支持：
 - `db.select()`
-- `db.insert(table)`
-- `db.update(table)`
-- `db.delete(table)`
+- `db.insert()`
+- `db.update()`
+- `db.delete()`
 
-支持的常见能力：
-- `where(...)`
-- `limit(...)` / `offset(...)`
-- `orderBy(...)`
-- `leftJoin(...)` / `innerJoin(...)` 等 join builder
-- `count` / `sum` / `avg` / `min` / `max`
-- `returning()`（仅在当前方言实现处可用）
+### Read facade
 
-### `db.query.<table>` facade
+当前仍支持：
+- `db.query.<table>`
+- `findMany`
+- `findFirst`
+- `findById`
+- `findByIri`
+- `count`
 
-这是一个 **读导向** facade，当前推荐用法包括：
-- `findMany(...)`
-- `findFirst(...)`
-- `findById(...)`
-- `findByIRI(...)`（兼容入口）
-- `count(...)`
+这部分能力是 **读导向 facade**，不应该被理解成“所有 SQL 语义都成立”。
 
-注意：`db.query.*` 不承诺隐式扫描式 `updateMany/deleteMany`。
+## Semantic-first surface
 
-## IRI-first API
+### `client.collection(table)`
 
-对于详情页、远端资源、共享资源、精确变更目标，优先使用显式 IRI API：
-- `db.findByIri(table, iri)`
-- `db.updateByIri(table, iri, data)`
-- `db.deleteByIri(table, iri)`
-- `db.subscribeByIri(table, iri, options)`
+Collection 表达“一个模型在某个 Pod 布局下的可枚举实体集合”。
 
-这是当前推荐的单实体精确操作方式。
+支持：
+- `list(options?)`
+- `first(options?)`
+- `create(record)` / `createMany(records)`
+- `subscribe(options)`
+- `iriFor(record)`
+- `byIri(iri)` / `entity(iri)`
+- `select(fields?)`
+
+### `client.entity(table, iri)`
+
+Entity 表达“一个由完整 IRI 唯一标识的实体”。
+
+支持：
+- `get()` / `read()`
+- `update(data)`
+- `delete()`
+- `subscribe(options)`
+- `documentUrl`
+- `fragment`
+
+这组 helper 的价值是把“集合读取”和“精确实体目标”显式写在代码里。
+
+## Discovery / Federation helpers
+
+如果你使用 `pod()` façade，还可以直接通过 `client` 访问：
+
+- `client.discovery.discover(...)`
+- `client.locationToTable(location, options?)`
+- `client.discoverTablesFor(rdfClass, options?, tableOptions?)`
+- `client.query`
+- `client.getLastFederatedErrors()`
+
+如果你使用 `drizzle()`，对应能力仍然在 `db` 上可用。
 
 ## SPARQL API
+
+### `client.sparql(query)` / `db.executeSPARQL(query)`
+
+显式 SPARQL 入口：
+
+```ts
+await db.executeSPARQL(`SELECT ?s WHERE { ?s ?p ?o } LIMIT 10`);
+```
+
+或者：
+
+```ts
+await client.sparql(`SELECT ?s WHERE { ?s ?p ?o } LIMIT 10`);
+```
+
+这是图查询 escape hatch，**只接受 SPARQL，不接受 raw SQL**。
 
 ### Builder 输出
 
@@ -107,92 +196,36 @@ const db = drizzle(session);
 
 当前 **不再提供** `toSQL()` 兼容别名。
 
-### 直接执行
-
-```ts
-await db.executeSPARQL(`SELECT ?s WHERE { ?s ?p ?o } LIMIT 10`);
-```
-
-或：
-
-```ts
-await db.execute(`ASK { ?s ?p ?o }`);
-```
-
-这里的 `execute()` 是 `executeSPARQL()` 的别名，**只接受 SPARQL，不接受 raw SQL**。
-
-## SPARQL 引擎装配
-
-### 默认模式
-
-如果应用本身安装了 `@comunica/query-sparql-solid`，库会按默认方式懒加载它。
-
-当前公共兼容口径：
-- 官方支持 `@comunica/query-sparql-solid` `4.x`
-- `3.x` 暂不纳入正式支持矩阵
-
-### 实例级注入
-
-```ts
-const db = drizzle(session, {
-  sparql: {
-    createQueryEngine: async () => {
-      const { QueryEngine } = await import('@comunica/query-sparql-solid');
-      return new QueryEngine();
-    },
-  },
-});
-```
-
-### 复用 `xpod` 自带依赖
-
-```ts
-import { createRequire } from 'node:module';
-import {
-  drizzle,
-  createNodeModuleSparqlEngineFactory,
-} from '@undefineds.co/drizzle-solid';
-
-const requireFromHere = createRequire(import.meta.url);
-
-const db = drizzle(session, {
-  sparql: {
-    createQueryEngine: createNodeModuleSparqlEngineFactory(
-      requireFromHere.resolve('@undefineds.co/xpod/package.json')
-    ),
-  },
-});
-```
-
-### 进程级默认配置
-
-```ts
-import {
-  configureSparqlEngine,
-  createNodeModuleSparqlEngineFactory,
-} from '@undefineds.co/drizzle-solid';
-
-configureSparqlEngine({
-  createQueryEngine: createNodeModuleSparqlEngineFactory('/absolute/path/to/package.json'),
-});
-```
-
 ## 语义边界
 
-### 读和写的 `where(...)` 语义不同
+### 读和写的目标解析不同
 
-- 读查询可以承载 list/filter 语义
-- 写操作默认要求 deterministic target
+- list/filter 读取可以保持 collection-oriented
+- 写入应该优先 exact-target semantics
 - 信息不足时不会静默退化成 scan + mutate
 
-如果 `subjectTemplate` 需要多个变量才能唯一定位 subject，而 `where(...)` 没提供足够信息，推荐：
-- 补齐模板变量
-- 或改用 `db.updateByIri()` / `db.deleteByIri()`
+如果 `subjectTemplate` 需要多个变量才能唯一定位 subject，就不要把 mutation 建立在模糊 `where(...)` 之上；优先显式使用 IRI。
 
-### 不承诺的能力
+## 什么时候该用哪个入口
+
+### 用 `pod()` façade
+
+适合：
+- 你想把集合读取和精确实体操作写得更显式
+- 你希望 `collection()` / `entity()` / `bind()` 这些名字直接出现在代码里
+- 你在写新的业务代码，或希望统一团队的 Solid 语义表达
+
+### 继续用 `drizzle()`
+
+适合：
+- 你已经大量使用 Drizzle 风格 builder
+- 你想先保留原来的代码形状
+- 你当前更关心迁移成本，而不是 API 组织方式
+
+## 不承诺的能力
 
 当前不把以下能力当作稳定主线契约：
-- raw SQL / `sql`` fragment` 兼容层
+- raw SQL / `sql`` fragment` surface
 - `toSQL()`
 - 隐式扫描式 `updateMany/deleteMany`
 - 与关系数据库完全一致的事务、DDL、自增、外键语义
@@ -201,5 +234,6 @@ configureSparqlEngine({
 
 - `README.md`
 - `docs/guides/installation.md`
+- `docs/guides/migrating-from-drizzle-orm.md`
 - `docs/guides/multi-variable-templates.md`
 - `docs/xpod-features.md`

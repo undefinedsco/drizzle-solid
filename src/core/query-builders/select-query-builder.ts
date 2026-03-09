@@ -352,7 +352,7 @@ export class SelectQueryBuilder<TTable extends PodTable<any> = PodTable<any>> {
       return { table, alias, column };
     }
 
-    throw new Error('Unsupported column reference type');
+    throw new Error('Unsupported column link type');
   }
 
   private parseColumnReferenceString(reference: string): { alias?: string; column: string } {
@@ -650,7 +650,7 @@ export class SelectQueryBuilder<TTable extends PodTable<any> = PodTable<any>> {
       if (this.selectedTable) {
         finalRows = await this.hydrateInlineColumns(finalRows, this.selectedTable, !hasJoins);
         // 处理引用字段：将 URI 转换回 ID
-        finalRows = this.resolveReferenceIds(finalRows, this.selectedTable);
+        finalRows = this.resolveLinkIds(finalRows, this.selectedTable);
       }
 
       if (hasJoins) {
@@ -1312,17 +1312,17 @@ export class SelectQueryBuilder<TTable extends PodTable<any> = PodTable<any>> {
   /**
    * 处理引用字段：将 URI 转换回简单 ID
    * 
-   * 对于配置了 .reference() 的列，将存储的完整 URI 转换回用户友好的 ID
+   * 对于配置了 .link() 的列，将存储的完整 URI 转换回用户友好的 ID
    * 例如：http://pod/.data/chat/chat-123/index.ttl#this -> chat-123
    */
-  private resolveReferenceIds(rows: Record<string, any>[], table: PodTable<any>): Record<string, any>[] {
+  private resolveLinkIds(rows: Record<string, any>[], table: PodTable<any>): Record<string, any>[] {
     if (!rows.length) return rows;
 
-    // 找出所有引用列
+    // 找出所有链接列
     const columns = Object.values(table.columns ?? {}) as PodColumnBase[];
-    const referenceColumns = columns.filter(col => col.isReference?.());
+    const linkColumns = columns.filter(col => col.isLink?.());
 
-    if (referenceColumns.length === 0) return rows;
+    if (linkColumns.length === 0) return rows;
 
     // 获取 URI 解析器和上下文
     const dialect = this.session.getDialect?.();
@@ -1338,7 +1338,7 @@ export class SelectQueryBuilder<TTable extends PodTable<any> = PodTable<any>> {
     return rows.map(row => {
       const result = { ...row };
       
-      for (const col of referenceColumns) {
+      for (const col of linkColumns) {
         const value = row[col.name];
         if (!value) continue;
 
@@ -1346,12 +1346,12 @@ export class SelectQueryBuilder<TTable extends PodTable<any> = PodTable<any>> {
         if (Array.isArray(value)) {
           result[col.name] = value.map(v => {
             if (typeof v === 'string') {
-              return resolver.extractReferenceId(v, col, uriContext);
+              return resolver.extractLinkId(v, col, uriContext);
             }
             return v;
           });
         } else if (typeof value === 'string') {
-          result[col.name] = resolver.extractReferenceId(value, col, uriContext);
+          result[col.name] = resolver.extractLinkId(value, col, uriContext);
         }
       }
 

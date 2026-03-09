@@ -43,7 +43,7 @@ export class ColumnBuilder<
 
   private formatSingleValue(value: any): string {
     const effectiveType = this.options.isArray && this.elementType ? this.elementType : this.dataType;
-    if (this.options.referenceTarget && typeof value === 'string') {
+    if (this.options.linkTarget && typeof value === 'string') {
       return `<${value}>`;
     }
 
@@ -143,15 +143,15 @@ export class ColumnBuilder<
     return this as unknown as ColumnBuilder<TType, TElement, TNotNull, THasDefault>;
   }
 
-  reference(target: string | any): ColumnBuilder<TType, TElement, TNotNull, THasDefault> {
+  link(target: string | any): ColumnBuilder<TType, TElement, TNotNull, THasDefault> {
     if (typeof target === 'string') {
       if (target.startsWith('http://') || target.startsWith('https://')) {
-        this.options = { ...this.options, referenceTarget: target };
+        this.options = { ...this.options, linkTarget: target };
       } else {
-        this.options = { ...this.options, referenceTableName: target };
+        this.options = { ...this.options, linkTableName: target };
       }
     } else {
-      this.options = { ...this.options, referenceTable: target };
+      this.options = { ...this.options, linkTable: target };
     }
     return this as unknown as ColumnBuilder<TType, TElement, TNotNull, THasDefault>;
   }
@@ -196,20 +196,20 @@ export abstract class PodColumnBase<
     throw new Error(`Missing predicate for column "${this.name}"; please set namespace or predicate explicitly.`);
   }
 
-  isReference(): boolean {
-    return !!(this.options.referenceTarget || this.options.referenceTableName || this.options.referenceTable);
+  isLink(): boolean {
+    return !!(this.options.linkTarget || this.options.linkTableName || this.options.linkTable);
   }
 
-  getReferenceTarget(): string | undefined {
-    return this.options.referenceTarget;
+  getLinkTarget(): string | undefined {
+    return this.options.linkTarget;
   }
 
-  getReferenceTableName(): string | undefined {
-    return this.options.referenceTableName;
+  getLinkTableName(): string | undefined {
+    return this.options.linkTableName;
   }
 
-  getReferenceTable(): any | undefined {
-    return this.options.referenceTable;
+  getLinkTable(): any | undefined {
+    return this.options.linkTable;
   }
 
   primaryKey(): this {
@@ -235,15 +235,15 @@ export abstract class PodColumnBase<
     return this;
   }
 
-  reference(target: string | any): this {
+  link(target: string | any): this {
     if (typeof target === 'string') {
       if (target.startsWith('http://') || target.startsWith('https://')) {
-        this.options.referenceTarget = target;
+        this.options.linkTarget = target;
       } else {
-        this.options.referenceTableName = target;
+        this.options.linkTableName = target;
       }
     } else {
-      this.options.referenceTable = target;
+      this.options.linkTable = target;
     }
     return this;
   }
@@ -273,7 +273,7 @@ export abstract class PodColumnBase<
   }
 
   protected formatSingleValue(value: any): string {
-    if (this.options.referenceTarget && typeof value === 'string') {
+    if (this.options.linkTarget && typeof value === 'string') {
       return `<${value}>`;
     }
 

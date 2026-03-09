@@ -68,7 +68,7 @@ const publishers = podTable('publishers', {
 ### 3. 联邦搜索实现
 
 ```typescript
-import { drizzle, FederatedQueryExecutor } from 'drizzle-solid';
+import { pod, drizzle, FederatedQueryExecutor } from 'drizzle-solid';
 
 class DecentralizedRegistry {
   private executor: FederatedQueryExecutor;
@@ -84,10 +84,11 @@ class DecentralizedRegistry {
   // 从种子节点获取已知发布者列表
   async discoverPublishers(seedNodes: string[]): Promise<void> {
     for (const seed of seedNodes) {
-      const db = drizzle(this.session, { 
+      const client = pod(this.session, { 
         schema: { publishers },
         base: seed,
       });
+      const db = client.asDrizzle();
       const pubs = await db.query.publishers.findMany();
       this.knownPublishers.push(...pubs.map(p => p.webId));
     }
@@ -101,10 +102,11 @@ class DecentralizedRegistry {
     const promises = this.knownPublishers.map(async (webId) => {
       try {
         const podBase = await this.getPodFromWebId(webId);
-        const db = drizzle(this.session, {
+        const client = pod(this.session, {
           schema: { skills },
           base: `${podBase}ai/skills/`,
         });
+        const db = client.asDrizzle();
         
         const found = await db.query.skills.findMany({
           where: (skill, { like }) => like(skill.name, `%${query}%`),

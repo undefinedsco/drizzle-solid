@@ -326,9 +326,9 @@ export class PodTable<TColumns extends Record<string, PodColumnBase<any, any, an
     return {
       column: column.name,
       predicate,
-      kind: column.isReference() ? 'object' : 'datatype',
+      kind: column.isLink() ? 'object' : 'datatype',
       datatype: this.inferColumnDatatype(column),
-      referenceTarget: column.getReferenceTarget(),
+      linkTarget: column.getLinkTarget(),
       isArray: column.options.isArray ?? false,
       inverse: column.isInverse()
     };

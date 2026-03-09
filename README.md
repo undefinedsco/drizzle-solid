@@ -1,139 +1,101 @@
 # drizzle-solid
 
-`drizzle-solid` is a Drizzle-aligned adapter for application-owned data in Solid Pods.
+`drizzle-solid` is a Drizzle-aligned data layer for application-owned data in Solid Pods.
 
-It helps you define typed models, map them to RDF resources/documents/IRIs, and read or write them with a familiar query builder — without pretending Solid is a relational database.
+这次变化的重点不是强迫你把构造函数名字从 `drizzle()` 换成别的东西，而是把语义讲清楚：
 
-The library is intentionally **document-first**, **IRI-native**, **Pod-aware**, and **SPARQL-native**.
+- `table` 更接近 **resource layout / collection definition**
+- `link` 字段更接近 **RDF link / IRI link**
+- 实体最终身份更接近 **IRI / @id**，而不只是本地主键
+- 读取和写入不再默认共享 SQL 式语义
 
-## What it helps with
+## Scope
 
-- Defining typed application data for Solid Pods
-- Mapping fields to RDF predicates and resource layouts
-- Using a Drizzle-style CRUD/query builder over Pod data
-- Performing exact entity operations through full IRIs
-- Building discovery, federation, and notification flows on top of Solid-native storage
+Current v1 solves one problem well:
 
-## Design principles
+- persist application-owned data into Solid Pods with typed schemas
+- keep Pod layout explicit through `base` and `subjectTemplate`
+- make full IRIs part of the public API instead of hiding them behind local-only IDs
+- give Drizzle users a migration-friendly surface without pretending Solid is a SQL database
+- support adjacent Solid flows such as discovery, notifications, and federation where they fit the Pod model
 
-- **Document-first**: model around Solid resources and document boundaries
-- **IRI-native**: treat IRIs as first-class identity, not as an afterthought over local IDs
-- **Pod-aware**: keep resource layout, links, network, and access constraints explicit
-- **Drizzle-aligned**: stay close to Drizzle's builder surface and ergonomics where it makes sense
-- **SPARQL-native**: the native query model is SPARQL/Solid, not SQL emulation
+Not in v1:
 
-## What it is
+- full SQL/database feature parity
+- raw SQL as the primary abstraction
+- hiding Pod boundaries, permissions, or network behavior
+- implicit scan-based `updateMany/deleteMany` on backends that do not support set-based mutation
+- universal querying over arbitrary open-world RDF as the main goal
 
-- A typed persistence layer for application-owned data in Solid Pods
-- A Drizzle-style API surface over RDF resources and documents
-- A practical bridge for teams migrating Drizzle mental models into Solid-native data flows
+## Constructor Choice
 
-## What it isn't
+仓库文档与 examples 默认先用 `pod(session, config?)` 讲主线语义：
 
-- Not a general-purpose SQL ORM
-- Not a universal abstraction over arbitrary RDF on the open web
-- Not a graph database or SPARQL engine replacement
-- Not a black box that hides Pod boundaries, permissions, or network behavior
-- Not a promise that every SQL/driver-specific Drizzle feature maps cleanly to Solid
+- `pod(session, config?)`
+- `drizzle(session, config?)`
 
-## Core concepts
+建议这样理解：
 
-### Resource
+- `pod()` 是语义优先的正式入口，方便把 API 组织成 `collection()` / `entity()` / `bind()`
+- `drizzle()` 是同一运行时上的 Drizzle-aligned 入口，适合迁移或保留 builder/query 代码形状
+- 重要的不是“入口名”，而是下面这些语义：`base`、`subjectTemplate`、`IRI`、exact-target mutation
 
-A resource is the persisted unit in a Pod, usually a Turtle or JSON-LD document addressed by URL.
+## Public Surface
 
-### Document
+当前公开表面可以分成两层：
 
-A document may contain one entity or many entities. Document layout is part of application design, not an implementation detail.
+### Semantic-first surface
 
-### Entity
+- `pod(session, config?)`
+- `client.bind(schema, options)`
+- `client.collection(table)`
+- `client.entity(table, iri)`
+- `client.sparql(query)`
 
-An entity is a typed RDF subject stored in a document. It is closer to a linked-data subject than to a relational row.
+### Drizzle-aligned surface
 
-### IRI
+- `drizzle(session, config?)`
+- `podTable(name, columns, config)`
+- `solidSchema(...)`
+- `select / insert / update / delete`
+- `db.query.*` read facade
 
-IRIs are native identity. `drizzle-solid` keeps the full subject IRI available and provides explicit IRI APIs for exact operations.
-
-### Link
-
-Links between entities are represented as IRIs and may cross documents or Pods.
-
-### Model
-
-`drizzle-solid` supports two modeling styles:
-
-- `podTable(...)`: schema plus concrete storage location
-- `solidSchema(...)` + `db.createTable(...)`: reusable schema separated from where data is stored
-
-### Pod client
-
-`drizzle(session)` creates the database client bound to an authenticated Solid session.
-
-## Modeling vs persistence
-
-A Solid application usually needs to answer two different questions:
-
-1. **What is the shape of my data?**
-2. **Where does that data live in Pods?**
-
-`drizzle-solid` keeps those concerns explicit.
-
-- Use `podTable(...)` when your app owns the storage location and you want one place to define shape + location.
-- Use `solidSchema(...)` when the same schema should be reused across different Pod locations, profiles, or discovered data sources.
-- Use `db.createTable(schema, { base, ... })` when you want to bind a reusable schema to a concrete place at runtime.
-
-This keeps Solid's persistence model visible instead of flattening everything into table-only abstractions.
-
-## Why document-first
-
-Solid stores data in resources, not in tables.
-
-That means application design starts with questions like:
-
-- which entities belong in the same document
-- which entities should be split into separate resources
-- which resources should be public, private, or shared
-- how links should work across documents and Pods
-
-`drizzle-solid` follows that reality. It provides a structured API, but keeps resource identity and document layout as part of the model.
-
-## Quick start
-
-### Install
+## Install
 
 ```bash
 yarn add @undefineds.co/drizzle-solid drizzle-orm
-# optional, when you want the default LDP/SPARQL client engine in the app
+# optional, when your app wants the default SPARQL client engine
 yarn add @comunica/query-sparql-solid
 ```
 
 ```bash
-# or with npm
 npm install @undefineds.co/drizzle-solid drizzle-orm
 npm install @comunica/query-sparql-solid
 ```
 
-`@comunica/query-sparql-solid` is now an **optional peer dependency**.
+`@comunica/query-sparql-solid` is an optional peer dependency.
 
-Install it directly in the consuming app when you use LDP-backed query resolution, raw `executeSPARQL()`, or other flows that need the built-in SPARQL client. If you already ship that engine elsewhere (for example through `xpod`), inject it instead of forcing a second copy.
+Install it in the consuming app when you need built-in SPARQL query execution, LDP-backed query fallback, or direct SPARQL workflows.
 
-Current compatibility stance:
+Current public compatibility stance:
 
-- **Officially supported**: `@comunica/query-sparql-solid` **4.x**
-- **Not currently part of the public support matrix**: `3.x`
-- The codebase contains a few compatibility shims for different binding shapes, but we should not advertise `3.x` as supported until we add an explicit test matrix and widen the peer range.
+- officially supported: `@comunica/query-sparql-solid` `4.x`
+- not currently in the supported matrix: `3.x`
 
-> In this repository, the examples import `drizzle-solid` through a local TypeScript path alias. In external applications, import the published package name: `@undefineds.co/drizzle-solid`.
+If another in-process runtime already carries Comunica (for example `xpod`), inject that engine instead of forcing a second copy. See `docs/api/README.md` and `docs/guides/installation.md`.
 
-### Define a model and run CRUD
+## Quick start
+
+仓库里的主线 quick start 默认使用 `pod(session)`，因为它会把 `collection()` / `entity()` / `bind()` 语义直接写在代码里。
+
+如果你已有大量 Drizzle 风格代码，`drizzle(session)` 仍然是正式可用入口。
 
 ```ts
 import {
-  drizzle,
+  pod,
   podTable,
   string,
   datetime,
-  eq,
 } from '@undefineds.co/drizzle-solid';
 
 const posts = podTable('posts', {
@@ -147,115 +109,84 @@ const posts = podTable('posts', {
   type: 'http://schema.org/CreativeWork',
 });
 
-const db = drizzle(session);
-await db.init([posts]);
+const client = pod(session);
+await client.init(posts);
 
-await db.insert(posts).values({
+const postsCollection = client.collection(posts);
+
+const created = await postsCollection.create({
   id: 'post-1',
   title: 'Hello Solid',
   content: 'Stored as RDF in a Pod document.',
   createdAt: new Date(),
 });
 
-const rows = await db.select()
-  .from(posts)
-  .where(eq(posts.id, 'post-1'));
-
-await db.update(posts)
-  .set({ title: 'Updated title' })
-  .where(eq(posts.id, 'post-1'));
-
-await db.delete(posts)
-  .where(eq(posts.id, 'post-1'));
-```
-
-### Reusable schema + runtime binding
-
-```ts
-import {
-  drizzle,
-  solidSchema,
-  id,
-  string,
-} from '@undefineds.co/drizzle-solid';
-
-const profileSchema = solidSchema({
-  id: id(),
-  name: string('name').predicate('http://xmlns.com/foaf/0.1/name'),
-  bio: string('bio').predicate('http://schema.org/description'),
-}, {
-  type: 'http://xmlns.com/foaf/0.1/Person',
+const first = await postsCollection.first({
+  where: { id: 'post-1' },
 });
 
-const db = drizzle(session);
+const postIri = created?.['@id'] ?? postsCollection.iriFor({
+  id: 'post-1',
+  title: 'Hello Solid',
+  content: 'Stored as RDF in a Pod document.',
+  createdAt: new Date(),
+});
 
+const post = client.entity(posts, postIri);
+await post.update({ title: 'Updated title' });
+await post.delete();
+```
+
+> 如果你保持 `drizzle(session)` 作为入口，语义并不会变：`base`、`subjectTemplate`、`IRI`、精确写目标这些约束仍然完全成立。
+
+## Reusable schema + runtime binding
+
+Use `solidSchema(...)` when you want to separate the reusable data shape from where that data lives in a Pod.
+
+如果你使用 `pod()` façade：
+
+```ts
+const client = pod(session);
+const profileTable = client.bind(profileSchema, {
+  base: 'https://alice.example/profile/card',
+});
+```
+
+如果你保持 `drizzle()` 入口：
+
+```ts
+const db = drizzle(session);
 const profileTable = db.createTable(profileSchema, {
   base: 'https://alice.example/profile/card',
 });
 ```
 
-## Exact IRI operations
+## Identity and placement
 
-For detail-page flows, remote links, shared resources, or exact mutation targets, use the IRI APIs:
-
-- `db.findByIri(table, iri)`
-- `db.updateByIri(table, iri, data)`
-- `db.deleteByIri(table, iri)`
-- `db.subscribeByIri(table, iri, options)`
-
-```ts
-const agent = await db.findByIri(agentTable, 'https://alice.example/data/agents.ttl#assistant');
-
-await db.updateByIri(
-  agentTable,
-  'https://alice.example/data/agents.ttl#assistant',
-  { description: 'Updated through explicit IRI' },
-);
-
-await db.deleteByIri(
-  agentTable,
-  'https://alice.example/data/agents.ttl#assistant',
-);
-```
-
-## Subject templates and identity
-
-`subjectTemplate` controls how record identity maps to Pod resources.
+`subjectTemplate` defines how application identity maps onto Pod resources.
 
 Common patterns:
 
-- `#{id}`: fragment mode, many entities in one RDF file
-- `{id}.ttl`: document mode, one file per entity
-- `{id}.ttl#it`: document mode with stable in-document fragment
-- `{chatId}/{yyyy}/{MM}/{dd}/messages.ttl#{id}`: multi-variable, date-partitioned layouts
+- `#{id}`: many entities inside one document
+- `{id}.ttl`: one document per entity
+- `{id}.ttl#it`: one document per entity with stable in-document fragment
+- `{chatId}/messages.ttl#{id}`: multi-variable layouts and partitioned resources
 
-Example:
+这不是命名细节，而是持久化语义本身。
 
-```ts
-const Message = podTable('Message', {
-  id: string('id').primaryKey(),
-  chatId: string('chatId').predicate('http://example.org/chatId'),
-  content: string('content').predicate('http://schema.org/text'),
-  timestamp: datetime('timestamp').predicate('http://schema.org/dateCreated'),
-}, {
-  base: 'https://alice.example/data/chats/',
-  subjectTemplate: '{chatId}/messages.ttl#{id}',
-  type: 'http://schema.org/Message',
-});
-```
+## Exact-target mutation semantics
 
-For reads, the library can often work from:
+Reads and writes do not intentionally behave the same way.
 
-- a full IRI
-- all template variables
-- a narrower partial condition that scans a smaller bounded area
+- list / filter reads can stay collection-oriented
+- writes should prefer exact-target semantics
+- incomplete `where(...)` information should not silently degrade into scan + mutate
+- if a subject can only be resolved by multiple template variables, mutation should use an explicit IRI or provide all required variables
 
-Read-path and write-path semantics are intentionally different:
+所以最重要的变化不是“要不要换成 `pod()`”，而是：
 
-- **Read queries** (`select`, `db.query.*`) may use partial template information for list/filter flows when the resolver can keep the scan bounded.
-- **Mutations** (`update`, `delete`) require deterministic targets by default. If `where()` cannot uniquely resolve the subject from the template, the dialect throws and tells you to use `updateByIri()` / `deleteByIri()` (or to provide the missing template variables).
-- **No implicit scan-based `updateMany/deleteMany` fallback** is performed on backends that do not natively support set-based mutation.
-- **Capability-based enhancement**: if a backend explicitly supports filter-based multi-row mutation in the future (for example, an xpod capability), `drizzle-solid` can expose that path there without pretending every Solid server supports it.
+- 什么时候你只是在做集合读取
+- 什么时候你已经需要一个确定的实体目标
 
 ## Server support
 
@@ -263,143 +194,62 @@ Read-path and write-path semantics are intentionally different:
 
 | Capability | Community Solid Server | xpod |
 | --- | --- | --- |
-| Basic CRUD | ✅ LDP mode | ✅ LDP mode |
-| SPARQL SELECT pushdown | ❌ Client-side / resolver-driven | ✅ `/-/sparql` sidecar |
-| SPARQL UPDATE | ⚠️ Limited / write path stays LDP-oriented | ✅ Better server-side support |
-| Filter / aggregation pushdown | ❌ Fallbacks and client execution | ✅ Single-Pod pushdown |
+| Basic CRUD | ✅ | ✅ |
+| Document notifications | ✅ | ✅ |
+| Drizzle-style read facade | ✅ | ✅ |
+| SPARQL pushdown | ⚠️ Limited / often client-assisted | ✅ Better in-process support |
+| Filter / aggregation pushdown | ❌ Mostly fallback execution | ✅ Better server-side support |
 | Federated queries | ⚠️ Client-side federation | ⚠️ Client-side federation |
-| Notifications | ✅ | ✅ |
-| In-process test runtime | ⚠️ External CSS setup | ✅ via `@undefineds.co/xpod` |
+| In-process local runtime | ⚠️ External setup | ✅ via `@undefineds.co/xpod` |
 
-### Community Solid Server (CSS)
-
-On plain CSS, `drizzle-solid` keeps working, but many queries are resolved through client-side execution and Solid-aware fallbacks. This is the compatibility baseline.
-
-### xpod
-
-`xpod` adds a Solid-compatible SPARQL sidecar and is the recommended development/runtime target when you want stronger query pushdown and a lower-friction local setup.
-
-If `xpod` already carries its own Comunica stack, you can point `drizzle-solid` at that copy instead of installing another one in the app:
-
-```ts
-import { createRequire } from 'node:module';
-import {
-  drizzle,
-  createNodeModuleSparqlEngineFactory,
-} from '@undefineds.co/drizzle-solid';
-
-const requireFromHere = createRequire(import.meta.url);
-
-const db = drizzle(session, {
-  sparql: {
-    createQueryEngine: createNodeModuleSparqlEngineFactory(
-      requireFromHere.resolve('@undefineds.co/xpod/package.json')
-    ),
-  },
-});
-```
-
-The same factory can also be registered globally via `configureSparqlEngine(...)` when you want one process-wide default.
-
-See `docs/xpod-features.md` and `docs/api/README.md` for more detail.
+If `xpod` already ships its own Comunica stack, `drizzle-solid` can reuse that copy instead of requiring another app-level install.
 
 ## Verified examples
 
-The canonical examples in `examples/` are verified in the test suite.
+The canonical examples in `examples/` are part of the real integration verification flow:
 
-- `examples/01-quick-start.ts` — CRUD quick start
-- `examples/02-relational-query.ts` — relational query API surface
-- `examples/03-zero-config-discovery.ts` — zero-config discovery flow
-- `examples/04-notifications.ts` — Solid notifications
-- `examples/05-data-discovery.ts` — discovery API
-- `examples/06-federated-query.ts` — federated query across Pods
-- `examples/07-hooks-and-profile.ts` — hooks and profile management
-- `examples/08-iri-based-operations.ts` — explicit IRI operations
-- `examples/08-schema-inheritance.ts` — schema inheritance
-- `examples/09-multi-variable-templates.ts` — multi-variable subject templates
+- `examples/01-quick-start.ts`
+- `examples/02-relational-query.ts`
+- `examples/03-zero-config-discovery.ts`
+- `examples/04-notifications.ts`
+- `examples/05-data-discovery.ts`
+- `examples/06-federated-query.ts`
+- `examples/07-hooks-and-profile.ts`
+- `examples/08-iri-based-operations.ts`
+- `examples/08-schema-inheritance.ts`
+- `examples/09-multi-variable-templates.ts`
 
-The example manifest lives at `examples/manifest.json`, and the integration verification lives at `tests/integration/css/examples-verification.test.ts`.
+See `examples/manifest.json` and `tests/integration/css/examples-verification.test.ts`.
 
-## Query surface and SQL scope
+## Migration
 
-`drizzle-solid` aims to stay close to Drizzle's public builder surface where that maps cleanly to Solid.
+If you already know `drizzle-orm`, start here:
 
-Current supported surface includes:
+- `docs/guides/migrating-from-drizzle-orm.md`
 
-- CRUD builders: `select`, `insert`, `update`, `delete`
-- Read-oriented query facade: `db.query.*.findMany`, `findFirst`, `findById`, `findByIRI`, `count`
-- Exact-target APIs: `findByIri`, `updateByIri`, `deleteByIri`, `subscribeByIri`
-- Conditions: `eq`, `ne`, `gt`, `gte`, `lt`, `lte`, `like`, `ilike`, `inArray`, `exists`, `and`, `or`, `not`
-- Query features: joins, ordering, limits, offsets, distinct, aggregation helpers
-- Builder inspection via `toSPARQL()` / `toSparql()`
-- Raw **SPARQL** workflows through `execute()` / `executeSPARQL()` where you need explicit graph-native control
-- Batch and `returning()` support where implemented by the dialect
+那份指南重点解释的是：
 
-Not the mainline contract:
+- `table/row` → `resource/document/entity/IRI`
+- `link` / relation fields → RDF link / IRI link
+- `where`-style mutation → exact-target mutation
+- `toSQL()` / raw SQL 主心智 → `toSPARQL()` / SPARQL 主心智
 
-- `toSQL()` compatibility aliases
-- raw SQL as the primary abstraction
-- transaction semantics identical to SQL databases
-- implicit scan-based `updateMany/deleteMany` on backends that do not support set-based mutation
-- driver-specific DDL, auto-increment, foreign keys, or SQL engine behaviors
-
-The migration goal is API familiarity with low migration cost, but the execution model remains Solid/SPARQL-native rather than semantics-faking SQL emulation. See `docs/api/README.md` for the current public surface and runtime wiring options.
-
-## Discovery, interoperability, and federation
-
-The library also includes higher-level Solid workflows:
-
-- data discovery and interop metadata
-- TypeIndex-driven location discovery
-- shape-aware table generation
-- federated queries across discovered Pod locations
-- notifications for resource/entity updates
-
-Useful starting points:
-
-- `docs/guides/data-discovery.md`
-- `docs/guides/notifications.md`
-- `docs/guides/css-notifications.md`
-- `docs/federated-queries.md`
-- `docs/guides/multi-variable-templates.md`
+而不是要求你第一步先改掉构造函数名。
 
 ## Documentation map
 
-- `examples/README.md` — curated walkthroughs and runnable examples
-- `docs/quick-start-local.md` — local setup guide
+- `docs/api/README.md` — current public API and constructor positioning
+- `docs/guides/installation.md` — installation and SPARQL engine setup
+- `docs/guides/migrating-from-drizzle-orm.md` — migration guide for Drizzle users
+- `examples/README.md` — curated runnable examples
 - `docs/guides/data-discovery.md` — discovery workflows
-- `docs/guides/issue-handling.md` — issue reproduction and regression workflow
-- `docs/api/README.md` — public API and runtime wiring reference
-- `docs/guides/testing.md` — test conventions and coverage strategy
-- `ACTION-PLAN.md` — current parity and implementation plan
-
-## Planned scope
-
-### Current direction
-
-The current focus is:
-
-- typed models for application-owned Pod data
-- explicit document and subject placement
-- Drizzle-aligned query ergonomics
-- practical CRUD, discovery, federation, and notification flows
-
-### Likely next steps
-
-- better modeling ergonomics around reusable schemas and links
-- clearer guidance around multi-resource layouts and identity strategies
-- continued Drizzle parity on Solid-relevant behaviors
-- stronger documentation around Solid-native tradeoffs and migration paths
-
-### Out of scope
-
-- hiding Solid behind a fake SQL database mental model
-- universal querying over arbitrary open-world RDF as the primary goal
-- promising full relational/database feature parity where Solid semantics differ
+- `docs/guides/notifications.md` — notification flows
+- `docs/xpod-features.md` — xpod runtime notes
+- `ACTION-PLAN.md` — parity and implementation plan
 
 ## Contributing
 
-Before contributing:
+Before pushing:
 
 ```bash
 yarn build

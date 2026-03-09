@@ -22,28 +22,28 @@ const mockTable = {
       dataType: 'integer',
       options: { required: true },
       getPredicate: (namespace: { uri: string }) => `${namespace.uri}identifier`,
-      isReference: () => false
+      isLink: () => false
     },
     name: { 
       name: 'name', 
       dataType: 'string',
       options: { required: true },
       getPredicate: (namespace: { uri: string }) => `${namespace.uri}name`,
-      isReference: () => false
+      isLink: () => false
     },
     email: { 
       name: 'email', 
       dataType: 'string',
       options: { required: false },
       getPredicate: (namespace: { uri: string }) => `${namespace.uri}email`,
-      isReference: () => false
+      isLink: () => false
     },
     organization: {
       name: 'organization',
       dataType: 'string',
-      options: { required: false, inverse: true, referenceTarget: 'https://schema.org/Organization' },
+      options: { required: false, inverse: true, linkTarget: 'https://schema.org/Organization' },
       getPredicate: () => 'https://schema.org/member',
-      isReference: () => true
+      isLink: () => true
     }
   },
   config: {
@@ -190,7 +190,7 @@ describe('ASTToSPARQLConverter', () => {
       expect(result.query).toContain('&&');
     });
 
-    it('引用列上的 IN 过滤应该使用 NamedNode', () => {
+    it('链接列上的 IN 过滤应该使用 NamedNode', () => {
       const condition = inArray(mockTable.columns.organization, [
         'https://org.example/a',
         'https://org.example/b'

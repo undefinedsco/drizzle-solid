@@ -15,7 +15,7 @@ export class ExpressionBuilder {
   }
 
   /**
-   * Set table context for URI reference resolution
+   * Set table context for URI link resolution
    */
   setTableContext(context: TableRegistryContext): void {
     this.tableContext = context;
@@ -39,18 +39,18 @@ export class ExpressionBuilder {
   }
 
   /**
-   * Check if a column is a reference column that needs URI resolution
+   * Check if a column is a link column that needs URI resolution
    * Delegates to uriResolver for consistency
    */
-  private isReferenceColumn(column: PodColumnBase | any): boolean {
-    return this.uriResolver.isReferenceColumn(column);
+  private isLinkColumn(column: PodColumnBase | any): boolean {
+    return this.uriResolver.isLinkColumn(column);
   }
 
   /**
-   * Format a value for a reference column, resolving URI if needed
+   * Format a value for a link column, resolving URI if needed
    * Uses uriResolver for consistent URI resolution
    */
-  private formatReferenceValue(value: any, column: PodColumnBase | any, table: PodTable): string {
+  private formatLinkValue(value: any, column: PodColumnBase | any, table: PodTable): string {
     const str = String(value);
     if (str.startsWith('<') && str.endsWith('>')) {
       const inner = str.slice(1, -1);
@@ -59,7 +59,7 @@ export class ExpressionBuilder {
       }
       const context = this.getUriContext();
       try {
-        const resolved = this.uriResolver.resolveReference(inner, column, context);
+        const resolved = this.uriResolver.resolveLink(inner, column, context);
         return `<${resolved}>`;
       } catch (error) {
         const tableName = table.config?.name ?? 'unknown';
@@ -72,7 +72,7 @@ export class ExpressionBuilder {
     try {
       // Pass context as parameter, not internal state
       const context = this.getUriContext();
-      const resolved = this.uriResolver.resolveReference(str, column, context);
+      const resolved = this.uriResolver.resolveLink(str, column, context);
       return `<${resolved}>`;
     } catch (e) {
       const tableName = table.config?.name ?? 'unknown';
@@ -236,8 +236,8 @@ export class ExpressionBuilder {
     const isSubject = colName === 'subject' || colName === '@id' || isVirtualId;
     const variable = isSubject ? '?subject' : `?${colName}`;
 
-    // Check if this is a reference column
-    const isReference = this.isReferenceColumn(column);
+    // Check if this is a link column
+    const isLink = this.isLinkColumn(column);
 
     let value = condition.right;
 
@@ -271,8 +271,8 @@ export class ExpressionBuilder {
       }
 
       const formattedValues = value.map((v: any) => {
-         if (isReference) {
-            return this.formatReferenceValue(v, column, table);
+         if (isLink) {
+            return this.formatLinkValue(v, column, table);
          }
          return formatValue(v, column, this.uriResolver, this.getUriContext());
       }).join(', ');
@@ -333,9 +333,9 @@ export class ExpressionBuilder {
           // For other operators, fall through with escaped ID
           formattedValue = `"${escapedId}"`;
         }
-    } else if (isReference) {
-        // Resolve reference URI
-        formattedValue = this.formatReferenceValue(value, column, table);
+    } else if (isLink) {
+        // Resolve link URI
+        formattedValue = this.formatLinkValue(value, column, table);
     } else {
         formattedValue = formatValue(value, column, this.uriResolver, this.getUriContext());
     }

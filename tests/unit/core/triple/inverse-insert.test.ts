@@ -3,8 +3,8 @@ import { podTable, string, uri, datetime } from '../../../../src/core/schema';
 import { eq } from '../../../../src/core/operators';
 import { drizzle } from '../../../../src/core/pod-dialect';
 
-describe('Inverse reference INSERT and SELECT', () => {
-  it('should insert and query messages with inverse chatId reference', async () => {
+describe('Inverse link INSERT and SELECT', () => {
+  it('should insert and query messages with inverse chatId link', async () => {
     const UDFS_NAMESPACE = { prefix: 'udfs', uri: 'https://undefineds.co/ns#' };
     const Meeting = {
       LongChat: 'http://www.w3.org/ns/pim/meeting#LongChat',
@@ -24,7 +24,7 @@ describe('Inverse reference INSERT and SELECT', () => {
 
     const Message = podTable('Message', {
       id: string('id').primaryKey(),
-      chatId: uri('chatId').predicate(SIOC.has_container).inverse().reference(Chat),
+      chatId: uri('chatId').predicate(SIOC.has_container).inverse().link(Chat),
       content: string('content'),
     }, {
       base: '/.data/chat/',
@@ -33,11 +33,11 @@ describe('Inverse reference INSERT and SELECT', () => {
       subjectTemplate: '{chatId}/{yyyy}/{MM}/{dd}/messages.ttl#{id}',
     });
 
-    console.log('\n=== Test: Inverse Reference ===');
+    console.log('\n=== Test: Inverse Link ===');
     console.log('Chat config:', Chat.config);
     console.log('Message.chatId config:', Message.chatId);
     console.log('Is inverse?', Message.chatId.options?.inverse);
-    console.log('Is reference?', Message.chatId.isReference?.());
-    console.log('Reference target:', Message.chatId.options?.referenceTarget);
+    console.log('Is link?', Message.chatId.isLink?.());
+    console.log('Link target:', Message.chatId.options?.linkTarget);
   });
 });

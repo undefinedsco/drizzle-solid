@@ -2,26 +2,26 @@
 
 This folder hosts the canonical end-to-end walkthroughs referenced in the docs. Each public example should map to a runnable verification path recorded in `examples/manifest.json`, so explanatory docs and executable samples stay connected.
 
+> 这些 examples 会在“保留 `drizzle()` 也完全可行”的前提下，按场景选择更清楚的代码组织方式。部分示例使用 `pod()`，只是为了把 collection/entity/bind 语义写得更显式，不代表你必须迁移构造入口。
+
 ## Example lineup
-- `01-quick-start.ts`: Quick start demo with basic CRUD operations.
-- `02-relational-query.ts`: Demonstrates relational queries with `db.query` API.
+- `01-quick-start.ts`: Quick start demo with explicit `collection()` + `entity()` semantics.
+- `02-relational-query.ts`: Demonstrates relational queries with `client.query` read facade.
 - `03-zero-config-discovery.ts`: Zero-config access using SAI auto-discovery (Bob reads Alice's shared data without knowing URLs).
-- `04-notifications.ts`: Real-time notifications using Solid Notifications Protocol (WebSocket/SSE).
+- `04-notifications.ts`: Real-time notifications using `collection.subscribe()` and exact-IRI entity mutations.
 - `05-data-discovery.ts`: Comprehensive data discovery API examples:
-  - Basic discovery with `db.discovery.discover()`
+  - Basic discovery with `client.discovery.discover()`
   - Filtering by appId
-  - Listing all registrations with `db.discovery.discoverAll()`
-  - Shape selection in `db.locationToTable()`
-  - One-step discover and create tables
+  - Listing all registrations with `client.discovery.discoverAll()`
+  - Shape selection in `client.locationToTable()`
+  - One-step discover and create tables with `client.discoverTablesFor()`
   - Cross-Pod discovery
   - Multi-Shape scenario explanation
-- `06-federated-query.ts`: Federated queries across multiple Pods.
-- `07-hooks-and-profile.ts`: Using hooks and profile management.
-- `08-iri-based-operations.ts`: IRI-level operations for single entity queries and subscriptions:
-  - `db.findByIri()` - Query by complete IRI (local or remote)
-  - `db.subscribeByIri()` - Subscribe to a single entity's changes
-  - `db.updateByIri()` - Update by IRI
-  - `db.deleteByIri()` - Delete by IRI
+- `06-federated-query.ts`: Federated queries across multiple Pods with `client.query` and `FederatedQueryExecutor`.
+- `07-hooks-and-profile.ts`: Runtime binding + hooks + ProfileManager workflow.
+- `08-iri-based-operations.ts`: Explicit IRI-based entity operations.
+- `08-schema-inheritance.ts`: `solidSchema.extend()` + runtime binding workflow.
+- `09-multi-variable-templates.ts`: Multi-variable `subjectTemplate` with collection reads and exact IRI lookup.
 
 ### Utility files
 - `setup.ts`: Common setup utilities (used by tests).
@@ -42,59 +42,38 @@ This folder hosts the canonical end-to-end walkthroughs referenced in the docs. 
 ## Key Concepts
 
 ### IRI-based Operations
-For single-entity operations (detail pages, viewing shared resources), use the `*ByIri` methods:
+For single-entity operations (detail pages, shared resources, remote links), use an explicit IRI target:
 
 ```typescript
-// Query by IRI - works for both local and remote Pods
-const profile = await db.findByIri(profileTable, 'https://alice.pod/profile/card#me');
-
-// Subscribe to changes on a specific entity
-const unsubscribe = await db.subscribeByIri(profileTable, iri, {
-  onUpdate: (data) => console.log('Updated:', data),
-  onDelete: () => console.log('Deleted'),
-  onError: (error) => console.error(error)
-});
-
-// Update by IRI
-await db.updateByIri(agentTable, iri, { name: 'New Name' });
-
-// Delete by IRI
-await db.deleteByIri(agentTable, iri);
+const profile = client.entity(profileTable, 'https://alice.pod/profile/card#me');
+await profile.get();
+await profile.update({ name: 'New Name' });
+await profile.delete();
 ```
 
-Note: Using `@id` directly in `where()` conditions is no longer supported. Use `*ByIri` methods instead.
+### Collection-based Reads
+列表读取、筛选和集合订阅优先通过明确的集合语义表达：
 
-Also note that `db.query.*` is currently a **read-oriented** facade (`findMany`, `findFirst`, `findById`, `findByIRI`, `count`). It does not expose implicit scan-based `updateMany/deleteMany`. For writes, prefer deterministic `where(...)` clauses or explicit `*ByIri` methods.
+```typescript
+const posts = client.collection(postsTable);
+const latest = await posts.list({ limit: 20 });
+const first = await posts.first({ where: { id: 'post-1' } });
+```
 
 ### Data Discovery
 Data discovery allows apps to find data locations dynamically instead of hardcoding paths.
 
 ```typescript
-// Discover all Person data locations
-const locations = await db.discovery.discover('https://schema.org/Person');
-
-// Each location has:
-// - container: the data storage URL (primary key)
-// - shapes: array of Shape definitions from different apps
-// - source: 'typeindex' | 'interop' | 'config'
+const locations = await client.discovery.discover('https://schema.org/Person');
 ```
 
 ### Shape Selection
 When a container has multiple Shapes (from different apps), you can choose which one to use:
 
 ```typescript
-// Use first available Shape (default)
-const table = await db.locationToTable(location);
-
-// Select by appId
-const table = await db.locationToTable(location, { 
-  appId: 'https://acme.com/app#id' 
-});
-
-// Select by Shape URL or object
-const table = await db.locationToTable(location, { 
-  shape: 'https://shapes.example/Person.shacl' 
-});
+const table = await client.locationToTable(location);
+const byApp = await client.locationToTable(location, { appId: 'https://acme.com/app#id' });
+const byShape = await client.locationToTable(location, { shape: 'https://shapes.example/Person.shacl' });
 ```
 
 ## Running

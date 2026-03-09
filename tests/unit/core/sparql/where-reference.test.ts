@@ -4,8 +4,8 @@ import { eq } from '../../../../src/core/operators';
 import { ExpressionBuilder } from '../../../../src/core/sparql/builder/expression-builder';
 import { UriResolverImpl } from '../../../../src/core/uri';
 
-describe('WHERE condition with reference field', () => {
-  it('should convert reference value to full URI in WHERE clause', () => {
+describe('WHERE condition with link field', () => {
+  it('should convert link value to full URI in WHERE clause', () => {
     const UDFS_NAMESPACE = { prefix: 'udfs', uri: 'https://undefineds.co/ns#' };
     const Meeting = {
       LongChat: 'http://www.w3.org/ns/pim/meeting#LongChat',
@@ -25,7 +25,7 @@ describe('WHERE condition with reference field', () => {
 
     const Message = podTable('Message', {
       id: string('id').primaryKey(),
-      chatId: uri('chatId').predicate(SIOC.has_container).inverse().reference(Chat),
+      chatId: uri('chatId').predicate(SIOC.has_container).inverse().link(Chat),
       content: string('content'),
     }, {
       base: '/.data/chat/',

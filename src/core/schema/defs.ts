@@ -50,9 +50,9 @@ export interface PodColumnOptions {
   required?: boolean;
   defaultValue?: unknown;
   predicate?: string;
-  referenceTarget?: string;
-  referenceTableName?: string;
-  referenceTable?: any; // Forward reference to PodTable
+  linkTarget?: string;
+  linkTableName?: string;
+  linkTable?: any; // Forward reference to PodTable
   notNull?: boolean;
   baseType?: ColumnBuilderDataType;
   isArray?: boolean;
@@ -105,7 +105,7 @@ export interface PodColumnMapping {
   predicate: string;
   kind: 'datatype' | 'object';
   datatype?: string;
-  referenceTarget?: string;
+  linkTarget?: string;
   isArray?: boolean;
   inverse?: boolean;
 }

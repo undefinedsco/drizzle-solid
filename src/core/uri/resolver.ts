@@ -2,7 +2,7 @@
  * URI Resolver Implementation
  *
  * 统一的 URI 生成和解析
- * 整合了 Subject URI 和 Object/Reference URI 的解析逻辑
+ * 整合了 Subject URI 和 Object/Link URI 的解析逻辑
  * 
  * 设计原则：
  * - 无状态，所有需要的上下文都通过参数传入
@@ -194,16 +194,16 @@ export class UriResolverImpl implements UriResolver {
     return false;
   }
 
-  // ================= Object/Reference URI 解析 =================
+  // ================= Object/Link URI 解析 =================
 
   /**
-   * 解析 reference 列的值为完整 URI
+   * 解析 link 列的值为完整 URI
    * 
    * @param value 原始值（可能是 UUID、相对路径或完整 URI）
-   * @param column 列定义（包含 reference 配置）
+   * @param column 列定义（包含 link 配置）
    * @param context 解析上下文（包含 tableRegistry 等）
    */
-  resolveReference(value: string, column: PodColumnBase, context?: UriContext): string {
+  resolveLink(value: string, column: PodColumnBase, context?: UriContext): string {
     // 1. 已经是绝对 URI，直接返回
     if (this.isAbsoluteUri(value)) {
       return value;
@@ -224,23 +224,23 @@ export class UriResolverImpl implements UriResolver {
       );
     }
 
-    // 3. 尝试通过 referenceTable 解析（直接引用表对象，不需要 registry）
-    const referenceTable = column.getReferenceTable?.();
-    if (referenceTable) {
-      const uriInfo = this.getTableUriInfo(referenceTable);
+    // 3. 尝试通过 linkTable 解析（直接链接目标表对象，不需要 registry）
+    const linkTable = column.getLinkTable?.();
+    if (linkTable) {
+      const uriInfo = this.getTableUriInfo(linkTable);
       if (uriInfo) {
         return this.buildFullUri(value, uriInfo.baseUrl, uriInfo.subjectTemplate);
       }
       throw new Error(
-        `Cannot resolve URI "${value}": referenced table "${referenceTable.config?.name}" has no base configured.`
+        `Cannot resolve URI "${value}": linked table "${linkTable.config?.name}" has no base configured.`
       );
     }
 
-    // 4. 尝试通过 referenceTableName 解析
-    const referenceTableName = column.getReferenceTableName?.();
-    if (referenceTableName) {
+    // 4. 尝试通过 linkTableName 解析
+    const linkTableName = column.getLinkTableName?.();
+    if (linkTableName) {
       if (context?.tableNameRegistry) {
-        const targetTable = context.tableNameRegistry.get(referenceTableName);
+        const targetTable = context.tableNameRegistry.get(linkTableName);
         if (targetTable) {
           const uriInfo = this.getTableUriInfo(targetTable);
           if (uriInfo) {
@@ -252,23 +252,23 @@ export class UriResolverImpl implements UriResolver {
         ? Array.from(context.tableNameRegistry.keys()).join(', ')
         : '(no tables registered)';
       throw new Error(
-        `Cannot resolve URI "${value}": table "${referenceTableName}" not found in schema. ` +
+        `Cannot resolve URI "${value}": table "${linkTableName}" not found in schema. ` +
         `Available tables: ${availableTables}`
       );
     }
 
-    // 5. 尝试通过 referenceTarget (class URI) 解析
-    const referenceTarget = column.getReferenceTarget?.();
-    if (referenceTarget) {
+    // 5. 尝试通过 linkTarget (class URI) 解析
+    const linkTarget = column.getLinkTarget?.();
+    if (linkTarget) {
       if (!context?.tableRegistry) {
-        // 有 referenceTarget 但没有 tableRegistry，无法解析
+        // 有 linkTarget 但没有 tableRegistry，无法解析
         throw new Error(
-          `Cannot resolve URI "${value}" (references ${referenceTarget}): ` +
+          `Cannot resolve URI "${value}" (links to ${linkTarget}): ` +
           `tableRegistry not configured. Ensure the schema is properly registered.`
         );
       }
       
-      const targetTables = context.tableRegistry.get(referenceTarget);
+      const targetTables = context.tableRegistry.get(linkTarget);
 
       if (targetTables && targetTables.length > 0) {
         if (targetTables.length > 1) {
@@ -276,8 +276,8 @@ export class UriResolverImpl implements UriResolver {
             .map(t => t.config?.name || 'unknown')
             .join(', ');
           throw new Error(
-            `Ambiguous reference: class "${referenceTarget}" has multiple tables [${tableNames}]. ` +
-            `Use .reference('tableName') or .reference(tableObject) to specify which table to use.`
+            `Ambiguous link target: class "${linkTarget}" has multiple tables [${tableNames}]. ` +
+            `Use .link('tableName') or .link(tableObject) to specify which table to use.`
           );
         }
 
@@ -288,14 +288,14 @@ export class UriResolverImpl implements UriResolver {
         }
       }
       
-      // referenceTarget 指定了但在 registry 中找不到对应的表
+      // linkTarget 指定了但在 registry 中找不到对应的表
       throw new Error(
-        `Cannot resolve URI "${value}": class "${referenceTarget}" not found in tableRegistry. ` +
+        `Cannot resolve URI "${value}": class "${linkTarget}" not found in tableRegistry. ` +
         `Available classes: ${Array.from(context.tableRegistry.keys()).join(', ') || '(none)'}`
       );
     }
 
-    // 6. 使用 baseUri fallback (仅当没有任何 reference 配置时)
+    // 6. 使用 baseUri fallback (仅当没有任何 link 配置时)
     const base = context?.baseUri || this.podUrl;
     if (base && this.isAbsoluteUri(base)) {
       const baseUrl = base.endsWith('/') ? base : `${base}/`;
@@ -323,35 +323,35 @@ export class UriResolverImpl implements UriResolver {
     );
   }
 
-  isReferenceColumn(column: PodColumnBase | any): boolean {
+  isLinkColumn(column: PodColumnBase | any): boolean {
     if (!column) return false;
     return column.dataType === 'uri' ||
-      column.isReference?.() ||
-      !!column.options?.referenceTarget ||
-      !!column.options?.referenceTableName ||
-      !!column.options?.referenceTable;
+      column.isLink?.() ||
+      !!column.options?.linkTarget ||
+      !!column.options?.linkTableName ||
+      !!column.options?.linkTable;
   }
 
   findTargetTable(column: PodColumnBase | any, context?: UriContext): PodTable | undefined {
-    // Priority 1: Direct table reference from column object
-    const referenceTable = column.getReferenceTable?.() || column.options?.referenceTable;
-    if (referenceTable) {
-      return referenceTable;
+    // Priority 1: Direct linked table from column object
+    const linkTable = column.getLinkTable?.() || column.options?.linkTable;
+    if (linkTable) {
+      return linkTable;
     }
 
-    // Priority 2: Table name reference
-    const referenceTableName = column.getReferenceTableName?.() || column.options?.referenceTableName;
-    if (referenceTableName && context?.tableNameRegistry) {
-      const found = context.tableNameRegistry.get(referenceTableName);
+    // Priority 2: Linked table by name
+    const linkTableName = column.getLinkTableName?.() || column.options?.linkTableName;
+    if (linkTableName && context?.tableNameRegistry) {
+      const found = context.tableNameRegistry.get(linkTableName);
       if (found) {
         return found;
       }
     }
 
-    // Priority 3: Class URI reference (check for ambiguity)
-    const referenceTarget = column.getReferenceTarget?.() || column.options?.referenceTarget;
-    if (referenceTarget && context?.tableRegistry) {
-      const tables = context.tableRegistry.get(referenceTarget);
+    // Priority 3: Class URI link (check for ambiguity)
+    const linkTarget = column.getLinkTarget?.() || column.options?.linkTarget;
+    if (linkTarget && context?.tableRegistry) {
+      const tables = context.tableRegistry.get(linkTarget);
       if (tables && tables.length === 1) {
         return tables[0];
       }
@@ -361,16 +361,16 @@ export class UriResolverImpl implements UriResolver {
   }
 
   /**
-   * 从引用 URI 中提取 ID
+   * 从链接 URI 中提取 ID
    * 
    * 用于读取时将完整 URI 转换回简单 ID
    * 
    * @param uri 完整的 URI (如 http://pod/.data/chat/chat-123/index.ttl#this)
-   * @param column 引用列定义
+   * @param column 链接列定义
    * @param context URI 上下文（包含表注册表）
    * @returns 提取的 ID (如 chat-123)，如果无法解析则返回原 URI
    */
-  extractReferenceId(uri: string, column: PodColumnBase | any, context?: UriContext): string {
+  extractLinkId(uri: string, column: PodColumnBase | any, context?: UriContext): string {
     if (!uri || !this.isAbsoluteUri(uri)) {
       return uri;
     }
@@ -497,17 +497,17 @@ export class UriResolverImpl implements UriResolver {
 
   /**
    * 将列值归一化为适合模板使用的字符串
-   * 特别处理：如果是引用列且值为 URI，则尝试提取 ID
+   * 特别处理：如果是链接列且值为 URI，则尝试提取 ID
    */
   normalizeValue(value: unknown, column?: PodColumnBase, context?: UriContext): string {
     if (value === undefined || value === null) {
       return '';
     }
 
-    // 处理引用列：如果是引用列且值为 URI，尝试提取 ID
+    // 处理链接列：如果是链接列且值为 URI，尝试提取 ID
     if (typeof value === 'string' && this.isAbsoluteUri(value)) {
-      if (column && this.isReferenceColumn(column)) {
-        return this.extractReferenceId(value, column, context);
+      if (column && this.isLinkColumn(column)) {
+        return this.extractLinkId(value, column, context);
       }
     }
 

@@ -32,7 +32,7 @@ const tableWithFragmentId = podTable('notes', {
   type: 'https://schema.org/Note'
 });
 
-// Users table for reference target
+// Users table for link target
 const usersTable = podTable('users_ref', {
   id: id(),
   name: string('name').predicate('https://schema.org/name'),
@@ -42,11 +42,11 @@ const usersTable = podTable('users_ref', {
   type: 'https://schema.org/Person'
 });
 
-// Posts table with reference column
+// Posts table with link column
 const postsTable = podTable('posts', {
   id: id(),
   title: string('title').predicate('https://schema.org/headline'),
-  authorId: uri('authorId').predicate('https://schema.org/author').reference(usersTable),
+  authorId: uri('authorId').predicate('https://schema.org/author').link(usersTable),
 }, {
   base: 'http://localhost:3000/test/data/posts/',
   subjectTemplate: '{id}.ttl',
@@ -129,7 +129,7 @@ describe('ExpressionBuilder with query operators', () => {
     expect(result).toContain('IN');
   });
 
-  it('resolves reference UUIDs for eq() on uri columns', () => {
+  it('resolves link UUIDs for eq() on uri columns', () => {
     const uuid = '8f3c1b6a-2b4e-4b0a-9f2d-3c8f6dd9a111';
     const condition = eq(postsTable.authorId, uuid);
     const result = builder.buildWhereClause(condition, postsTable);
@@ -139,7 +139,7 @@ describe('ExpressionBuilder with query operators', () => {
     expect(result).not.toContain(`<${uuid}>`);
   });
 
-  it('resolves reference UUIDs when already wrapped in angle brackets', () => {
+  it('resolves link UUIDs when already wrapped in angle brackets', () => {
     const uuid = '5d3f1c6b-1a2e-4c3b-9f2d-3c8f6dd9a222';
     const condition = eq(postsTable.authorId, `<${uuid}>`);
     const result = builder.buildWhereClause(condition, postsTable);

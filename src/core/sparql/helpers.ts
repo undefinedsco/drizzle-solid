@@ -97,18 +97,18 @@ function formatSingleValue(
   }
 
   // 如果是 URI 列，始终作为 URI 处理
-  if (column?.dataType === 'uri' || column?.options?.referenceTarget) {
+  if (column?.dataType === 'uri' || column?.options?.linkTarget) {
     const raw = String(value);
     if (raw.startsWith('<') && raw.endsWith('>')) {
       const inner = raw.slice(1, -1);
       if (resolver && !resolver.isAbsoluteUri(inner)) {
-        const resolved = resolver.resolveReference(inner, column, context);
+        const resolved = resolver.resolveLink(inner, column, context);
         return `<${resolved}>`;
       }
       return raw;
     }
     if (resolver) {
-      const resolved = resolver.resolveReference(raw, column, context);
+      const resolved = resolver.resolveLink(raw, column, context);
       return `<${resolved}>`;
     }
     if (raw.startsWith('<')) return raw;

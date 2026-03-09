@@ -73,10 +73,10 @@ function columnToShapeProperty(
   }
 
   // 设置节点类型
-  if (column.dataType === 'uri' || column.isReference()) {
+  if (column.dataType === 'uri' || column.isLink()) {
     property.nodeKind = 'IRI';
-    if (column.isReference()) {
-      property.class = column.getReferenceTarget();
+    if (column.isLink()) {
+      property.class = column.getLinkTarget();
     }
   } else if (column.dataType !== 'object' && column.dataType !== 'json') {
     property.nodeKind = 'Literal';

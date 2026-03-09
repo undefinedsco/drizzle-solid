@@ -16,13 +16,13 @@ import { UriResolverImpl } from '../../uri';
  * URI 列处理器
  *
  * URI 类型作为 NamedNode，不是 Literal
- * 支持根据 reference 配置自动补全 URI
+ * 支持根据 link 配置自动补全 URI
  */
 export class UriHandler implements ColumnHandler {
   readonly name = 'uri';
 
   canHandle(column: PodColumnBase): boolean {
-    return column.dataType === 'uri' || column.isReference();
+    return column.dataType === 'uri' || column.isLink();
   }
 
   /**
@@ -43,7 +43,7 @@ export class UriHandler implements ColumnHandler {
     // 传递 context 给 uriResolver，让其作为参数使用而非内部状态
     const uriContext = this.toUriContext(context);
     const resolver = context?.uriResolver ?? new UriResolverImpl();
-    const resolved = resolver.resolveReference(uri, column, uriContext);
+    const resolved = resolver.resolveLink(uri, column, uriContext);
 
     return {
       termType: 'NamedNode',

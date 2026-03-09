@@ -183,7 +183,7 @@
 **排除的 15 个测试**：
 1. Auto increment（Solid 用 UUID）
 2. Migrations（Solid 没有 schema migration）
-3. Foreign key constraints（RDF 用 URI reference）
+3. Foreign key constraints（RDF 用 URI link / IRI link）
 4. SQL 特有的类型（blob, bigint 等）
 5. 数据库特有的功能（triggers, views）
 

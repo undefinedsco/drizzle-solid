@@ -1,96 +1,74 @@
 # Architecture Overview
 
-This document summarizes the current code architecture and the direction for refactors.
-It is intended to keep boundaries clear and make breaking changes easier to plan.
+This document summarizes the current `drizzle-solid` architecture.
 
-## Layers and Responsibilities
+## Public API layers
 
-1. Public API
-   - Entry points: `src/index.ts`, `src/driver.ts`, `src/solid.ts`
-   - Exposes stable APIs and core types; hides internal wiring where possible.
+### 1. Constructors
 
-2. Core Services (no IO)
-   - Query builders, AST/SPARQL conversion, schema/shape, URI handling.
-   - Expected to be deterministic and easy to test in isolation.
+- `pod(session, config?)`
+- `drizzle(session, config?)`
 
-3. Adapters / IO
-   - LDP/SPARQL execution, notifications, federated queries.
-   - Owns network IO and retries.
+它们共享同一底层运行时，只是 API 组织方式不同。仓库文档与 examples 默认先展示 `pod()` 这一层的语义组织。
 
-4. Utilities
-   - RDF helpers and Thing operations that stay stateless.
+### 2. Semantic-first façade
 
-## Key Components
+- `PodClient`
+- `PodCollection`
+- `PodEntity`
 
-- PodDialect: Orchestrates runtime, services, and execution pipeline.
-- PodRuntime: Owns session, podUrl/webId, and connection state.
-- PodServices: Builds stateful helpers (resolver/shape/discovery/strategy).
-- PodExecutor: Executes queries and coordinates LDP/SPARQL strategies.
-- PodAsyncSession: Executes queries with lifecycle checks.
-- PodDatabase: Public-facing surface area (query builders + services).
+这层更强调：
 
-## Discovery Access
+- collection-oriented reads
+- exact entity targets
+- runtime binding semantics
 
-Discovery is exposed from the database instance:
+### 3. Drizzle-shaped core
 
-```typescript
+- `PodDatabase`
+- builder APIs: `select / insert / update / delete`
+- `db.query.*` read facade
+- discovery / federation / SPARQL services
+
+## Core runtime pieces
+
+- `PodDialect`: orchestrates runtime, services, and execution
+- `PodRuntime`: owns session, pod URL / webId, and connection state
+- `PodExecutor`: coordinates LDP/SPARQL execution strategies
+- `PodDatabase`: Drizzle-aligned public surface + services
+- `PodClient`: semantic façade over `PodDatabase`
+
+## Discovery access
+
+如果你用 `pod()`：
+
+```ts
+const client = pod(session);
+const locations = await client.discovery.discover('https://schema.org/Person');
+```
+
+如果你保持 `drizzle()`：
+
+```ts
 const db = drizzle(session);
-
-// Composite discovery: TypeIndex first, SAI (Interop) fallback
 const locations = await db.discovery.discover('https://schema.org/Person');
 ```
 
-The discovery pipeline supports both TypeIndex and SAI (Interop) flows.
+## Connection lifecycle
 
-## Connection Lifecycle
+`pod(session)` and `drizzle(session)` both construct clients lazily.
 
-`drizzle()` constructs the database instance without forcing a network preflight by default.
-Call `await db.connect()` if you want a proactive Pod check, or pass `{ autoConnect: true }`
-to `drizzle()` to preserve eager connect behavior. Otherwise the first query will connect
-lazy via `PodExecutor`.
+- use `connect()` when you want an eager Pod check
+- use `init(table)` when your app owns storage and needs bootstrap
+- otherwise the first real operation connects through the execution pipeline
 
-## Refactor Direction (Breaking Change Friendly)
+## Key takeaway
 
-### Phase A: Remove mutable singletons
+The architectural split is about **API organization**, not about changing the underlying runtime model. New docs/examples simply default to the semantic-first surface.
 
-Goal: eliminate cross-instance state leakage.
+真正的变化重点仍然是：
 
-- Replace module-level singletons with per-instance services.
-- Ensure all stateful utilities are constructed inside `PodDialect` (or injected).
-- Deprecate legacy `subjectResolver` path and consolidate on `uriResolver`.
-
-Targets:
-- `src/core/subject/*` -> remove or thin compatibility wrapper.
-- `src/core/uri/resolver.ts` -> stop using module-level instance.
-- `src/core/discovery/provider-cache.ts` -> avoid shared global cache.
-
-Status:
-- Core services now use per-instance `UriResolver` injected from `PodDialect`.
-- `subjectResolver`/`uriResolver` singleton exports have been removed from public API.
-- `providerCache` singleton export has been removed; use `new ProviderCache()` instead.
-
-### Phase B: Split PodDialect responsibilities
-
-Goal: turn `PodDialect` into a thin orchestrator.
-
-Proposed split:
-- `PodRuntime` (connection/session, podUrl/webId, fetch)
-- `PodServices` (resolver/shape/discovery/strategy)
-- `PodExecutor` (SPARQL + LDP execution pipeline)
-
-Status:
-- `PodRuntime`, `PodServices`, and `PodExecutor` are introduced and wired into `PodDialect`.
-
-### Phase C: Public API consolidation
-
-Goal: narrow the exported surface while preserving discovery access.
-
-- Keep `db.discovery` as the primary entry point for discovery.
-- Avoid exporting implementation classes unless required for advanced use.
-- Maintain TypeIndex + SAI (Interop) support through the composite pipeline.
-
-These steps help avoid cross-instance state leakage and reduce coupling.
-
-Status:
-- Internal implementation classes are no longer exported from `src/index.ts`.
-- Discovery remains accessible via `db.discovery` (TypeIndex + SAI composite).
+- resource placement
+- IRI identity
+- read vs write semantics
+- SPARQL-native escape hatches

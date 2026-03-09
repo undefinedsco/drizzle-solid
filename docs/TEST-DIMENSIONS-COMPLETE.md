@@ -34,9 +34,9 @@
 ### 5. API Interface（接口维度）- 7 种
 - Query Builder: `db.select().from(table).where(...)`
 - Relational Query: `db.query.table.findFirst({ where: ... })`
-- Helper: `db.findByIri(table, uri)`
+- Explicit IRI helper: `db.findByIri(table, iri)`
 - Batch: `db.batch([...])`
-- Raw SPARQL: `db.execute(sparql)`
+- Raw SPARQL: `db.executeSPARQL(sparql)`
 - Transaction: `db.transaction(async (tx) => { ... })`
 - Prepared statements: `db.prepare(...)`
 
@@ -67,7 +67,7 @@
 - `json`, `object`
 
 **RDF-specific:**
-- `uri()` with `.reference()`
+- `uri()` with `.link()` as link target metadata
 
 ### 8. Column Modifiers（列修饰符）- 10 种
 - `.primaryKey()`
@@ -75,7 +75,7 @@
 - `.default(value)`
 - `.unique()`
 - `.predicate(uri)`
-- `.reference(table)`
+- `.link(table)` (declares link target)
 - `.inverse()`
 - `.index()`
 - `.check(condition)`
@@ -95,10 +95,10 @@
 
 ### 11. Data Relationships（数据关系）- 6 种
 - No relations
-- One-to-one: `.reference()`
-- One-to-many: `.reference()` + array
+- One-to-one link: `.link()`
+- One-to-many link: `.link()` + array
 - Many-to-many: junction table
-- Self-referencing: `parent.reference(parent)`
+- Self-linking: `parent.link(parent)`
 - Inverse relations: `.inverse()`
 
 ### 12. Query Features（查询特性）- 8 种

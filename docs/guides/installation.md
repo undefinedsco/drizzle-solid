@@ -34,11 +34,10 @@ yarn add @inrupt/solid-client-authn-node
 当前兼容口径：
 - **官方支持**：`4.x`
 - **暂不承诺支持矩阵**：`3.x`
-- 代码里有少量兼容不同 binding 形态的处理，但在补齐 3.x / 4.x 双版本测试矩阵前，不把 3.x 当成正式支持版本
 
 适合直接安装到应用里的场景：
 - LDP-backed 查询回退
-- `db.execute()` / `db.executeSPARQL()`
+- `db.executeSPARQL()` / `client.sparql()`
 - 需要内置 SPARQL client 的跨资源查询
 
 ```bash
@@ -52,13 +51,13 @@ yarn add @comunica/query-sparql-solid
 ```ts
 import { createRequire } from 'node:module';
 import {
-  drizzle,
+  pod,
   createNodeModuleSparqlEngineFactory,
 } from '@undefineds.co/drizzle-solid';
 
 const requireFromHere = createRequire(import.meta.url);
 
-const db = drizzle(session, {
+const client = pod(session, {
   sparql: {
     createQueryEngine: createNodeModuleSparqlEngineFactory(
       requireFromHere.resolve('@undefineds.co/xpod/package.json')
@@ -87,9 +86,13 @@ configureSparqlEngine({
 
 ## 4. 最小化验证
 
+仓库文档与 examples 默认用 `pod()` 展开主线语义，因此这里也使用 `pod(session)` 做最小验证。
+
+如果你想保留 Drizzle 风格 builder，`drizzle(session)` 仍然是正式可用入口。
+
 ```ts
 import { Session } from '@inrupt/solid-client-authn-node';
-import { drizzle, podTable, string } from '@undefineds.co/drizzle-solid';
+import { pod, podTable, string } from '@undefineds.co/drizzle-solid';
 
 async function main() {
   const session = new Session();
@@ -107,11 +110,11 @@ async function main() {
     type: 'http://xmlns.com/foaf/0.1/Person',
   });
 
-  const db = drizzle(session);
-  await db.init([profiles]);
-  await db.select().from(profiles).limit(1);
+  const client = pod(session);
+  await client.init(profiles);
 
-  console.log('drizzle-solid 初始化成功');
+  const rows = await client.collection(profiles).list({ limit: 1 });
+  console.log('drizzle-solid 初始化成功', rows);
 }
 
 main().catch((error) => {
@@ -120,7 +123,18 @@ main().catch((error) => {
 });
 ```
 
-## 5. 仓库内开发 / 测试补充
+## 5. 从 `drizzle-orm` 迁移？
+
+如果你本来熟悉的是 SQL 版 `drizzle-orm`，下一步优先看：
+
+- `docs/guides/migrating-from-drizzle-orm.md`
+
+那份指南重点解释：
+- `table/row` 心智如何映射到 `Resource/Document/IRI`
+- 为什么写操作需要更强调 exact target
+- 为什么入口名不是最关键的问题，真正关键的是语义收口
+
+## 6. 仓库内开发 / 测试补充
 
 如果你是在本仓库里跑真实 CSS / xpod 测试，还需要：
 
@@ -139,4 +153,4 @@ yarn css:install
 - **CSS / xpod 依赖冲突**
   - 仓库内开发请使用 `yarn css:install` 保持测试运行时隔离。
 
-下一步建议阅读：`docs/api/README.md`、`docs/guides/authentication.md`、`docs/quick-start-local.md`
+下一步建议阅读：`docs/api/README.md`、`docs/guides/migrating-from-drizzle-orm.md`、`docs/quick-start-local.md`

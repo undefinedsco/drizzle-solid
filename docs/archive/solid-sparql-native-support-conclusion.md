@@ -1,5 +1,7 @@
 # Solid Pod 原生 SPARQL 支持验证报告
 
+> Archive note: 这是一份历史性验证记录，形成于当前 Solid-first API 叙事收口之前。当前公开口径请优先参考 `README.md` 与 `docs/api/README.md`。
+
 ## 🎯 核心问题
 
 **用户问题：** "话说是不是solid pod原生就支持sparql啊？如果是的话直接用n3对接pod就好了，可以不用comunica？"
@@ -78,12 +80,8 @@ const response = await session.fetch(resourceUrl, {
 
 ### 2. drizzle-solid 方式
 ```javascript
-// 使用 drizzle-solid ORM
-const db = drizzle({
-  podUrl: 'http://localhost:3000',
-  webId: 'http://localhost:3000/alice/profile/card#me',
-  session: session
-});
+// 使用 drizzle-solid（当前签名示意）
+const db = drizzle(session);
 
 await db.insert(tasks).values(newTask);
 ```

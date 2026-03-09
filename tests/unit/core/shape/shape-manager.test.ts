@@ -87,12 +87,12 @@ describe('ShapeManager', () => {
       expect(urlProp!.datatype).toBe('http://www.w3.org/2001/XMLSchema#anyURI');
     });
 
-    it('should handle reference type', () => {
+    it('should handle link type', () => {
       const table = podTable('posts', {
         id: id(),
         author: string('author')
           .predicate('https://schema.org/author')
-          .reference('https://schema.org/Person'),
+          .link('https://schema.org/Person'),
       }, {
         base: '/data/posts/',
         type: 'https://schema.org/BlogPosting',

@@ -1,31 +1,37 @@
 # 认证与连接
 
-Drizzle Solid 直接复用 Inrupt 的会话对象；只要 `Session` 处于登录状态，即可传给 `drizzle(session)` 获取数据库实例。本章覆盖 Node 环境的客户端凭证登录、浏览器交互式登录，以及常见的会话复用技巧。
+`drizzle-solid` 直接复用 Solid `Session`。
+
+重点不是必须换入口名，而是：
+
+- 先拿到一个已登录的 `Session`
+- 仓库主线文档与 examples 默认用 `pod(session)` 表达 `collection()` / `entity()` 语义
+- `drizzle(session)` 仍然可用于保留 Drizzle 代码形状
+- 真正要理解的是 Pod / IRI / exact-target mutation 语义
 
 ## 核心概念
-- **WebID**：Solid 生态中的唯一身份 URL，例如 `https://localhost:3001/alice/profile/card#me`。
-- **Pod**：用户的数据容器，Drizzle Solid 会基于表的 `containerPath` 推导具体资源文件。
-- **会话 (Session)**：Inrupt SDK 暴露的认证状态载体，维护访问令牌和 `fetch` 函数。
 
-## Node.js 客户端凭证流程
+- **WebID**：Solid 用户身份 URL，例如 `https://alice.example/profile/card#me`
+- **Pod**：用户自己的数据空间
+- **Session**：Inrupt SDK 的认证状态载体，包含令牌状态与认证 `fetch`
+
+## Node.js 客户端凭证登录
 
 ```ts
 import { Session } from '@inrupt/solid-client-authn-node';
-import { drizzle, podTable, string } from 'drizzle-solid';
+import { pod, podTable, string } from '@undefineds.co/drizzle-solid';
 
-type Env = {
+async function createDatabase(env: {
   SOLID_CLIENT_ID: string;
   SOLID_CLIENT_SECRET: string;
   SOLID_OIDC_ISSUER: string;
-};
-
-async function createDatabase(env: Env) {
+}) {
   const session = new Session();
   await session.login({
     clientId: env.SOLID_CLIENT_ID,
     clientSecret: env.SOLID_CLIENT_SECRET,
     oidcIssuer: env.SOLID_OIDC_ISSUER,
-    tokenType: 'DPoP'
+    tokenType: 'DPoP',
   });
 
   if (!session.info.isLoggedIn) {
@@ -34,18 +40,16 @@ async function createDatabase(env: Env) {
 
   const profiles = podTable('profiles', {
     webId: string('webId').primaryKey(),
-    name: string('name')
+    name: string('name').predicate('http://xmlns.com/foaf/0.1/name'),
   }, {
-    containerPath: '/profiles/',
-    type: 'https://schema.org/Person'
+    base: '/profiles/profiles.ttl',
+    type: 'https://schema.org/Person',
   });
 
-  const db = drizzle(session);
-  return { db, session, profiles };
+  const client = pod(session);
+  return { client, session, profiles };
 }
 ```
-
-> 建议将凭证写入 `.env.local`，并由 Jest/CSS 集成测试自动读取。
 
 ## 浏览器交互式登录
 
@@ -53,9 +57,9 @@ async function createDatabase(env: Env) {
 import {
   handleIncomingRedirect,
   login,
-  getDefaultSession
+  getDefaultSession,
 } from '@inrupt/solid-client-authn-browser';
-import { drizzle } from 'drizzle-solid';
+import { pod } from '@undefineds.co/drizzle-solid';
 
 export async function ensureAuthenticated() {
   await handleIncomingRedirect();
@@ -65,29 +69,40 @@ export async function ensureAuthenticated() {
     await login({
       oidcIssuer: 'https://solidcommunity.net',
       redirectUrl: window.location.href,
-      clientName: 'Drizzle Solid Demo'
+      clientName: 'Drizzle Solid Demo',
     });
-    return null; // 浏览器将重定向，后续逻辑会在回调后继续
+    return null;
   }
 
-  return drizzle(session as any);
+  return pod(session as any);
 }
 ```
 
-> 浏览器端同样返回与 Node 一致的 `Session` 接口，只要保证 `info.isLoggedIn === true` 即可交给 `drizzle`。
+## 为什么主线文档优先用 `pod()`
 
-## 会话复用与缓存
+如果你希望把集合读取、精确实体和运行时绑定写得更显式，可以在同样的 `Session` 上使用：
 
-- **持久化访问令牌**：测试环境可将 `session.info.sessionId` 序列化保存，复用 `Session` 的 `fetch` 逻辑减少认证成本。
-- **错误处理**：若操作返回 401/403，可捕获后触发 `session.logout()` 并重新登录，避免因过期令牌导致的隐式失败。
-- **多 Pod 支持**：目前每个数据库实例绑定一个 `Session`，如需访问多个 Pod，请为每个 Pod 创建独立的 `drizzle(session)`。
+```ts
+import { pod } from '@undefineds.co/drizzle-solid';
+
+const client = pod(session);
+```
+
+它不是唯一入口，但更适合在新代码里直接表达 link、collection 和 exact-entity 语义。
+
+如果你的应用已经大量使用 builder / `db.query.*`，继续保留 `drizzle()` 也完全可以。
+
+## 会话复用
+
+- **令牌缓存**：测试环境可复用 `session.info.sessionId` 相关状态，减少重复登录成本
+- **过期处理**：若操作返回 401/403，可触发重新登录，而不是让后续查询隐式失败
+- **多 Pod**：一个 `Session` 对应一个认证上下文；重要的是访问语义和权限，而不是构造函数名字
 
 ## 常见故障排查
 
 | 现象 | 可能原因 | 处理方式 |
 | --- | --- | --- |
-| 登录成功但查询 403 | `containerPath` 对应的 `.ttl` 不存在或 ACL 无写权限 | 调用 `ensureContainer`（见 `tests/integration/css/helpers.ts`）或手动授予权限 |
-| 登录卡死 | 未为客户端凭证启用 `tokenEndpoint` 权限，或 CSS 未启动 | 检查 `.env.local` 与 `yarn server:start` 输出 |
-| 在 Jest 中 fetch 失败 | 会话未登录或 `.env.local` 缺少凭证 | 断言 `session.info.isLoggedIn === true` 后再执行测试 |
-
-更多实例代码可查看 `examples/02-authentication.ts` 与 `tests/integration/css/drizzle-crud.test.ts`。
+| 登录成功但查询 403 | Pod 资源不存在或 ACL 无权限 | 检查容器存在性与授权策略 |
+| 登录卡住 | OIDC issuer / client 凭证不匹配 | 核对 `.env.local` 与服务端配置 |
+| 浏览器回调后未登录 | `redirectUrl` 不匹配 | 确保与应用实际地址一致 |
+| `drizzle(session)` / `pod(session)` 报未登录 | `Session.login()` 未正确等待完成 | 调用前确认 `session.info.isLoggedIn === true` |

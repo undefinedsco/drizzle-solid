@@ -26,7 +26,7 @@ export class SelectBuilder {
   }
 
   /**
-   * Set table context for URI reference resolution
+   * Set table context for URI link resolution
    */
   setTableContext(context: TableRegistryContext): void {
     this.tableContext = context;

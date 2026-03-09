@@ -62,11 +62,11 @@ export class DrizzleShapeManager implements ShapeManager {
         prop.inverse = true;
       }
       
-      // Check reference first
-      if (column.dataType === 'uri' || column.options?.referenceTarget) {
+      // Check link metadata first
+      if (column.dataType === 'uri' || column.options?.linkTarget) {
         prop.datatype = column.dataType === 'uri' ? XSD.ANYURI : undefined;
         prop.nodeKind = SHACL.IRI;
-        prop.class = column.options?.referenceTarget;
+        prop.class = column.options?.linkTarget;
       } else {
         // Map Drizzle-Solid types to XSD/SHACL nodeKind
         switch (column.dataType) {
@@ -306,7 +306,7 @@ export class DrizzleShapeManager implements ShapeManager {
       drizzleType = xsdToDrizzleType(prop.datatype);
     }
 
-    // 如果有 class 约束，说明是引用类型
+    // 如果有 class 约束，说明是链接类型
     if (prop.class) {
       drizzleType = 'uri';
     }
@@ -334,7 +334,7 @@ export class DrizzleShapeManager implements ShapeManager {
       case 'uri':
         column = uri(columnName).predicate(prop.path);
         if (prop.class) {
-          column = column.references(prop.class);
+          column = column.link(prop.class);
         }
         break;
       case 'object':

@@ -46,7 +46,7 @@ export class ASTToSPARQLConverter {
   }
 
   /**
-   * Set table registry for URI reference resolution
+   * Set table registry for URI link resolution
    */
   setTableRegistry(
     tableRegistry: Map<string, PodTable[]>,

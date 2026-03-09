@@ -29,9 +29,9 @@
 ### 5. API Interface（5 种）
 - Query Builder: `db.select().from(table).where(...)`
 - Relational Query: `db.query.table.findFirst({ where: ... })`
-- Helper: `db.findByIri(table, uri)`
+- Explicit IRI helper: `db.findByIri(table, iri)`
 - Batch: `db.batch([...])`
-- Raw SPARQL: `db.execute(sparql)`
+- Raw SPARQL: `db.executeSPARQL(sparql)`
 
 ### 6. Query Operators（10+ 种）
 - `eq`, `ne`, `gt`, `gte`, `lt`, `lte`
@@ -43,14 +43,14 @@
 ### 7. Column Types（6 种）
 - `string`, `int`, `boolean`
 - `datetime`, `json`
-- `uri()` with `.reference()`
+- `uri()` with `.link()` as link target metadata
 
 ### 8. Column Modifiers（6 种）
 - `.primaryKey()`
 - `.notNull()`
 - `.default(value)`
 - `.predicate(uri)`
-- `.reference(table)`
+- `.link(table)` (declares link target)
 - `.inverse()`
 
 ### 9. SPARQL Engine（2 种）
@@ -88,8 +88,8 @@
 **覆盖**:
 - 所有 query operators
 - Relational Query API
-- `findByIri()` helper
-- Column modifiers (`.notNull()`, `.reference()`)
+- explicit IRI helper
+- Column modifiers (`.notNull()`, `.link()`)
 - 基本并发场景
 
 **当前状态**: ⚠️ 部分覆盖
@@ -126,7 +126,7 @@ find integration-tests/tests/sqlite -name "*.test.ts" -exec wc -l {} + | tail -1
    - 映射到 Solid: 每种 operator × 2 templates = 10 × 2 = 20 tests ⚠️
 
 3. **Relations** (Drizzle: ~300 tests)
-   - 映射到 Solid: `.reference()` + joins = ~30 tests ❌
+   - 映射到 Solid: `.link()` + joins = ~30 tests ❌
 
 4. **Batch Operations** (Drizzle: ~100 tests)
    - 映射到 Solid: batch insert/update/delete = ~10 tests ❌
@@ -292,7 +292,8 @@ function mapDrizzleTest(drizzleTest) {
 
 **实施**:
 ```typescript
-const db = drizzle(session, { debug: true });
+const client = pod(session, { debug: true });
+const db = client.asDrizzle();
 // 输出:
 // [DEBUG] Template: {chatId}/{yyyy}/{MM}/{dd}/{id}.ttl
 // [DEBUG] Provided: { id: 'msg-123' }

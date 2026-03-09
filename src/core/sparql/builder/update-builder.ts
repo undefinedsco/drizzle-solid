@@ -47,13 +47,13 @@ export class UpdateBuilder {
     return this.tableContext;
   }
 
-  private resolveReferenceTerm(value: any, column: PodColumnBase | any, table: PodTable): string {
+  private resolveLinkTerm(value: any, column: PodColumnBase | any, table: PodTable): string {
     const raw = String(value ?? '').replace(/^<|>$/g, '');
     if (this.uriResolver.isAbsoluteUri(raw)) {
       return raw;
     }
     try {
-      return this.uriResolver.resolveReference(raw, column, this.getUriContext());
+      return this.uriResolver.resolveLink(raw, column, this.getUriContext());
     } catch (error) {
       const tableName = table.config?.name ?? 'unknown';
       const columnName = column?.name ?? 'unknown';
@@ -226,7 +226,7 @@ export class UpdateBuilder {
         if (column.options?.inverse) {
            const values = Array.isArray(value) ? value : [value];
            values.forEach(v => {
-             const valStr = this.resolveReferenceTerm(v, column, table);
+             const valStr = this.resolveLinkTerm(v, column, table);
              triples.push({
                subject: { termType: 'NamedNode', value: valStr },
                predicate: { termType: 'NamedNode', value: predicate },
@@ -434,7 +434,7 @@ export class UpdateBuilder {
         whereTriples.push(inverseTriple);
 
         if (value !== null && value !== undefined) {
-          const valStr = this.resolveReferenceTerm(value, column, table);
+          const valStr = this.resolveLinkTerm(value, column, table);
           insertTriples.push({
             subject: { termType: 'NamedNode', value: valStr },
             predicate: predicateTerm,

@@ -64,7 +64,7 @@ export interface TimeContext {
 /**
  * URI 解析上下文
  * 
- * 用于 reference 列的 URI 解析，作为参数传入而非内部状态
+ * 用于 link 列的 URI 解析，作为参数传入而非内部状态
  */
 export interface UriContext {
   /** 基础 URI (Pod URL) */
@@ -145,18 +145,18 @@ export interface UriResolver {
    */
   isSingleton(table: PodTable): boolean;
 
-  // ================= Object/Reference URI 解析 =================
+  // ================= Object/Link URI 解析 =================
 
   /**
-   * 解析 reference 列的值为完整 URI
+   * 解析 link 列的值为完整 URI
    * 
    * @param value 原始值（可能是 UUID、相对路径或完整 URI）
-   * @param column 列定义（包含 reference 配置）
+   * @param column 列定义（包含 link 配置）
    * @param context 解析上下文（包含 tableRegistry 等），作为参数传入
    * @returns 完整 URI
    * @throws 如果无法解析且不能 fallback
    */
-  resolveReference(value: string, column: PodColumnBase, context?: UriContext): string;
+  resolveLink(value: string, column: PodColumnBase, context?: UriContext): string;
 
   /**
    * 检查值是否为绝对 URI
@@ -164,17 +164,17 @@ export interface UriResolver {
   isAbsoluteUri(value: string): boolean;
 
   /**
-   * 检查列是否为 reference 类型
+   * 检查列是否为 link 类型
    */
-  isReferenceColumn(column: PodColumnBase | any): boolean;
+  isLinkColumn(column: PodColumnBase | any): boolean;
 
   /**
-   * 根据 reference 配置查找目标表
+   * 根据 link 配置查找目标表
    * 
    * 解析优先级：
-   * 1. referenceTable（直接引用表对象）
-   * 2. referenceTableName（表名 -> tableNameRegistry）
-   * 3. referenceTarget（class URI -> tableRegistry，需无歧义）
+   * 1. linkTable（直接链接目标表对象）
+   * 2. linkTableName（表名 -> tableNameRegistry）
+   * 3. linkTarget（class URI -> tableRegistry，需无歧义）
    * 
    * @param column 列定义
    * @param context 解析上下文

@@ -132,7 +132,7 @@ export class PodDatabase<TSchema extends Record<string, unknown> = Record<string
       table.config.hooks = options.hooks;
     }
     
-    // Store reference to db in table for hook context
+    // Store db handle in table for hook context
     // This allows hooks to access db when invoked
     (table as any)._db = this;
     
@@ -1202,33 +1202,33 @@ export class PodDatabase<TSchema extends Record<string, unknown> = Record<string
       const candidateColumns: PodColumnBase[] = relationDef?.fields && relationDef.fields.length > 0
         ? relationDef.fields
         : (Object.values(targetPodTable.columns ?? {}) as PodColumnBase[]);
-      const matchesParentReference = (col: PodColumnBase | undefined): boolean => Boolean(
+      const matchesParentLink = (col: PodColumnBase | undefined): boolean => Boolean(
         col && (
-          col.options?.referenceTarget === parentTable.config.type ||
-          col.options?.referenceTable === parentTable ||
-          col.getReferenceTable?.() === parentTable
+          col.options?.linkTarget === parentTable.config.type ||
+          col.options?.linkTable === parentTable ||
+          col.getLinkTable?.() === parentTable
         )
       );
-      const matchesTargetReference = (col: PodColumnBase | undefined): boolean => Boolean(
+      const matchesTargetLink = (col: PodColumnBase | undefined): boolean => Boolean(
         col && (
-          col.options?.referenceTarget === targetType ||
-          col.options?.referenceTable === targetPodTable ||
-          col.getReferenceTable?.() === targetPodTable
+          col.options?.linkTarget === targetType ||
+          col.options?.linkTable === targetPodTable ||
+          col.getLinkTable?.() === targetPodTable
         )
       );
-      const referenceColumns = relationDef?.fields && relationDef.fields.length > 0
+      const linkColumns = relationDef?.fields && relationDef.fields.length > 0
         ? candidateColumns
-        : candidateColumns.filter((col) => matchesParentReference(col) && !col.isInverse?.());
+        : candidateColumns.filter((col) => matchesParentLink(col) && !col.isInverse?.());
 
-      if (referenceColumns.length === 0) {
-        const relationReferences: PodColumnBase[] = relationDef?.references ?? [];
-        const explicitInverse = relationReferences.filter(
+      if (linkColumns.length === 0) {
+        const relationReferenceFields: PodColumnBase[] = relationDef?.references ?? [];
+        const explicitInverse = relationReferenceFields.filter(
           (col): col is PodColumnBase =>
             Boolean(
               col &&
               typeof col.isInverse === 'function' &&
               col.isInverse() &&
-              matchesTargetReference(col)
+              matchesTargetLink(col)
             )
         );
         const parentColumns = Object.values(parentTable.columns ?? {}) as PodColumnBase[];
@@ -1236,7 +1236,7 @@ export class PodDatabase<TSchema extends Record<string, unknown> = Record<string
           (col) =>
             typeof col.isInverse === 'function' &&
             col.isInverse() &&
-            matchesTargetReference(col)
+            matchesTargetLink(col)
         );
 
         if (inverseCandidates.length === 0) {
@@ -1244,7 +1244,7 @@ export class PodDatabase<TSchema extends Record<string, unknown> = Record<string
         }
 
         const inverseValuesPerRow = dedupedRows.map((row) =>
-          this.collectInverseReferenceValues(row, inverseCandidates)
+          this.collectInverseLinkValues(row, inverseCandidates)
         );
         const uniqueIris = Array.from(
           new Set(
@@ -1280,19 +1280,19 @@ export class PodDatabase<TSchema extends Record<string, unknown> = Record<string
 
         continue;
       }
-      const refColumn = referenceColumns[0];
-      const referenceColumn = relationDef?.references && relationDef.references[0];
-      const useReferenceIri = refColumn.isReference();
+      const refColumn = linkColumns[0];
+      const linkColumn = relationDef?.references && relationDef.references[0];
+      const useLinkIri = refColumn.isLink();
 
       const parentKeys = dedupedRows
-        .map((row) => this.resolveParentKey(row, referenceColumn, useReferenceIri))
+        .map((row) => this.resolveParentKey(row, linkColumn, useLinkIri))
         .filter((value): value is string => typeof value === 'string' && value.length > 0);
       if (parentKeys.length === 0) {
         continue;
       }
 
       let childBuilder = this.session.select().from(targetPodTable);
-      if (useReferenceIri) {
+      if (useLinkIri) {
         childBuilder = childBuilder.where(inArray(refColumn, parentKeys as any));
       } else {
         childBuilder = childBuilder.where({ [refColumn.name]: parentKeys });
@@ -1302,8 +1302,8 @@ export class PodDatabase<TSchema extends Record<string, unknown> = Record<string
       const grouped = new Map<string, Record<string, any>[]>();
       for (const child of childRows) {
         const fkValue = child[refColumn.name];
-        const lookupKeys = useReferenceIri
-          ? this.collectReferenceLookupKeys(fkValue)
+        const lookupKeys = useLinkIri
+          ? this.collectLinkLookupKeys(fkValue)
           : (this.normalizeLiteralValue(fkValue) ? [this.normalizeLiteralValue(fkValue)!] : []);
         for (const lookupKey of lookupKeys) {
           const arr = grouped.get(lookupKey) ?? [];
@@ -1313,12 +1313,12 @@ export class PodDatabase<TSchema extends Record<string, unknown> = Record<string
       }
 
       dedupedRows.forEach((row) => {
-        const parentKeys = useReferenceIri
+        const parentKeys = useLinkIri
           ? Array.from(new Set([
-              this.resolveParentKey(row, referenceColumn, true),
+              this.resolveParentKey(row, linkColumn, true),
               this.resolveIdFromRow(row),
             ].filter((value): value is string => typeof value === 'string' && value.length > 0)))
-          : [this.resolveParentKey(row, referenceColumn, false)].filter((value): value is string => typeof value === 'string' && value.length > 0);
+          : [this.resolveParentKey(row, linkColumn, false)].filter((value): value is string => typeof value === 'string' && value.length > 0);
 
         const related: Record<string, any>[] = [];
         for (const parentKey of parentKeys) {
@@ -1388,14 +1388,14 @@ export class PodDatabase<TSchema extends Record<string, unknown> = Record<string
 
   private resolveParentKey(
     row: Record<string, any>,
-    referenceColumn: PodColumnBase | undefined,
-    useReferenceIri: boolean
+    linkColumn: PodColumnBase | undefined,
+    useLinkIri: boolean
   ): string | undefined {
-    if (referenceColumn) {
-      const value = row[referenceColumn.name];
-      return useReferenceIri ? this.normalizeReferenceValue(value) : this.normalizeLiteralValue(value);
+    if (linkColumn) {
+      const value = row[linkColumn.name];
+      return useLinkIri ? this.normalizeLinkValue(value) : this.normalizeLiteralValue(value);
     }
-    return useReferenceIri ? this.resolveIriFromRow(row) : this.resolveIdFromRow(row);
+    return useLinkIri ? this.resolveIriFromRow(row) : this.resolveIdFromRow(row);
   }
 
   private resolveIriFromRow(row: Record<string, any>): string | undefined {
@@ -1409,9 +1409,9 @@ export class PodDatabase<TSchema extends Record<string, unknown> = Record<string
     return undefined;
   }
 
-  private collectReferenceLookupKeys(value: any): string[] {
+  private collectLinkLookupKeys(value: any): string[] {
     const keys: string[] = [];
-    const normalized = this.normalizeReferenceValue(value) ?? this.normalizeLiteralValue(value);
+    const normalized = this.normalizeLinkValue(value) ?? this.normalizeLiteralValue(value);
     if (normalized) {
       keys.push(normalized);
       const fragment = this.extractFragment(normalized);
@@ -1422,7 +1422,7 @@ export class PodDatabase<TSchema extends Record<string, unknown> = Record<string
     return keys;
   }
 
-  private normalizeReferenceValue(value: any): string | undefined {
+  private normalizeLinkValue(value: any): string | undefined {
     if (!value) return undefined;
     if (typeof value === 'string') {
       return value;
@@ -1446,7 +1446,7 @@ export class PodDatabase<TSchema extends Record<string, unknown> = Record<string
     return undefined;
   }
 
-  private collectInverseReferenceValues(row: Record<string, any>, columns: PodColumnBase[]): string[] {
+  private collectInverseLinkValues(row: Record<string, any>, columns: PodColumnBase[]): string[] {
     if (!columns.length) {
       return [];
     }
@@ -1457,7 +1457,7 @@ export class PodDatabase<TSchema extends Record<string, unknown> = Record<string
         continue;
       }
       const appendValue = (entry: unknown) => {
-        const normalized = this.normalizeReferenceValue(entry) ?? (typeof entry === 'string' ? entry : undefined);
+        const normalized = this.normalizeLinkValue(entry) ?? (typeof entry === 'string' ? entry : undefined);
         if (normalized) {
           collected.push(normalized);
         }
@@ -1474,8 +1474,8 @@ export class PodDatabase<TSchema extends Record<string, unknown> = Record<string
   private groupRowsByIri(rows: Record<string, any>[]): Map<string, Record<string, any>[]> {
     const grouped = new Map<string, Record<string, any>[]>();
     for (const row of rows) {
-      const iri = this.normalizeReferenceValue(row['@id']) ??
-        this.normalizeReferenceValue(row.uri) ??
+      const iri = this.normalizeLinkValue(row['@id']) ??
+        this.normalizeLinkValue(row.uri) ??
         (typeof row['@id'] === 'string' ? row['@id'] : undefined);
       if (!iri) {
         continue;

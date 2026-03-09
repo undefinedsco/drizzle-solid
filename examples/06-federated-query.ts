@@ -1,11 +1,13 @@
 /**
- * Federated Query Example
- * 
- * This example demonstrates how to query data across multiple Pods.
- * We have a local friends list, and for each friend, we fetch their
- * posts from their respective Pods.
+ * 06-federated-query.ts
+ *
+ * 展示跨 Pod 的联邦查询：
+ * 1. 在本地 Pod 中存储朋友列表
+ * 2. 用 `client.query` 触发带发现关系的读取
+ * 3. 直接使用 FederatedQueryExecutor 做高级控制
  */
-import { drizzle, podTable, string, id, relations, FederatedQueryExecutor } from 'drizzle-solid';
+
+import { pod, podTable, string, id, relations, FederatedQueryExecutor } from 'drizzle-solid';
 import { Session } from '@inrupt/solid-client-authn-node';
 import { config as loadEnv } from 'dotenv';
 
@@ -26,7 +28,7 @@ async function getAuthenticatedSession(): Promise<Session> {
     clientId,
     clientSecret,
     oidcIssuer,
-    tokenType: 'DPoP'
+    tokenType: 'DPoP',
   });
 
   if (!session.info.isLoggedIn) {
@@ -37,7 +39,9 @@ async function getAuthenticatedSession(): Promise<Session> {
 }
 
 function getPodBaseUrl(session: Session): string {
-  if (!session.info.webId) throw new Error('No WebID');
+  if (!session.info.webId) {
+    throw new Error('No WebID');
+  }
   return session.info.webId.split('profile')[0];
 }
 
@@ -45,11 +49,6 @@ async function run(providedSession?: Session) {
   const session = providedSession || await getAuthenticatedSession();
   const podBase = getPodBaseUrl(session);
 
-  // ============================================
-  // Step 1: Define Tables
-  // ============================================
-
-  // Local friends table (stored in our Pod)
   const friends = podTable('friends', {
     id: id(),
     name: string('name').predicate('https://schema.org/name'),
@@ -59,7 +58,6 @@ async function run(providedSession?: Session) {
     type: 'https://schema.org/Person',
   });
 
-  // Posts schema (no base - will be discovered dynamically from each friend's Pod)
   const posts = podTable('posts', {
     id: id(),
     title: string('title').predicate('https://schema.org/headline'),
@@ -69,83 +67,56 @@ async function run(providedSession?: Session) {
     base: '/data/posts/',
   });
 
-  // ============================================
-  // Step 2: Define Federated Relation
-  // ============================================
-
-  // The `discover` function tells the executor how to find
-  // the WebID for each friend, which is used to locate their Pod
   const friendsRelations = relations(friends, ({ many }) => ({
     posts: many(posts.$schema, {
       discover: (friend: any) => friend.webId,
     }),
   }));
 
-  // ============================================
-  // Step 3: Initialize Database
-  // ============================================
-
   const schema = { friends, posts, friendsRelations };
-  const db = drizzle(session, { schema });
-
-  // ============================================
-  // Step 4: Prepare Test Data
-  // ============================================
+  const client = pod(session, { schema });
+  await client.init(friends);
 
   console.log('Preparing test data...');
 
-  // Clean up old data
   try {
     await session.fetch(`${podBase}data/friends.ttl`, { method: 'DELETE' });
   } catch {}
 
-  // Insert some friends (in real use, these would be actual WebIDs)
-  await db.insert(friends).values([
-    { 
-      id: 'alice', 
-      name: 'Alice', 
-      webId: 'https://alice.solidcommunity.net/profile/card#me' 
+  await client.collection(friends).createMany([
+    {
+      id: 'alice',
+      name: 'Alice',
+      webId: 'https://alice.solidcommunity.net/profile/card#me',
     },
-    { 
-      id: 'bob', 
-      name: 'Bob', 
-      webId: 'https://bob.inrupt.net/profile/card#me' 
+    {
+      id: 'bob',
+      name: 'Bob',
+      webId: 'https://bob.inrupt.net/profile/card#me',
     },
   ]);
 
   console.log('Friends inserted.');
 
-  // ============================================
-  // Step 5: Execute Federated Query
-  // ============================================
+  console.log('\n--- Method 1: Using client.query with federated relations ---');
 
-  console.log('\n--- Method 1: Using db.query with federated relations ---');
-
-  // This would work if we had real Pods with proper TypeIndex setup
-  // For now, let's demonstrate the concept:
-  const friendsList = await db.query.friends.findMany();
+  const friendsList = await client.query.friends.findMany();
   console.log('Friends:', JSON.stringify(friendsList, null, 2));
 
-  // Check for any federated errors
-  const errors = db.getLastFederatedErrors();
+  const errors = client.getLastFederatedErrors();
   if (errors.length > 0) {
     console.log('Federated errors:', errors);
   }
-
-  // ============================================
-  // Step 6: Direct Executor Usage
-  // ============================================
 
   console.log('\n--- Method 2: Using FederatedQueryExecutor directly ---');
 
   const executor = new FederatedQueryExecutor({
     fetch: session.fetch,
-    timeout: 10000, // 10 second timeout
+    timeout: 10000,
   });
 
-  // Execute federated query on the friends we just retrieved
   const result = await executor.execute(
-    friendsList.map(f => ({ ...f })), // Clone the rows
+    friendsList.map((friend) => ({ ...friend })),
     {
       type: 'many',
       table: posts.$schema,
@@ -156,7 +127,7 @@ async function run(providedSession?: Session) {
     {
       parallel: true,
       maxConcurrency: 3,
-    }
+    },
   );
 
   console.log('Federated query result:');
@@ -176,13 +147,8 @@ async function run(providedSession?: Session) {
     }
   }
 
-  // ============================================
-  // Step 7: Handle Multiple WebIDs
-  // ============================================
-
   console.log('\n--- Method 3: Multiple WebIDs per row ---');
 
-  // For groups or teams, you might have multiple WebIDs per row
   const groups = podTable('groups', {
     id: id(),
     name: string('name').predicate('https://schema.org/name'),
@@ -191,7 +157,6 @@ async function run(providedSession?: Session) {
     base: '/data/groups/',
   });
 
-  // Simulate a group with member WebIDs
   const groupData = [
     {
       id: 'team1',
@@ -209,13 +174,13 @@ async function run(providedSession?: Session) {
       type: 'many',
       table: posts.$schema,
       isFederated: true,
-      discover: (group: any) => group.memberWebIds, // Returns array of WebIDs
+      discover: (group: any) => group.memberWebIds,
       relationName: 'memberPosts',
     },
     {
       parallel: true,
       maxConcurrency: 5,
-    }
+    },
   );
 
   console.log('Group result:');

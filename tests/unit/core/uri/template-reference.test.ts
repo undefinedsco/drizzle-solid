@@ -5,12 +5,12 @@ import { DocumentResourceResolver } from '../../../../src/core/resource-resolver
 import { podTable, uri, string } from '../../../../src/core/schema';
 import { eq } from '../../../../src/core/query-conditions';
 
-describe('Subject Template Reference & Query Handling', () => {
+describe('Subject Template Link & Query Handling', () => {
   const baseUri = 'https://pod.example.org';
   const uriResolver = new UriResolverImpl(baseUri);
   const resourceResolver = new DocumentResourceResolver(baseUri);
 
-  // Define a referenced table
+  // Define a linked table
   const Chat = podTable('chat', {
     id: uri('id').primaryKey(),
   }, {
@@ -19,11 +19,11 @@ describe('Subject Template Reference & Query Handling', () => {
     type: 'http://example.org/Chat',
   });
 
-  // Define a table using the reference in template
-  // Case 1: Hierarchical structure with reference
+  // Define a table using the link in template
+  // Case 1: Hierarchical structure with link
   const Message = podTable('message', {
     id: string('id').primaryKey(),
-    chatId: uri('chatId').predicate('http://example.org/chat').reference(Chat),
+    chatId: uri('chatId').predicate('http://example.org/chat').link(Chat),
   }, {
     base: '/data/messages/',
     subjectTemplate: '{chatId}/{id}.ttl',
@@ -31,7 +31,7 @@ describe('Subject Template Reference & Query Handling', () => {
   });
 
   describe('Path Generation (INSERT)', () => {
-    it('should resolve subject correctly when passing a slug for reference column', () => {
+    it('should resolve subject correctly when passing a slug for link column', () => {
       const record = {
         id: 'msg-1',
         chatId: 'chat-1'
@@ -40,7 +40,7 @@ describe('Subject Template Reference & Query Handling', () => {
       expect(subject).toBe('https://pod.example.org/data/messages/chat-1/msg-1.ttl');
     });
 
-    it('should resolve subject correctly when passing a full URI for reference column', () => {
+    it('should resolve subject correctly when passing a full URI for link column', () => {
       const record = {
         id: 'msg-1',
         chatId: 'https://pod.example.org/data/chats/chat-1'
@@ -69,7 +69,7 @@ describe('Subject Template Reference & Query Handling', () => {
       expect(mockListContainer).toHaveBeenCalledWith(expectedContainer);
     });
 
-    it('should optimize query range when filtering by reference URI', async () => {
+    it('should optimize query range when filtering by link URI', async () => {
       const mockListContainer = vi.fn().mockResolvedValue([]);
       
       // Query: WHERE chatId = 'https://pod.example.org/data/chats/chat-1'

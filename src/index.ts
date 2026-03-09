@@ -1,4 +1,5 @@
-// 主要入口点
+// 主要公开入口
+export { pod, PodClient, PodCollection, PodEntity, type PodCollectionQueryOptions } from './pod';
 export { drizzle, type SolidDatabase, type SolidAuthSession } from './driver';
 export * from './solid';
 

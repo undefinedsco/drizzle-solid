@@ -5,7 +5,7 @@ import { createTestSession, ensureContainer } from './helpers';
 const SIOC = { has_parent: 'http://rdfs.org/sioc/ns#has_parent' };
 const SCHEMA = { name: 'http://schema.org/name', category: 'http://schema.org/category' };
 
-describe('Issue #4: FILTER on optional/reference fields', () => {
+describe('Issue #4: FILTER on optional/link fields', () => {
   let session: any;
   let containerUrl: string;
 
@@ -14,7 +14,7 @@ describe('Issue #4: FILTER on optional/reference fields', () => {
     containerUrl = await ensureContainer(session, `integration/${Date.now()}/`);
   });
 
-  it('should return results when filtering on optional uri reference field with plain id', async () => {
+  it('should return results when filtering on optional uri link field with plain id', async () => {
     const Chat = podTable(
       'Chat',
       {
@@ -32,7 +32,7 @@ describe('Issue #4: FILTER on optional/reference fields', () => {
       'Thread',
       {
         id: string('id').primaryKey(),
-        chatId: uri('chatId').predicate(SIOC.has_parent).reference('Chat').notNull(),
+        chatId: uri('chatId').predicate(SIOC.has_parent).link('Chat').notNull(),
         title: string('title').predicate(SCHEMA.name),
       },
       {
@@ -50,7 +50,7 @@ describe('Issue #4: FILTER on optional/reference fields', () => {
       title: 'Test Chat',
     });
 
-    // Insert threads with reference to chat (using plain id, not full URI)
+    // Insert threads with link to chat (using plain id, not full URI)
     await db.insert(Thread).values([
       {
         id: 'thread-1',
@@ -65,7 +65,7 @@ describe('Issue #4: FILTER on optional/reference fields', () => {
     ]);
 
     // Query threads by chatId using plain id
-    // drizzle-solid should resolve 'chat-1' to full URI via reference()
+    // drizzle-solid should resolve 'chat-1' to full URI via link()
     const threads = await db.select()
       .from(Thread)
       .where(eq(Thread.chatId, 'chat-1'));

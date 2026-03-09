@@ -1,4 +1,4 @@
-import { drizzle, podTable, string, uri } from 'drizzle-solid';
+import { pod, podTable, string, uri } from 'drizzle-solid';
 import { relations } from 'drizzle-orm';
 import { Session } from '@inrupt/solid-client-authn-node';
 import { config as loadEnv } from 'dotenv';
@@ -20,7 +20,7 @@ async function getAuthenticatedSession(): Promise<Session> {
     clientId,
     clientSecret,
     oidcIssuer,
-    tokenType: 'DPoP'
+    tokenType: 'DPoP',
   });
 
   if (!session.info.isLoggedIn) {
@@ -31,7 +31,9 @@ async function getAuthenticatedSession(): Promise<Session> {
 }
 
 function getPodBaseUrl(session: Session): string {
-  if (!session.info.webId) throw new Error('No WebID');
+  if (!session.info.webId) {
+    throw new Error('No WebID');
+  }
   return session.info.webId.split('profile')[0];
 }
 
@@ -39,28 +41,25 @@ async function run(providedSession?: Session) {
   const session = providedSession || await getAuthenticatedSession();
   const podBase = getPodBaseUrl(session);
 
-  // 定义 Schema
   const users = podTable('users', {
     id: string('id').primaryKey(),
-    name: string('name').predicate('http://xmlns.com/foaf/0.1/name')
+    name: string('name').predicate('http://xmlns.com/foaf/0.1/name'),
   }, {
     base: `${podBase}data/users.ttl`,
-    type: 'http://xmlns.com/foaf/0.1/Person'
+    type: 'http://xmlns.com/foaf/0.1/Person',
   });
 
   const posts = podTable('posts', {
     id: string('id').primaryKey(),
     title: string('title').predicate('http://schema.org/headline'),
-    // 定义外键关联：authorId 存储用户的 URI
     authorId: uri('author')
       .predicate('http://schema.org/author')
-      .reference(users) // 支持传相对 ID 自动补全为用户 IRI
+      .link(users),
   }, {
     base: `${podBase}data/posts.ttl`,
-    type: 'http://schema.org/CreativeWork'
+    type: 'http://schema.org/CreativeWork',
   });
 
-  // 使用 Drizzle 的 relations API 定义关联
   const postsRelations = relations(posts, ({ one }) => ({
     author: one(users, {
       fields: [posts.authorId],
@@ -68,43 +67,28 @@ async function run(providedSession?: Session) {
     }),
   }));
 
-  // 初始化 Schema 对象，传给 drizzle
   const schema = { users, posts, postsRelations };
-  const db = drizzle(session, { schema });
+  const client = pod(session, { schema });
 
-  // 准备数据
   console.log('Seeding data...');
-  
-  // 清理旧数据 (防止重复运行报错)
+
   try {
     await session.fetch(`${podBase}data/users.ttl`, { method: 'DELETE' });
     await session.fetch(`${podBase}data/posts.ttl`, { method: 'DELETE' });
   } catch {}
 
-  await db.insert(users).values({ id: 'alice', name: 'Alice' });
-  // 可以直接传相对 ID：会根据 users 表的 base/subjectTemplate 自动补全为完整 IRI
-  await db.insert(posts).values({ id: 'post-1', title: 'Alice\'s Post', authorId: 'alice' });
+  await client.collection(users).create({ id: 'alice', name: 'Alice' });
+  await client.collection(posts).create({ id: 'post-1', title: 'Alice\'s Post', authorId: 'alice' });
 
-  // --- 核心展示：Query API ---
-  
   console.log('Executing Relational Query...');
-  
-  // 查找所有帖子，并自动带出作者信息 (Graph Traversal)
-  const results = await db.query.posts.findMany({
+
+  const results = await client.query.posts.findMany({
     with: {
-      author: true // 加载关联的 'author' (注意这里用的是 relation 的名字 'author')
-    }
+      author: true,
+    },
   });
 
   console.log('Posts with Authors:', JSON.stringify(results, null, 2));
-  // Output:
-  // [
-  //   {
-  //     id: 'post-1',
-  //     title: "Alice's Post",
-  //     author: { id: 'alice', name: 'Alice' }  <-- 自动解析关联
-  //   }
-  // ]
 }
 
 if (require.main === module) {

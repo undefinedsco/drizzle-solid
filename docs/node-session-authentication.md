@@ -1,71 +1,55 @@
-# Node.js Session 认证指南
+# Node Session Authentication
 
-本节聚焦服务器端环境下如何创建、缓存与复用 Inrupt `Session`，并与 Drizzle Solid 集成。
+This guide shows the recommended Node-side authentication flow for `drizzle-solid`.
 
-## 创建会话
+## Recommended flow
+
+1. Create an Inrupt `Session`
+2. Log in with client credentials
+3. Build your client with `pod(session)` for semantic-first code, or `drizzle(session)` if you want to keep the Drizzle-shaped surface
+4. Use the Solid semantics you actually need: resource placement, IRI identity, exact-target mutation
+
+## Minimal example
 
 ```ts
 import { Session } from '@inrupt/solid-client-authn-node';
+import { pod, podTable, string } from '@undefineds.co/drizzle-solid';
 
-export async function createSession() {
+async function main() {
   const session = new Session();
   await session.login({
+    oidcIssuer: process.env.SOLID_OIDC_ISSUER!,
     clientId: process.env.SOLID_CLIENT_ID!,
     clientSecret: process.env.SOLID_CLIENT_SECRET!,
-    oidcIssuer: process.env.SOLID_OIDC_ISSUER!,
-    tokenType: 'DPoP'
+    tokenType: 'DPoP',
   });
 
   if (!session.info.isLoggedIn) {
-    throw new Error('Solid Session 登录失败');
+    throw new Error('Session login failed');
   }
-
-  return session;
-}
-```
-
-> 建议在启动脚本前加载 `.env.local`，例如通过 `dotenv/config`。
-
-## 与 Drizzle Solid 集成
-
-```ts
-import { drizzle, podTable, string } from 'drizzle-solid';
-import { createSession } from './create-session';
-
-async function main() {
-  const session = await createSession();
 
   const todos = podTable('todos', {
     id: string('id').primaryKey(),
-    title: string('title').notNull()
+    title: string('title').predicate('http://schema.org/name'),
   }, {
-    containerPath: '/todos/',
-    type: 'https://schema.org/Action'
+    base: '/data/todos.ttl',
+    type: 'http://schema.org/Thing',
   });
 
-  const db = drizzle(session);
-  const rows = await db.select().from(todos).limit(10);
+  const client = pod(session);
+  await client.init(todos);
+
+  const rows = await client.collection(todos).list({ limit: 10 });
   console.log(rows);
 }
 
-main().catch((error) => {
-  console.error('查询失败', error);
-  process.exit(1);
-});
+main().catch(console.error);
 ```
 
-## 会话复用策略
+## Troubleshooting
 
-- **缓存 `session.info.sessionId`**：Inrupt 提供 `session.info.sessionId`，可在长期运行的服务中持久化，结合 `Session` 构造函数的 `sessionId` 选项复用既有登录态。
-- **序列化 `fetch`**：若需要跨进程复用，可通过 `session.fetch` 代理请求；请勿手工拼装 `Authorization` 头，以免触发 CSS 的 DPoP 校验失败。
-- **优雅退出**：结束脚本前调用 `session.logout()` 可主动吊销令牌，测试环境通常可省略。
-
-## 故障排查
-
-| 错误 | 可能原因 | 解决方案 |
+| Error | Likely cause | Fix |
 | --- | --- | --- |
-| `needs to be logged in` | `Session.login` 未被正确 await | 确保在调用 `drizzle(session)` 前检查 `session.info.isLoggedIn` |
-| 401 / 403 | 凭证过期或容器缺少权限 | 重新执行 `yarn example:setup`，或使用 `ensureContainer` 辅助创建容器 |
-| `fetch` ECONNREFUSED | CSS 未启动 | 在另一个终端运行 `yarn server:start` |
-
-更多示例可参考 `examples/02-authentication.ts` 与 `tests/integration/css/helpers.ts`。
+| `needs to be logged in` | `Session.login()` was not awaited properly | Ensure `session.info.isLoggedIn` before constructing the client |
+| 401 / 403 | Token expired or Pod ACL blocks access | Re-authenticate or fix ACL/container setup |
+| `fetch` ECONNREFUSED | Local server is not running | Start CSS / xpod before running the example |

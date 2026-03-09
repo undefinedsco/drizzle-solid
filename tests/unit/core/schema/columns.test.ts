@@ -120,15 +120,15 @@ describe('ColumnBuilder', () => {
     });
   });
 
-  describe('reference()', () => {
-    it('should set reference target URL', () => {
-      const col = uri('author').reference('https://schema.org/Person');
-      expect(col.options.referenceTarget).toBe('https://schema.org/Person');
+  describe('link()', () => {
+    it('should set link target URL', () => {
+      const col = uri('author').link('https://schema.org/Person');
+      expect(col.options.linkTarget).toBe('https://schema.org/Person');
     });
 
-    it('should set reference table name', () => {
-      const col = uri('author').reference('users');
-      expect(col.options.referenceTableName).toBe('users');
+    it('should set link table name', () => {
+      const col = uri('author').link('users');
+      expect(col.options.linkTableName).toBe('users');
     });
   });
 

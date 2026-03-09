@@ -23,7 +23,7 @@ describe('Date variables in subjectTemplate', () => {
 
     const Message = podTable('Message', {
       id: string('id').primaryKey(),
-      chatId: uriColumn('chatId').predicate(SIOC.has_container).inverse().reference(Chat),
+      chatId: uriColumn('chatId').predicate(SIOC.has_container).inverse().link(Chat),
       content: string('content'),
     }, {
       base: '/.data/chat/',
@@ -72,7 +72,7 @@ describe('Date variables in subjectTemplate', () => {
 
     const Message = podTable('Message', {
       id: string('id').primaryKey(),
-      chatId: uriColumn('chatId').predicate(SIOC.has_container).inverse().reference(Chat),
+      chatId: uriColumn('chatId').predicate(SIOC.has_container).inverse().link(Chat),
       content: string('content'),
     }, {
       base: '/.data/chat/',

@@ -1,13 +1,14 @@
 /**
  * 01-quick-start.ts
  *
- * 展示 Drizzle Solid 的核心功能：
+ * 展示 drizzle-solid 的 Solid-first 主线 API：
  * 1. 连接 Solid Pod
- * 2. 定义 RDF Schema 映射 (使用 Schema.org)
- * 3. 执行 SQL 风格的 CRUD
+ * 2. 定义资源模型
+ * 3. 通过 collection API 创建和查询实体
+ * 4. 通过 entity API 做精确更新/删除
  */
 
-import { drizzle, podTable, string, datetime } from 'drizzle-solid';
+import { pod, podTable, string, datetime } from 'drizzle-solid';
 import { v4 as uuid } from 'uuid';
 
 import { Session } from '@inrupt/solid-client-authn-node';
@@ -46,55 +47,56 @@ function getPodBaseUrl(session: Session): string {
 }
 
 async function run(providedSession?: Session) {
-  // 1. 认证
-  // 如果测试运行器提供了 session，则直接使用，否则执行登录
   const session = providedSession || await getAuthenticatedSession();
   const podBase = getPodBaseUrl(session);
   console.log(`Connected to Pod: ${podBase}`);
 
-  // 2. 定义表 (Schema)
-  // 我们定义一个简单的 'Post' 表，映射到 schema:CreativeWork
   const posts = podTable('posts', {
     id: string('id').primaryKey(),
     title: string('title').predicate('http://schema.org/headline'),
     content: string('content').predicate('http://schema.org/text'),
     createdAt: datetime('createdAt').predicate('http://schema.org/dateCreated')
   }, {
-    // 数据将存储在 /data/posts/ 目录下（Document 模式：每条记录一个文件）
-    // - 默认不带 fragment：{id}.ttl -> .../posts/<id>.ttl
-    // - 也可以显式带 fragment：{id}.ttl#it -> .../posts/<id>.ttl#it
     base: `${podBase}data/posts/`,
     subjectTemplate: '{id}.ttl',
     type: 'http://schema.org/CreativeWork'
   });
 
-  const db = drizzle(session);
-  await db.init([posts]);
+  const client = pod(session);
+  await client.init(posts);
 
-  // 3. 写入数据 (INSERT)
+  const postsCollection = client.collection(posts);
+
   const newId = uuid();
   console.log(`Creating post... ${newId}`);
-  
-  await db.insert(posts).values({
+
+  const draft = {
     id: newId,
     title: 'Hello Drizzle Solid',
-    content: 'This is my first post using Drizzle ORM on Solid.',
+    content: 'This is my first post using a Solid-first API on top of Drizzle Solid.',
     createdAt: new Date()
-  });
+  };
 
-  // 4. 读取数据 (SELECT)
+  const created = await postsCollection.create(draft);
+
+  console.log('Created post:', created);
+
   console.log('Reading posts...');
-  const result = await db.select().from(posts);
-  
+  const result = await postsCollection.list();
   console.log('Found posts:', result);
 
-  // 5. 清理
-  // await db.delete(posts).where(eq(posts.id, newId));
+  const createdIri = created?.['@id'] ?? postsCollection.iriFor(draft);
+
+  const postRef = postsCollection.byIri(createdIri);
+  await postRef.update({ title: 'Hello Pod API' });
+  console.log('Updated post via entity API:', await postRef.get());
+
+  await postRef.delete();
+  console.log('Deleted post via entity API');
 }
 
-// 仅在直接运行时执行
 if (require.main === module) {
   run().catch(console.error);
 }
 
-export { run }; // 导出供测试调用
+export { run };

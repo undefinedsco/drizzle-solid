@@ -191,7 +191,7 @@ describe('TripleBuilder', () => {
       namespace: { prefix: 'schema', uri: 'https://schema.org/' },
     });
 
-    it('should build parent-child reference and child triples', () => {
+    it('should build parent-child link and child triples', () => {
       const result = tripleBuilder.buildInsert(
         'https://pod.example/people/alice.ttl',
         tableWithInline.columns.address,
@@ -401,7 +401,7 @@ describe('TripleBuilder', () => {
       content: string('content').predicate('https://schema.org/text'),
       author: uri('author')
         .predicate('https://schema.org/author')
-        .reference('https://schema.org/Person'),
+        .link('https://schema.org/Person'),
     }, {
       base: 'https://pod.example/data/messages/',
       type: 'https://schema.org/Message',
@@ -456,7 +456,7 @@ describe('TripleBuilder', () => {
       expect(result.triples[0].object.value).toBe('https://other.pod/users/bob#me');
     });
 
-    it('should throw error when tableRegistry is missing for reference', () => {
+    it('should throw error when tableRegistry is missing for link', () => {
       const builder = new TripleBuilderImpl();
       
       // 没有设置 tableRegistry
@@ -496,7 +496,7 @@ describe('TripleBuilder', () => {
       id: string('id').primaryKey(),
       author: uri('author')
         .predicate('https://schema.org/author')
-        .reference('https://schema.org/Person'),
+        .link('https://schema.org/Person'),
     }, {
       base: 'https://pod.example/data/messages/',
       type: 'https://schema.org/Message',
@@ -508,7 +508,7 @@ describe('TripleBuilder', () => {
       id: string('id').primaryKey(),
       author: uri('author')
         .predicate('https://schema.org/author')
-        .reference('users_public'), // 表名字符串（非 URL 格式）
+        .link('users_public'), // 表名字符串（非 URL 格式）
     }, {
       base: 'https://pod.example/data/messages_tablename/',
       type: 'https://schema.org/Message',
@@ -520,7 +520,7 @@ describe('TripleBuilder', () => {
       id: string('id').primaryKey(),
       author: uri('author')
         .predicate('https://schema.org/author')
-        .reference(usersTable2), // 直接传表对象
+        .link(usersTable2), // 直接传表对象
     }, {
       base: 'https://pod.example/data/messages_tableobj/',
       type: 'https://schema.org/Message',
@@ -541,7 +541,7 @@ describe('TripleBuilder', () => {
       
       builder.setTableRegistry(classRegistry, nameRegistry);
       
-      // 使用 reference(class) 但 class 有多个表，应该抛出歧义错误
+      // 使用 link(class) 但 class 有多个表，应该抛出歧义错误
       expect(() => {
         builder.buildInsert(
           'https://pod.example/data/messages/msg1',
@@ -549,7 +549,7 @@ describe('TripleBuilder', () => {
           'alice',
           messagesTable
         );
-      }).toThrow(/Ambiguous reference.*multiple tables/);
+      }).toThrow(/Ambiguous link target.*multiple tables/);
     });
 
     it('should resolve using table name string when class is ambiguous', () => {
@@ -567,7 +567,7 @@ describe('TripleBuilder', () => {
       
       builder.setTableRegistry(classRegistry, nameRegistry);
       
-      // 使用 reference('users_public') 表名字符串
+      // 使用 link('users_public') 表名字符串
       const result = builder.buildInsert(
         'https://pod.example/data/messages_tablename/msg1',
         messagesTableWithTableName.columns.author,
@@ -605,7 +605,7 @@ describe('TripleBuilder', () => {
         id: string('id').primaryKey(),
         author: uri('author')
           .predicate('https://schema.org/author')
-          .reference('non_existent_table'), // 不存在的表名
+          .link('non_existent_table'), // 不存在的表名
       }, {
         base: 'https://pod.example/data/messages_bad/',
         type: 'https://schema.org/Message',
@@ -702,7 +702,7 @@ describe('TripleBuilder', () => {
       id: string('id').primaryKey(),
       author: uri('author')
         .predicate('https://schema.org/author')
-        .reference('users_doc'),
+        .link('users_doc'),
     }, {
       base: 'https://pod.example/data/messages/',
       type: 'https://schema.org/Message',
@@ -712,7 +712,7 @@ describe('TripleBuilder', () => {
       id: string('id').primaryKey(),
       author: uri('author')
         .predicate('https://schema.org/author')
-        .reference('users_doc_it'),
+        .link('users_doc_it'),
     }, {
       base: 'https://pod.example/data/messages/',
       type: 'https://schema.org/Message',
@@ -722,7 +722,7 @@ describe('TripleBuilder', () => {
       id: string('id').primaryKey(),
       author: uri('author')
         .predicate('https://schema.org/author')
-        .reference('users_doc_me'),
+        .link('users_doc_me'),
     }, {
       base: 'https://pod.example/data/messages/',
       type: 'https://schema.org/Message',
@@ -732,7 +732,7 @@ describe('TripleBuilder', () => {
       id: string('id').primaryKey(),
       author: uri('author')
         .predicate('https://schema.org/author')
-        .reference('users_fragment'),
+        .link('users_fragment'),
     }, {
       base: 'https://pod.example/data/messages/',
       type: 'https://schema.org/Message',
@@ -891,7 +891,7 @@ describe('TripleBuilder', () => {
       expect(result.triples[0].object.value).toBe(absoluteUri);
     });
 
-    it('should use direct table reference with subjectTemplate', () => {
+    it('should use direct linked table with subjectTemplate', () => {
       const builder = new TripleBuilderImpl();
       
       // 使用直接表引用的消息表
@@ -899,13 +899,13 @@ describe('TripleBuilder', () => {
         id: string('id').primaryKey(),
         author: uri('author')
           .predicate('https://schema.org/author')
-          .reference(usersDocWithIt),  // 直接引用表对象
+          .link(usersDocWithIt),  // 直接链接目标表对象
       }, {
         base: 'https://pod.example/data/messages/',
         type: 'https://schema.org/Message',
       });
       
-      // 不需要 registry，因为是直接引用表对象
+      // 不需要 registry，因为是直接链接目标表对象
       const result = builder.buildInsert(
         'https://pod.example/data/messages/msg1',
         messagesDirectRef.columns.author,

@@ -31,7 +31,7 @@ const Users = podTable('users', {
 
 const Posts = podTable('posts', {
   id: string('id').primaryKey().predicate('http://schema.org/identifier'),
-  author: uri('author').notNull().predicate('http://schema.org/author').reference(Users),
+  author: uri('author').notNull().predicate('http://schema.org/author').link(Users),
   title: string('title').notNull().predicate('http://schema.org/headline'),
 }, {
   type: 'http://schema.org/Article',

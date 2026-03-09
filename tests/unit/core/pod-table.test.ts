@@ -181,9 +181,9 @@ describe('PodTable', () => {
 
       it('应该检查是否为引用', () => {
         const column = new PodStringColumn('friend')
-          .reference(SCHEMA_PERSON);
-        expect(column.isReference()).toBe(true);
-        expect(column.getReferenceTarget()).toBe(SCHEMA_PERSON);
+          .link(SCHEMA_PERSON);
+        expect(column.isLink()).toBe(true);
+        expect(column.getLinkTarget()).toBe(SCHEMA_PERSON);
       });
     });
 
@@ -213,16 +213,16 @@ describe('PodTable', () => {
       });
     });
 
-    describe('引用列', () => {
-      it('应该正确识别引用列', () => {
-        const column = string('authorId').reference(SCHEMA_PERSON);
-        expect(column.options.referenceTarget).toBe(SCHEMA_PERSON);
+    describe('链接列', () => {
+      it('应该正确识别链接列', () => {
+        const column = string('authorId').link(SCHEMA_PERSON);
+        expect(column.options.linkTarget).toBe(SCHEMA_PERSON);
       });
 
       it('应该支持 inverse 标记', () => {
-        const column = int('id').primaryKey().reference(SCHEMA_PERSON).inverse();
+        const column = int('id').primaryKey().link(SCHEMA_PERSON).inverse();
         expect(column.options.inverse).toBe(true);
-        expect(column.options.referenceTarget).toBe(SCHEMA_PERSON);
+        expect(column.options.linkTarget).toBe(SCHEMA_PERSON);
       });
 
       it('relations 应该挂载关系元数据', () => {
@@ -236,7 +236,7 @@ describe('PodTable', () => {
 
         const posts = podTable('posts', {
           id: id(),
-          authorId: int('authorId').notNull().reference(SCHEMA_PERSON).predicate('https://schema.org/author'),
+          authorId: int('authorId').notNull().link(SCHEMA_PERSON).predicate('https://schema.org/author'),
         }, { 
           base: '/posts/',
           type: SCHEMA_BLOG_POSTING 
@@ -252,7 +252,7 @@ describe('PodTable', () => {
         expect(posts.relations).toBeDefined();
         expect(posts.relations?.author).toBeDefined();
         expect(posts.relations?.author.type).toBe('one');
-        expect(posts.columns.authorId.getReferenceTarget()).toBe(SCHEMA_PERSON);
+        expect(posts.columns.authorId.getLinkTarget()).toBe(SCHEMA_PERSON);
       });
     });
   });
@@ -314,9 +314,9 @@ describe('PodTable', () => {
       expect(column.options.predicate).toBe(FOAF_NAME);
     });
 
-    it('应该支持 reference() 方法', () => {
-      const column = string('authorId').reference(SCHEMA_PERSON);
-      expect(column.options.referenceTarget).toBe(SCHEMA_PERSON);
+    it('应该支持 link() 方法', () => {
+      const column = string('authorId').link(SCHEMA_PERSON);
+      expect(column.options.linkTarget).toBe(SCHEMA_PERSON);
     });
 
     it('应该支持链式调用', () => {
@@ -411,10 +411,10 @@ describe('PodTable', () => {
       expect(update.name).toBe('Jane');
     });
 
-    it('应该支持引用类型', () => {
+    it('应该支持链接类型', () => {
       const table = podTable('posts', {
         id: id(),
-        authorId: uri('authorId').reference(SCHEMA_PERSON).predicate('https://schema.org/author')
+        authorId: uri('authorId').link(SCHEMA_PERSON).predicate('https://schema.org/author')
       }, { 
         base: '/posts/',
         type: SCHEMA_BLOG_POSTING 
@@ -651,7 +651,7 @@ describe('PodTable', () => {
 
     const posts = podTable('posts', {
       id: id(),
-      authorId: uri('authorId').reference(SCHEMA_PERSON).predicate('https://schema.org/author'),
+      authorId: uri('authorId').link(SCHEMA_PERSON).predicate('https://schema.org/author'),
     }, { 
       base: '/posts/',
       type: SCHEMA_BLOG_POSTING 

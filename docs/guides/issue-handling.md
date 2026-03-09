@@ -320,13 +320,13 @@ if (column.options?.required || whereColumns.has(columnName)) {
 }
 ```
 
-### 模式 3: URI Reference Resolution
+### 模式 3: URI Link Resolution
 
 **症状**：
 ```typescript
 // uri() 字段查询失败
 const Thread = podTable('Thread', {
-  chatId: uri('chatId').reference('Chat'), // 没有 .notNull()
+  chatId: uri('chatId').link('Chat'), // 没有 .notNull()
 });
 
 await db.select().from(Thread).where(eq(Thread.chatId, 'chat-1'));
@@ -344,7 +344,7 @@ await db.select().from(Thread).where(eq(Thread.chatId, 'chat-1'));
 ```typescript
 // 正确做法
 const Thread = podTable('Thread', {
-  chatId: uri('chatId').reference('Chat').notNull(), // 添加 .notNull()
+  chatId: uri('chatId').link('Chat').notNull(), // 添加 .notNull()
 });
 ```
 
@@ -514,7 +514,9 @@ describe('Issue #4: Multi-variable template queries', () => {
       subjectTemplate: '{chatId}/messages.ttl#{id}',
     });
 
-    const db = drizzle(session, { schema: { Message } });
+    const client = pod(session, { schema: { Message } });
+
+    const db = client.asDrizzle();
 
     // 插入测试数据
     await db.insert(Message).values({
