@@ -15,20 +15,8 @@ jobs:
     steps:
       - uses: actions/checkout@v4
 
-      - name: Refresh Context7 library
-        id: context7_refresh
-        uses: rennf93/upsert-context7@1.1
-        continue-on-error: true
-        with:
-          operation: 'refresh'
-          library-name: '/undefinedsco/drizzle-solid'
-          repo-url: 'https://github.com/undefinedsco/drizzle-solid'
-        env:
-          CONTEXT7_API_KEY: ${{ secrets.CONTEXT7_API_KEY }}
-
-      - name: Add Context7 library if missing
+      - name: Ensure Context7 library exists
         id: context7_add
-        if: steps.context7_refresh.outcome != 'success'
         uses: rennf93/upsert-context7@1.1
         with:
           operation: 'add'
@@ -36,20 +24,24 @@ jobs:
         env:
           CONTEXT7_API_KEY: ${{ secrets.CONTEXT7_API_KEY }}
 
+      - name: Refresh Context7 library
+        id: context7_refresh
+        uses: rennf93/upsert-context7@1.1
+        with:
+          operation: 'refresh'
+          library-name: '/undefinedsco/drizzle-solid'
+          repo-url: 'https://github.com/undefinedsco/drizzle-solid'
+        env:
+          CONTEXT7_API_KEY: ${{ secrets.CONTEXT7_API_KEY }}
+
       - name: Show Context7 result
         if: always()
         run: |
-          echo "refresh outcome: ${{ steps.context7_refresh.outcome }}"
-          echo "refresh success: ${{ steps.context7_refresh.outputs.success }}"
-          echo "refresh status: ${{ steps.context7_refresh.outputs.status-code }}"
-          echo "refresh message: ${{ steps.context7_refresh.outputs.message }}"
           echo "add outcome: ${{ steps.context7_add.outcome }}"
           echo "add success: ${{ steps.context7_add.outputs.success }}"
           echo "add status: ${{ steps.context7_add.outputs.status-code }}"
           echo "add message: ${{ steps.context7_add.outputs.message }}"
-
-      - name: Fail if Context7 sync did not succeed
-        if: steps.context7_refresh.outcome != 'success' && steps.context7_add.outcome != 'success'
-        run: |
-          echo 'Context7 refresh failed and fallback add did not succeed.'
-          exit 1
+          echo "refresh outcome: ${{ steps.context7_refresh.outcome }}"
+          echo "refresh success: ${{ steps.context7_refresh.outputs.success }}"
+          echo "refresh status: ${{ steps.context7_refresh.outputs.status-code }}"
+          echo "refresh message: ${{ steps.context7_refresh.outputs.message }}"
