@@ -172,6 +172,17 @@ Practical review checklist:
 - Is there a runnable verification path for the example?
 - If the example touches Pod behavior, is there real integration coverage?
 
+## Context7 Sync
+
+Repository docs are synchronized to Context7 through `.github/workflows/context7-sync.yml`.
+
+Rules:
+
+- Keep `README.md`, `docs/`, and `examples/` aligned before merging user-facing API changes
+- Ensure example verification stays green before publishing docs externally
+- Configure `CONTEXT7_API_KEY` in GitHub Actions secrets
+- Trigger sync by pushing doc/example changes to `main` or by running the workflow manually
+
 ## Recommended Workflow
 
 ### Adding a new feature
