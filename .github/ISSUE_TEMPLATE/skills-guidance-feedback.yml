@@ -1,0 +1,70 @@
+name: Skills / Guidance Feedback
+description: Report missing or incorrect guidance in docs, examples, Context7, or future public skills
+title: "[guidance] "
+body:
+  - type: dropdown
+    id: source
+    attributes:
+      label: Where did the problem appear?
+      description: Pick the main source that caused confusion.
+      options:
+        - README / docs
+        - Example code
+        - Context7 library page
+        - Future public skill behavior
+        - Migration guide
+        - Modeling guidance
+    validations:
+      required: true
+
+  - type: input
+    id: project
+    attributes:
+      label: Affected project or repository
+      description: The app, library, or repository where you hit the issue.
+      placeholder: my-app, undefinedsco/xpod, or a GitHub URL
+
+  - type: textarea
+    id: problem
+    attributes:
+      label: What went wrong?
+      description: Describe the confusing, missing, or incorrect guidance.
+      placeholder: The guide suggested X, but in practice Y happened...
+    validations:
+      required: true
+
+  - type: textarea
+    id: expected
+    attributes:
+      label: What guidance did you expect?
+      description: Describe the answer, example, or workflow you expected to find.
+      placeholder: I expected a migration example for link fields with multi-variable subjectTemplate...
+    validations:
+      required: true
+
+  - type: textarea
+    id: reproduction
+    attributes:
+      label: Minimal example or reproduction
+      description: Share a short code sample, failing snippet, or links that help us reproduce the problem.
+      placeholder: |
+        Schema:
+        ```ts
+        // minimal example
+        ```
+
+  - type: textarea
+    id: suggested
+    attributes:
+      label: Suggested fix
+      description: Optional. Suggest a docs/example/skill change if you already know what would help.
+
+  - type: checkboxes
+    id: checks
+    attributes:
+      label: Before submitting
+      options:
+        - label: I checked the current README and guides first
+          required: true
+        - label: I understand this issue will be used as the main feedback channel for docs and skills
+          required: true

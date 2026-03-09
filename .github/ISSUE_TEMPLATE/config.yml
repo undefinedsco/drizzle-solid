@@ -1,0 +1,5 @@
+blank_issues_enabled: true
+contact_links:
+  - name: Context7 & Skills guide
+    url: https://github.com/undefinedsco/drizzle-solid/blob/main/docs/guides/context7-and-skills.md
+    about: Read the current Context7 publication scope, skills plan, and feedback workflow before filing.
