@@ -43,3 +43,5 @@ Use the existing issue taxonomy:
 - `kind:decision` — the modeling rule or API direction is not settled yet
 
 Skill content should be updated only after the public source of truth is clarified in docs, examples, tests, or decisions.
+
+For ontology / predicate / IRI disputes, a single AI answer is not enough. Route the question through a modeling decision flow first, then update the skill after the decision stabilizes.

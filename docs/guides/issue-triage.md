@@ -22,6 +22,8 @@
 - `kind:tooling`：安装、脚本、CI、发布、Context7 同步、xpod/CSS 本地开发体验有问题
 - `kind:decision`：不是直接 bug，而是产品口径、建模准则、支持范围需要明确决策
 
+补充规则：`label` 由维护者在 triage 时判断和修正，不要求提问者预先打对。
+
 ### 2. `area`：问题落点
 
 这是“问题发生在哪一块”的辅轴。
@@ -122,6 +124,7 @@
 - `toSQL()` 是否保留
 - 是否允许隐式扫描式 updateMany/deleteMany
 - public skills 是否应该默认建议某种建模方案
+- 某个 predicate / IRI / ownership 选择是否需要多 AI 共识，而不是接受单次回答
 
 必须沉淀的资产：
 
@@ -163,6 +166,7 @@
 
 - 运行时/API/类型/查询行为错误 → `Runtime / API Bug`
 - README / guides / examples / Context7 / skills guidance 问题 → `Skills / Guidance Feedback`
+- 建模语义 / predicate 归属 / IRI 选择 / 词汇复用边界 → `Modeling / Ontology Decision`
 - 安装、脚本、workflow、CI、发布、Context7 同步、开发环境问题 → `Tooling / Environment Problem`
 
 如果用户不确定：
@@ -200,6 +204,8 @@
 - 清晰结论
 - 文档化的支持边界
 - 若需要，再拆出后续 issue
+
+对于 `area:modeling` 的决策问题，单个 AI 回答只算草案；如果词汇选择或 predicate 归属仍有争议，应进入建模共识流程，见 `docs/guides/modeling-consensus.md`。
 
 ## 维护建议
 

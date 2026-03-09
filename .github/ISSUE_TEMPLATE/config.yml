@@ -6,3 +6,6 @@ contact_links:
   - name: Context7 & Skills guide
     url: https://github.com/undefinedsco/drizzle-solid/blob/main/docs/guides/context7-and-skills.md
     about: Read the current Context7 publication scope, skills plan, and feedback workflow before filing.
+  - name: Modeling consensus guide
+    url: https://github.com/undefinedsco/drizzle-solid/blob/main/docs/guides/modeling-consensus.md
+    about: Read how we handle predicate, IRI, and ontology decisions that need more than one AI answer.

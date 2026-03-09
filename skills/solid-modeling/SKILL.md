@@ -51,6 +51,10 @@ If the value identifies another entity, prefer `uri(...).link(target)` and a sta
 
 Prefer standard RDF vocabularies when they fit the meaning. Introduce custom terms only when the semantics are genuinely project-specific.
 
+### 6. Do not fake certainty on unsettled ontology choices
+
+If multiple predicate, IRI, or ownership choices remain plausible, treat the answer as a proposal, not a final rule. Recommend a `kind:decision` + `area:modeling` path instead of pretending one choice is already canonical.
+
 ## Review checklist
 
 When reviewing a schema or property proposal, answer these in order:
@@ -71,6 +75,7 @@ When using this skill, produce:
 - notes on `link` vs literal fields
 - notes on derived/layout-only values
 - follow-up docs/example gaps if the modeling rule is not yet documented
+- whether the question can be answered directly or must escalate to modeling consensus
 
 ## Escalate to issue when
 
@@ -81,4 +86,4 @@ Open or recommend an issue if:
 - current examples contradict the recommended semantic model
 - the API encourages an anti-pattern that should be corrected
 
-Prefer routing the issue as `kind:decision` when the semantic ownership rule itself is unsettled.
+Prefer routing the issue as `kind:decision` when the semantic ownership rule itself is unsettled. If the disagreement is fundamentally about ontology choice, also treat it as `area:modeling` and avoid writing the answer back into public docs or skills until consensus is clearer.

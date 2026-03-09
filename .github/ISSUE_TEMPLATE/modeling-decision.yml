@@ -1,0 +1,65 @@
+name: Modeling / Ontology Decision
+description: Propose or clarify predicate, IRI, ownership, or vocabulary decisions that need consensus rather than a direct bug fix
+title: "[decision] "
+body:
+  - type: textarea
+    id: scenario
+    attributes:
+      label: Business scenario / competency question
+      description: Describe the real-world meaning you need to represent, without jumping straight to a vocabulary answer.
+      placeholder: We need to represent that a chat session belongs to a project workspace derived from the current cwd...
+    validations:
+      required: true
+
+  - type: textarea
+    id: fact
+    attributes:
+      label: What fact must be represented?
+      description: Explain the exact fact, relationship, or ownership rule you want the model to express.
+      placeholder: The chat is scoped to a project workspace, but the workspace is not merely a storage path...
+    validations:
+      required: true
+
+  - type: textarea
+    id: candidates
+    attributes:
+      label: Candidate IRIs / predicates / approaches
+      description: Optional. List the existing terms, custom terms, or ownership options already under consideration.
+      placeholder: |
+        - sioc:has_space
+        - schema:isPartOf
+        - custom term in our namespace
+
+  - type: textarea
+    id: constraints
+    attributes:
+      label: Constraints and non-goals
+      description: Describe interoperability, migration, query shape, or product constraints that affect the decision.
+      placeholder: Must stay understandable to Drizzle users, should avoid leaking storage layout into ontology...
+
+  - type: textarea
+    id: refs
+    attributes:
+      label: Related docs, examples, or discussions
+      description: Link any relevant README sections, guides, examples, issues, or external vocabulary references.
+
+  - type: textarea
+    id: expected
+    attributes:
+      label: What outcome do you expect?
+      description: Describe whether you want a recommended existing term, a no-consensus holding state, or a decision that a new term is needed.
+      placeholder: We need a repository-level decision, not just one AI answer.
+    validations:
+      required: true
+
+  - type: checkboxes
+    id: checks
+    attributes:
+      label: Before submitting
+      options:
+        - label: I described the business meaning, not only a preferred predicate name
+          required: true
+        - label: I understand maintainers will classify labels during triage
+          required: true
+        - label: I understand this may result in a documented decision instead of an immediate code change
+          required: true
