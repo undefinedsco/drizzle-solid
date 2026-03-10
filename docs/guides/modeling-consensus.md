@@ -82,6 +82,7 @@
    - 暂无共识，保留多个候选
    - 现有词汇不足，需要新术语
 6. 再把稳定结论回写到 docs / examples / skills / issue 记录
+7. 如需长期保留，使用 `docs/guides/decisions/TEMPLATE.md` 沉淀为 decision record
 
 ## 对 issue 的要求
 

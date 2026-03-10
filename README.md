@@ -244,6 +244,7 @@ If you already know `drizzle-orm`, start here:
 - `docs/guides/context7-and-skills.md` — Context7 publication scope, skills plan, and feedback flow
 - `docs/guides/issue-triage.md` — classify code, docs, tooling, and decision issues
 - `docs/guides/modeling-consensus.md` — when modeling questions require multi-AI consensus instead of a single answer
+- `docs/guides/decisions/README.md` — decision records and the template for stable repo-wide conclusions
 - `skills/README.md` — canonical public skill pack source for future Context7 Skills publishing
 - `examples/README.md` — curated runnable examples
 - `docs/guides/data-discovery.md` — discovery workflows

@@ -129,6 +129,7 @@
 必须沉淀的资产：
 
 - 决策记录或文档结论
+- 推荐使用 `docs/guides/decisions/TEMPLATE.md` 沉淀最终结论
 - 若决定支持，再拆成代码 / docs / tooling 工作
 - 若决定不支持，也要更新迁移文档与错误提示口径
 

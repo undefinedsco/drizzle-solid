@@ -13,6 +13,7 @@
 - `docs/guides/data-discovery.md`：数据发现与互操作能力
 - `docs/guides/testing.md`：测试分层、examples、parity 约定
 - `docs/guides/issue-handling.md`：Issue 复现、修复、回归流程
+- `docs/guides/decisions/README.md`：决策记录与建模/支持边界模板
 
 ## xpod 与服务能力
 - `docs/xpod-features.md`：xpod 能力矩阵、sidecar SPARQL、迁移建议
