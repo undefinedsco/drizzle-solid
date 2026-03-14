@@ -1,8 +1,8 @@
 import { entityKind } from 'drizzle-orm';
 import { SQL } from 'drizzle-orm';
-import { PodTable } from './schema';
+import { PodColumnBase, PodTable } from './schema';
 import { QueryCondition } from './query-conditions';
-import { BinaryExpression } from './expressions';
+import { BinaryExpression, LogicalExpression, UnaryExpression } from './expressions';
 import { ASTToSPARQLConverter, type SPARQLQuery } from './ast-to-sparql';
 import { ComunicaSPARQLExecutor } from './sparql-executor';
 import { TypeIndexManager, TypeIndexEntry, TypeIndexConfig, DiscoveredTable } from './typeindex-manager';
@@ -21,15 +21,25 @@ import { PodServices } from './services/pod-services';
 import { DebugLogger, setGlobalDebugLogger } from './utils/debug-logger';
 import type { SPARQLQueryEngineFactory } from './sparql-engine';
 
+function isRecord(value: unknown): value is Record<string, unknown> {
+  return typeof value === 'object' && value !== null;
+}
+
+function hasStringValue(value: unknown): value is { value: string } {
+  return isRecord(value) && typeof value.value === 'string';
+}
+
 // 最小 Solid Session 接口定义
 export interface SolidAuthSession {
   info: {
     isLoggedIn: boolean;
     webId?: string;
     sessionId?: string;
+    clientId?: string;
+    client_id?: string;
   };
   fetch: typeof fetch;
-  login?: (options?: any) => Promise<void>;
+  login?: (options?: Record<string, unknown>) => Promise<void>;
   logout?: () => Promise<void>;
 }
 
@@ -119,7 +129,7 @@ export class PodDialect {
 
     // 从session中获取webId
     const webId = session.info.webId;
-    const clientId = (session.info as any).clientId || (session.info as any).client_id || process.env.SOLID_CLIENT_ID; 
+    const clientId = session.info.clientId || session.info.client_id || process.env.SOLID_CLIENT_ID; 
 
     if (!webId) {
       throw new Error('Session中未找到webId');
@@ -128,7 +138,7 @@ export class PodDialect {
     this.runtime = new PodRuntime({
       session,
       webId,
-      podUrl: (config as any).podUrl,
+      podUrl: 'podUrl' in config ? (config as PodDialectConfig & { podUrl?: string }).podUrl : undefined,
       storageTTL: config.storageTTL,
     });
     this.webId = this.runtime.getWebId();
@@ -267,7 +277,7 @@ export class PodDialect {
     const normalizedUrl = this.normalizeResourceUrl(resourceUrl);
     const rows = await this.executeOnResource(normalizedUrl, sparqlQuery);
 
-    return (rows as Array<Record<string, any>>)
+    return (rows as Array<Record<string, unknown>>)
       .map((row) => this.extractSubjectFromRow(row))
       .filter((value): value is string => Boolean(value));
   }
@@ -333,9 +343,9 @@ export class PodDialect {
 
   private resolveLdpResource(table: PodTable): { containerUrl: string; resourceUrl: string } {
     const configuredResourcePath =
-      typeof (table as any).getResourcePath === 'function'
-        ? (table as any).getResourcePath()
-        : (table as any).config?.resourcePath;
+      typeof table.getResourcePath === 'function'
+        ? table.getResourcePath()
+        : undefined;
 
     if (configuredResourcePath) {
       const absoluteResource = this.resolveAbsoluteUrl(configuredResourcePath);
@@ -622,7 +632,7 @@ export class PodDialect {
     resourceUrl: string,
     sparqlQuery: SPARQLQuery,
     descriptor?: TableResourceDescriptor
-  ): Promise<any[]> {
+  ): Promise<unknown[]> {
     const normalizedUrl = this.normalizeResourceUrl(resourceUrl);
     if (descriptor?.mode === 'sparql') {
       return await this.executeOnSparqlEndpoint(descriptor.endpoint, sparqlQuery);
@@ -643,14 +653,14 @@ export class PodDialect {
     return getFetchForOrigin(endpoint, this.podUrl, this.runtime.getFetch());
   }
 
-  private async executeOnSparqlEndpoint(endpoint: string, sparqlQuery: SPARQLQuery): Promise<any[]> {
+  private async executeOnSparqlEndpoint(endpoint: string, sparqlQuery: SPARQLQuery): Promise<unknown[]> {
     const fetchFn = this.getFetchForEndpoint(endpoint);
 
     if (sparqlQuery.type === 'SELECT' || sparqlQuery.type === 'ASK') {
       // For SELECT/ASK, we need to create a temporary executor with the appropriate fetch
       if (isSameOrigin(endpoint, this.podUrl)) {
         // Same origin: use authenticated executor
-        return await this.sparqlExecutor.executeQueryWithSource(sparqlQuery, endpoint);
+        return await this.sparqlExecutor.executeQueryWithSource(sparqlQuery, endpoint, 'sparql');
       } else {
         // Cross-origin: create an unauthenticated executor
         const unauthExecutor = new ComunicaSPARQLExecutor({
@@ -659,7 +669,7 @@ export class PodDialect {
           logging: false,
           createQueryEngine: this.config.createQueryEngine
         });
-        return await unauthExecutor.executeQueryWithSource(sparqlQuery, endpoint);
+        return await unauthExecutor.executeQueryWithSource(sparqlQuery, endpoint, 'sparql');
       }
     }
 
@@ -684,12 +694,11 @@ export class PodDialect {
   private async ensureTableResourcePath(table: PodTable): Promise<void> {
     const rdfClass = typeof table.config.type === 'string'
       ? table.config.type
-      : (table.config.type as any).value || String(table.config.type);
+      : String(table.config.type);
 
     // 检查是否已经有 resourcePath
     const configuredResourcePath =
-      (typeof (table as any).getResourcePath === 'function' && (table as any).getResourcePath()) ||
-      (table as any).config?.resourcePath;
+      table.getResourcePath?.();
 
     // 如果没有设置 typeIndex，使用配置的 resourcePath（如果有）
     if (!table.config.typeIndex) {
@@ -699,7 +708,7 @@ export class PodDialect {
       }
       // 没有 resourcePath，使用默认容器
       console.log(`[AutoDiscover] Table ${table.config.name} has no resourcePath, using default container path`);
-      (table as any).config.containerPath = '/data/';
+      table.config.containerPath = '/data/';
       return;
     }
 
@@ -723,8 +732,8 @@ export class PodDialect {
         }
 
         // 如果发现了 subjectTemplate，应用到表配置
-        if (location.subjectTemplate && typeof (table as any).setSubjectTemplate === 'function') {
-          (table as any).setSubjectTemplate(location.subjectTemplate);
+        if (location.subjectTemplate) {
+          table.setSubjectTemplate(location.subjectTemplate);
           console.log(`[AutoDiscover] ✓ Applied subjectTemplate from discovery: ${location.subjectTemplate}`);
         }
 
@@ -748,14 +757,7 @@ export class PodDialect {
 
         // 动态注入到表配置中
         // 使用 setBase 更新内部状态和 config.base，确保 SubjectResolver 能获取到正确路径
-        if (typeof (table as any).setBase === 'function') {
-            (table as any).setBase(resourcePath);
-        } else {
-            // Fallback for minimal mock tables
-            (table as any).config.containerPath = containerPath;
-            (table as any).config.resourcePath = resourcePath;
-            (table as any).config.base = resourcePath;
-        }
+        table.setBase(resourcePath);
 
         // 尝试自动发现 SPARQL endpoint
         await this.tryDiscoverSparqlEndpoint(table, containerPath);
@@ -798,9 +800,7 @@ export class PodDialect {
       const response = await this.runtime.getFetch()(potentialEndpoint, { method: 'HEAD' });
       if (response.ok) {
         console.log(`[AutoDiscover] ✓ Found SPARQL endpoint: ${potentialEndpoint}`);
-        if (typeof (table as any).setSparqlEndpoint === 'function') {
-          (table as any).setSparqlEndpoint(potentialEndpoint);
-        }
+        table.setSparqlEndpoint(potentialEndpoint);
       }
     } catch {
       // SPARQL endpoint 不存在，继续使用 LDP 模式
@@ -853,10 +853,10 @@ export class PodDialect {
     if (!plan) {
       return false;
     }
-    const candidate = plan as Partial<DeleteQueryPlan<PodTable<any>>> & {
-      rows?: unknown;
-      data?: unknown;
-    };
+      const candidate = plan as Partial<DeleteQueryPlan<PodTable>> & {
+        rows?: unknown;
+        data?: unknown;
+      };
     if (typeof candidate.table === 'undefined') {
       return false;
     }
@@ -882,15 +882,21 @@ export class PodDialect {
     };
   }
 
-  private extractSubjectFromRow(row: Record<string, any>): string | null {
-    const subject = (row as any).subject ?? (row as any)['?subject'];
+  private isQueryConditionNode(value: unknown): value is QueryCondition {
+    return value instanceof BinaryExpression
+      || value instanceof LogicalExpression
+      || value instanceof UnaryExpression;
+  }
+
+  private extractSubjectFromRow(row: Record<string, unknown>): string | null {
+    const subject = row.subject ?? row['?subject'];
     if (!subject) {
       return null;
     }
     if (typeof subject === 'string') {
       return subject;
     }
-    if (typeof subject.value === 'string') {
+    if (hasStringValue(subject)) {
       return subject.value;
     }
     return null;
@@ -903,8 +909,12 @@ export class PodDialect {
 
     // BinaryExpression: check 'left' property
     if (condition.type === 'binary_expr') {
-      const left = (condition as any).left;
-      const colName = typeof left === 'string' ? left : left?.name;
+      const left = condition.left;
+      const colName = typeof left === 'string'
+        ? left
+        : left instanceof PodColumnBase
+          ? left.name
+          : undefined;
       if (colName === '@id' || colName === 'id') {
         return true;
       }
@@ -912,15 +922,17 @@ export class PodDialect {
 
     // LogicalExpression: check 'expressions' property
     if (condition.type === 'logical_expr') {
-      const exprs = (condition as any).expressions;
-      if (exprs) {
-        return exprs.some((child: QueryCondition) => this.conditionTargetsIdentifier(child));
+      const exprs = condition.expressions;
+      if (Array.isArray(exprs)) {
+        return exprs.some((child) =>
+          this.isQueryConditionNode(child) && this.conditionTargetsIdentifier(child)
+        );
       }
     }
 
     // UnaryExpression: check 'value' property
     if (condition.type === 'unary_expr') {
-      const val = (condition as any).value;
+      const val = condition.value;
       if (val && typeof val === 'object' && 'type' in val) {
         return this.conditionTargetsIdentifier(val as QueryCondition);
       }
@@ -1496,9 +1508,9 @@ export class PodDialect {
       const results = await this.sparqlExecutor.queryContainer(normalizedUrl, sparql);
 
       for (const row of results) {
-        const resource = (row as any).resource;
+        const resource = (row as Record<string, unknown>).resource;
         if (resource) {
-          const resourceUrl = typeof resource === 'object' && resource.value
+          const resourceUrl = hasStringValue(resource)
             ? resource.value
             : String(resource);
           resources.push(resourceUrl);

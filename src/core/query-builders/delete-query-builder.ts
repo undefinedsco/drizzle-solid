@@ -104,7 +104,7 @@ export class DeleteQueryBuilder<TTable extends PodTable<any> = PodTable<any>> {
     }
 
     const plan = this.toIR();
-    return converter.convertDelete(plan.where, plan.table);
+    return converter.convertDelete(plan.where ?? {}, plan.table);
   }
 
   toSPARQL() {

@@ -8,7 +8,7 @@ import {
   UpdateQueryBuilder,
   DeleteQueryBuilder
 } from './pod-session';
-import { PodTable, SolidSchema, isSolidSchema, type InferTableData, PodColumnBase, type RelationDefinition, type InstantiateTableOptions } from './schema';
+import { PodTable, SolidSchema, isSolidSchema, type InferTableData, type ColumnBuilderDataType, PodColumnBase, type RelationDefinition, type InstantiateTableOptions } from './schema';
 import { QueryCondition } from './query-conditions';
 import { inArray } from './query-conditions';
 import {
@@ -22,6 +22,7 @@ import {
 } from './notifications';
 import { FederatedQueryExecutor, type FederatedError } from './federated';
 import type { DataDiscovery } from './discovery';
+import type { OrderByExpression } from './order-by';
 
 
 /**
@@ -34,6 +35,45 @@ export interface InitOptions {
   saveShape?: boolean;
   /** Shape 保存位置（容器路径或完整 URL），默认为 Pod 根目录下的 /shapes/ */
   shapeLocation?: string;
+}
+
+type GenericPodTable = PodTable;
+type QueryRow = Record<string, unknown>;
+type QueryOrderBy = {
+  column: PodColumnBase | string | OrderByExpression;
+  direction?: 'asc' | 'desc';
+};
+type QueryFindManyOptions = {
+  where?: Record<string, unknown> | QueryCondition;
+  columns?: SelectFieldMap;
+  limit?: number;
+  offset?: number;
+  orderBy?: QueryOrderBy[] | QueryOrderBy;
+  with?: Record<string, boolean | { table?: GenericPodTable }>;
+};
+type QueryTableHelper<TTable extends GenericPodTable = GenericPodTable> = {
+  findMany<T = InferTableData<TTable>>(options?: QueryFindManyOptions): Promise<T[]>;
+  findFirst<T = InferTableData<TTable>>(options?: QueryFindManyOptions): Promise<T | null>;
+  findById<T = InferTableData<TTable>>(id: string, options?: QueryFindManyOptions): Promise<T | null>;
+  findByIRI<T = InferTableData<TTable>>(iri: string, options?: QueryFindManyOptions): Promise<T | null>;
+  count(options?: { where?: Record<string, unknown> | QueryCondition }): Promise<number>;
+};
+type QueryProxy<TSchema extends Record<string, unknown>> = {
+  [K in keyof TSchema as TSchema[K] extends GenericPodTable ? K : never]:
+    TSchema[K] extends GenericPodTable ? QueryTableHelper<TSchema[K]> : never;
+};
+type GenericPodColumn = PodColumnBase<ColumnBuilderDataType, boolean, boolean, ColumnBuilderDataType | null>;
+
+function isRecord(value: unknown): value is Record<string, unknown> {
+  return typeof value === 'object' && value !== null;
+}
+
+function isPodTable(value: unknown): value is GenericPodTable {
+  return isRecord(value) && 'columns' in value && 'config' in value;
+}
+
+function hasStringValue(value: unknown): value is { value: string } {
+  return isRecord(value) && typeof value.value === 'string';
 }
 
 export class PodDatabase<TSchema extends Record<string, unknown> = Record<string, never>> {
@@ -120,7 +160,7 @@ export class PodDatabase<TSchema extends Record<string, unknown> = Record<string
    * });
    * ```
    */
-  createTable<TColumns extends Record<string, PodColumnBase<any, any, any, any>>>(
+  createTable<TColumns extends Record<string, PodColumnBase>>(
     schema: SolidSchema<TColumns>,
     options: InstantiateTableOptions
   ): PodTable<TColumns> {
@@ -134,28 +174,28 @@ export class PodDatabase<TSchema extends Record<string, unknown> = Record<string
     
     // Store db handle in table for hook context
     // This allows hooks to access db when invoked
-    (table as any)._db = this;
+    Reflect.set(table as object, '_db', this);
     
     return table;
   }
 
   // SELECT 查询
-  select<TTable extends PodTable<any>>(fields?: SelectFieldMap): SelectQueryBuilder<TTable> {
+  select<TTable extends PodTable>(fields?: SelectFieldMap): SelectQueryBuilder<TTable> {
     return this.session.select<TTable>(fields);
   }
 
   // INSERT 查询
-  insert<TTable extends PodTable<any>>(table: TTable): InsertQueryBuilder<TTable> {
+  insert<TTable extends PodTable>(table: TTable): InsertQueryBuilder<TTable> {
     return this.session.insert(table);
   }
 
   // UPDATE 查询
-  update<TTable extends PodTable<any>>(table: TTable): UpdateQueryBuilder<TTable> {
+  update<TTable extends PodTable>(table: TTable): UpdateQueryBuilder<TTable> {
     return this.session.update(table);
   }
 
   // DELETE 查询
-  delete<TTable extends PodTable<any>>(table: TTable): DeleteQueryBuilder<TTable> {
+  delete<TTable extends PodTable>(table: TTable): DeleteQueryBuilder<TTable> {
     return this.session.delete(table);
   }
 
@@ -184,7 +224,7 @@ export class PodDatabase<TSchema extends Record<string, unknown> = Record<string
   }
 
   // Find first matching row (LIMIT 1)
-  async findFirst<TTable extends PodTable<any>>(
+  async findFirst<TTable extends PodTable>(
     table: TTable,
     where?: Record<string, unknown>
   ): Promise<InferTableData<TTable> | null> {
@@ -215,7 +255,7 @@ export class PodDatabase<TSchema extends Record<string, unknown> = Record<string
    * db.findByIri(agentTable, contact.entityUri)
    * ```
    */
-  async findByIri<TTable extends PodTable<any>>(
+  async findByIri<TTable extends PodTable>(
     table: TTable,
     iri: string
   ): Promise<InferTableData<TTable> | null> {
@@ -283,7 +323,7 @@ export class PodDatabase<TSchema extends Record<string, unknown> = Record<string
    * unsubscribe()
    * ```
    */
-  async subscribeByIri<TTable extends PodTable<any>>(
+  async subscribeByIri<TTable extends PodTable>(
     table: TTable,
     iri: string,
     options: EntitySubscribeOptions<InferTableData<TTable>>
@@ -351,7 +391,7 @@ export class PodDatabase<TSchema extends Record<string, unknown> = Record<string
    * )
    * ```
    */
-  async updateByIri<TTable extends PodTable<any>>(
+  async updateByIri<TTable extends PodTable>(
     table: TTable,
     iri: string,
     data: Partial<Omit<InferTableData<TTable>, '@id' | 'id'>>
@@ -369,11 +409,12 @@ export class PodDatabase<TSchema extends Record<string, unknown> = Record<string
     
     // 用 schema.table(documentUrl) 创建指向目标位置的表
     const targetTable = table.$schema.table('target', { base: documentUrl });
+    const updateData = data as Parameters<UpdateQueryBuilder<typeof targetTable>['set']>[0];
 
     // 使用 whereByIri 内部方法进行更新
     await this.session
       .update(targetTable)
-      .set(data as any)
+      .set(updateData)
       .whereByIri(iri);
 
     // 返回更新后的数据
@@ -395,7 +436,7 @@ export class PodDatabase<TSchema extends Record<string, unknown> = Record<string
    * )
    * ```
    */
-  async deleteByIri<TTable extends PodTable<any>>(
+  async deleteByIri<TTable extends PodTable>(
     table: TTable,
     iri: string
   ): Promise<boolean> {
@@ -503,7 +544,7 @@ export class PodDatabase<TSchema extends Record<string, unknown> = Record<string
    * subscription.unsubscribe();
    * ```
    */
-  async subscribe<TTable extends PodTable<any>>(
+  async subscribe<TTable extends PodTable>(
     table: TTable,
     options: TableSubscribeOptions
   ): Promise<Subscription> {
@@ -572,7 +613,7 @@ export class PodDatabase<TSchema extends Record<string, unknown> = Record<string
    * @param table 表定义
    * @param iriOverride 可选的 IRI 覆盖（用于订阅其他 Pod 的资源）
    */
-  private resolveTableTopic<TTable extends PodTable<any>>(table: TTable, iriOverride?: string): string {
+  private resolveTableTopic<TTable extends PodTable>(table: TTable, iriOverride?: string): string {
     // 如果提供了 iri 覆盖，直接使用
     if (iriOverride) {
       if (!iriOverride.startsWith('http://') && !iriOverride.startsWith('https://')) {
@@ -663,7 +704,7 @@ export class PodDatabase<TSchema extends Record<string, unknown> = Record<string
       base: location.container
     });
 
-    await this.init(table);
+    await this.init(table as unknown as PodTable<Record<string, GenericPodColumn>>);
     return table as unknown as PodTable;
   }
 
@@ -829,7 +870,7 @@ export class PodDatabase<TSchema extends Record<string, unknown> = Record<string
       base: location.container
     });
 
-    await this.init(table);
+    await this.init(table as unknown as PodTable<Record<string, GenericPodColumn>>);
     return table as unknown as PodTable;
   }
 
@@ -915,12 +956,21 @@ export class PodDatabase<TSchema extends Record<string, unknown> = Record<string
     return await this.dialect.addSourcesFromTypeIndex();
   }
 
-  async init<TTable extends PodTable<any>>(
+  async init<
+    TColumns extends Record<string, GenericPodColumn>,
+    TTable extends PodTable<TColumns>
+  >(
     tables: TTable | TTable[],
     options?: InitOptions
   ): Promise<void>;
-  async init<TTable extends PodTable<any>>(...tables: Array<TTable | TTable[]>): Promise<void>;
-  async init<TTable extends PodTable<any>>(
+  async init<
+    TColumns extends Record<string, GenericPodColumn>,
+    TTable extends PodTable<TColumns>
+  >(...tables: Array<TTable | TTable[]>): Promise<void>;
+  async init<
+    TColumns extends Record<string, GenericPodColumn>,
+    TTable extends PodTable<TColumns>
+  >(
     ...args: Array<TTable | TTable[] | InitOptions>
   ): Promise<void> {
     // 解析参数：最后一个参数可能是 options
@@ -936,7 +986,7 @@ export class PodDatabase<TSchema extends Record<string, unknown> = Record<string
       tableArgs = args as Array<TTable | TTable[]>;
     }
 
-    const flattened: PodTable<any>[] = [];
+    const flattened: PodTable[] = [];
     for (const entry of tableArgs) {
       if (!entry) continue;
       if (Array.isArray(entry)) {
@@ -994,36 +1044,27 @@ export class PodDatabase<TSchema extends Record<string, unknown> = Record<string
   }
 
   // Drizzle 风格的 query facade
-  private queryProxy?: Record<string, any>;
+  private queryProxy?: QueryProxy<TSchema>;
 
-  get query(): Record<string, any> {
+  get query(): QueryProxy<TSchema> {
     if (!this.queryProxy) {
       this.queryProxy = this.buildQueryProxy();
     }
     return this.queryProxy;
   }
 
-  private buildQueryProxy(): Record<string, any> {
+  private buildQueryProxy(): QueryProxy<TSchema> {
     const schemaEntries = (this.schema && typeof this.schema === 'object')
-      ? Object.entries(this.schema as Record<string, any>)
+      ? Object.entries(this.schema as Record<string, unknown>)
       : [];
-    const tableMap = new Map<string, PodTable<any>>();
+    const tableMap = new Map<string, GenericPodTable>();
     for (const [key, value] of schemaEntries) {
-      if (value && typeof value === 'object' && 'columns' in value) {
-        tableMap.set(key, value as PodTable<any>);
+      if (isPodTable(value)) {
+        tableMap.set(key, value);
       }
     }
 
-    const createHelper = (_tableName: string, table: PodTable<any>) => {
-      type FindManyOptions = {
-        where?: Record<string, unknown> | QueryCondition;
-        columns?: SelectFieldMap;
-        limit?: number;
-        offset?: number;
-        orderBy?: Array<{ column: any; direction?: 'asc' | 'desc' }> | { column: any; direction?: 'asc' | 'desc' };
-        with?: Record<string, boolean | { table?: PodTable<any> }>;
-      };
-
+    const createHelper = (_tableName: string, table: GenericPodTable): QueryTableHelper<typeof table> => {
       const createLazy = <T>(executor: () => Promise<T>): Promise<T> => {
         let promise: Promise<T> | null = null;
         const run = () => {
@@ -1041,8 +1082,12 @@ export class PodDatabase<TSchema extends Record<string, unknown> = Record<string
         } as Promise<T>;
       };
 
-      const projectColumns = (row: Record<string, any>, columns: SelectFieldMap, withOption?: FindManyOptions['with']): Record<string, any> => {
-        const projected: Record<string, any> = {};
+      const projectColumns = (
+        row: QueryRow,
+        columns: SelectFieldMap,
+        withOption?: QueryFindManyOptions['with']
+      ): QueryRow => {
+        const projected: QueryRow = {};
         for (const [alias, field] of Object.entries(columns)) {
           if (field instanceof PodColumnBase) {
             projected[alias] = row[field.name];
@@ -1069,12 +1114,12 @@ export class PodDatabase<TSchema extends Record<string, unknown> = Record<string
         return projected;
       };
 
-      const executeFindMany = async <T = InferTableData<typeof table>>(options?: FindManyOptions): Promise<T[]> => {
+      const executeFindMany = async <T = InferTableData<typeof table>>(options?: QueryFindManyOptions): Promise<T[]> => {
         this.clearFederatedErrors();
 
         let builder = this.session.select().from(table);
         if (options?.where) {
-          builder = builder.where(options.where as any);
+          builder = builder.where(options.where);
         }
         if (options?.orderBy) {
           const orderItems = Array.isArray(options.orderBy) ? options.orderBy : [options.orderBy];
@@ -1089,26 +1134,27 @@ export class PodDatabase<TSchema extends Record<string, unknown> = Record<string
           builder = builder.offset(options.offset);
         }
 
-        let rows = await builder as Record<string, any>[];
+        let rows = await builder as QueryRow[];
         if (options?.with && Object.keys(options.with).length > 0) {
           rows = await this.eagerLoadWith(rows, table, options.with, tableMap);
         }
-        if (options?.columns) {
-          rows = rows.map((row) => projectColumns(row, options.columns!, options.with));
+        const columns = options?.columns;
+        if (columns) {
+          rows = rows.map((row) => projectColumns(row, columns, options.with));
         }
         return rows as T[];
       };
 
-      const findMany = <T = InferTableData<typeof table>>(options?: FindManyOptions): Promise<T[]> =>
+      const findMany = <T = InferTableData<typeof table>>(options?: QueryFindManyOptions): Promise<T[]> =>
         createLazy(() => executeFindMany<T>(options));
 
-      const findFirst = <T = InferTableData<typeof table>>(options?: FindManyOptions): Promise<T | null> =>
+      const findFirst = <T = InferTableData<typeof table>>(options?: QueryFindManyOptions): Promise<T | null> =>
         createLazy(async () => {
           const rows = await executeFindMany<T>({ ...options, limit: 1 });
           return rows[0] ?? null;
         });
 
-      const findById = <T = InferTableData<typeof table>>(id: string, options?: FindManyOptions): Promise<T | null> =>
+      const findById = <T = InferTableData<typeof table>>(id: string, options?: QueryFindManyOptions): Promise<T | null> =>
         createLazy(async () => await findFirst<T>({ ...options, where: { ...(options?.where ?? {}), id } }));
 
       const count = (options?: { where?: Record<string, unknown> | QueryCondition }): Promise<number> =>
@@ -1117,7 +1163,7 @@ export class PodDatabase<TSchema extends Record<string, unknown> = Record<string
           return rows.length;
         });
 
-      const createFindByIRI = () => <T = InferTableData<typeof table>>(iri: string, _options?: FindManyOptions): Promise<T | null> => {
+      const createFindByIRI = () => <T = InferTableData<typeof table>>(iri: string, _options?: QueryFindManyOptions): Promise<T | null> => {
         void _options;
         return createLazy(async () => await this.findByIri(table, iri) as T | null);
       };
@@ -1132,23 +1178,27 @@ export class PodDatabase<TSchema extends Record<string, unknown> = Record<string
       };
     };
 
-    const proxyTarget: Record<string, any> = {};
+    const proxyTarget = {} as unknown as QueryProxy<TSchema>;
     return new Proxy(proxyTarget, {
-      get: (_, prop: string) => {
-        if (tableMap.has(prop)) {
-          return createHelper(prop, tableMap.get(prop)!);
+      get: (_, prop) => {
+        if (typeof prop !== 'string') {
+          return undefined;
+        }
+        const table = tableMap.get(prop);
+        if (table) {
+          return createHelper(prop, table);
         }
         return undefined;
       }
-    });
+    }) as QueryProxy<TSchema>;
   }
 
   private async eagerLoadWith(
-    rows: Record<string, any>[],
-    parentTable: PodTable<any>,
-    withOption: Record<string, boolean | { table?: PodTable<any> }>,
-    tableMap: Map<string, PodTable<any>>
-  ): Promise<Record<string, any>[]> {
+    rows: QueryRow[],
+    parentTable: PodTable,
+    withOption: Record<string, boolean | { table?: GenericPodTable }>,
+    tableMap: Map<string, GenericPodTable>
+  ): Promise<QueryRow[]> {
     if (!rows || rows.length === 0) {
       return rows;
     }
@@ -1156,7 +1206,7 @@ export class PodDatabase<TSchema extends Record<string, unknown> = Record<string
 
     for (const [key, entry] of Object.entries(withOption)) {
       if (!entry) continue;
-      const relationDef = (parentTable as any).relations?.[key] as RelationDefinition | undefined;
+      const relationDef = parentTable.relations?.[key] as RelationDefinition | undefined;
 
       const targetTable = (typeof entry === 'object' && entry.table)
         ? entry.table
@@ -1196,7 +1246,7 @@ export class PodDatabase<TSchema extends Record<string, unknown> = Record<string
       }
 
       // 此时 targetTable 一定是 PodTable
-      const targetPodTable = targetTable as PodTable<any>;
+      const targetPodTable = targetTable as GenericPodTable;
       const targetType = targetPodTable.config.type;
 
       const candidateColumns: PodColumnBase[] = relationDef?.fields && relationDef.fields.length > 0
@@ -1268,7 +1318,7 @@ export class PodDatabase<TSchema extends Record<string, unknown> = Record<string
 
         dedupedRows.forEach((row, index) => {
           const iris = inverseValuesPerRow[index];
-          const related: Record<string, any>[] = [];
+          const related: QueryRow[] = [];
           iris.forEach((iri) => {
             const matches = groupedByIri.get(iri);
             if (matches && matches.length > 0) {
@@ -1293,18 +1343,19 @@ export class PodDatabase<TSchema extends Record<string, unknown> = Record<string
 
       let childBuilder = this.session.select().from(targetPodTable);
       if (useLinkIri) {
-        childBuilder = childBuilder.where(inArray(refColumn, parentKeys as any));
+        childBuilder = childBuilder.where(inArray(refColumn, parentKeys));
       } else {
         childBuilder = childBuilder.where({ [refColumn.name]: parentKeys });
       }
       const childRows = await childBuilder;
 
-      const grouped = new Map<string, Record<string, any>[]>();
+      const grouped = new Map<string, QueryRow[]>();
       for (const child of childRows) {
         const fkValue = child[refColumn.name];
+        const normalizedFkValue = this.normalizeLiteralValue(fkValue);
         const lookupKeys = useLinkIri
           ? this.collectLinkLookupKeys(fkValue)
-          : (this.normalizeLiteralValue(fkValue) ? [this.normalizeLiteralValue(fkValue)!] : []);
+          : (normalizedFkValue ? [normalizedFkValue] : []);
         for (const lookupKey of lookupKeys) {
           const arr = grouped.get(lookupKey) ?? [];
           arr.push(child);
@@ -1320,7 +1371,7 @@ export class PodDatabase<TSchema extends Record<string, unknown> = Record<string
             ].filter((value): value is string => typeof value === 'string' && value.length > 0)))
           : [this.resolveParentKey(row, linkColumn, false)].filter((value): value is string => typeof value === 'string' && value.length > 0);
 
-        const related: Record<string, any>[] = [];
+        const related: QueryRow[] = [];
         for (const parentKey of parentKeys) {
           const matches = grouped.get(parentKey) ?? [];
           for (const match of matches) {
@@ -1337,8 +1388,8 @@ export class PodDatabase<TSchema extends Record<string, unknown> = Record<string
     return dedupedRows;
   }
 
-  private dedupeBySubject(rows: Record<string, any>[]): Record<string, any>[] {
-    const merged = new Map<string, Record<string, any>>();
+  private dedupeBySubject(rows: QueryRow[]): QueryRow[] {
+    const merged = new Map<string, QueryRow>();
     const order: string[] = [];
     for (const row of rows) {
       const key = this.resolveIriFromRow(row) ?? this.resolveIdFromRow(row);
@@ -1352,7 +1403,10 @@ export class PodDatabase<TSchema extends Record<string, unknown> = Record<string
         order.push(key);
         continue;
       }
-      const target = merged.get(key)!;
+      const target = merged.get(key);
+      if (!target) {
+        continue;
+      }
       for (const [col, value] of Object.entries(row)) {
         if (value === undefined) continue;
         const existing = target[col];
@@ -1371,10 +1425,12 @@ export class PodDatabase<TSchema extends Record<string, unknown> = Record<string
         target[col] = mergedArr.length === 1 ? mergedArr[0] : mergedArr;
       }
     }
-    return order.map((key) => merged.get(key)!);
+    return order
+      .map((key) => merged.get(key))
+      .filter((row): row is QueryRow => row !== undefined);
   }
 
-  private resolveIdFromRow(row: Record<string, any>): string | undefined {
+  private resolveIdFromRow(row: QueryRow): string | undefined {
     if (!row) return undefined;
     if (typeof row.id === 'string' && row.id.length > 0) {
       return row.id;
@@ -1387,7 +1443,7 @@ export class PodDatabase<TSchema extends Record<string, unknown> = Record<string
   }
 
   private resolveParentKey(
-    row: Record<string, any>,
+    row: QueryRow,
     linkColumn: PodColumnBase | undefined,
     useLinkIri: boolean
   ): string | undefined {
@@ -1398,7 +1454,7 @@ export class PodDatabase<TSchema extends Record<string, unknown> = Record<string
     return useLinkIri ? this.resolveIriFromRow(row) : this.resolveIdFromRow(row);
   }
 
-  private resolveIriFromRow(row: Record<string, any>): string | undefined {
+  private resolveIriFromRow(row: QueryRow): string | undefined {
     if (!row) return undefined;
     if (typeof row['@id'] === 'string' && row['@id'].length > 0) {
       return row['@id'];
@@ -1409,7 +1465,7 @@ export class PodDatabase<TSchema extends Record<string, unknown> = Record<string
     return undefined;
   }
 
-  private collectLinkLookupKeys(value: any): string[] {
+  private collectLinkLookupKeys(value: unknown): string[] {
     const keys: string[] = [];
     const normalized = this.normalizeLinkValue(value) ?? this.normalizeLiteralValue(value);
     if (normalized) {
@@ -1422,31 +1478,31 @@ export class PodDatabase<TSchema extends Record<string, unknown> = Record<string
     return keys;
   }
 
-  private normalizeLinkValue(value: any): string | undefined {
+  private normalizeLinkValue(value: unknown): string | undefined {
     if (!value) return undefined;
     if (typeof value === 'string') {
       return value;
     }
-    if (typeof value === 'object' && typeof value.value === 'string') {
+    if (hasStringValue(value)) {
       return value.value;
     }
     return undefined;
   }
 
-  private normalizeLiteralValue(value: any): string | undefined {
+  private normalizeLiteralValue(value: unknown): string | undefined {
     if (value === null || value === undefined) {
       return undefined;
     }
     if (typeof value === 'string') {
       return value;
     }
-    if (typeof value === 'object' && typeof value.value === 'string') {
+    if (hasStringValue(value)) {
       return value.value;
     }
     return undefined;
   }
 
-  private collectInverseLinkValues(row: Record<string, any>, columns: PodColumnBase[]): string[] {
+  private collectInverseLinkValues(row: QueryRow, columns: PodColumnBase[]): string[] {
     if (!columns.length) {
       return [];
     }
@@ -1471,8 +1527,8 @@ export class PodDatabase<TSchema extends Record<string, unknown> = Record<string
     return collected;
   }
 
-  private groupRowsByIri(rows: Record<string, any>[]): Map<string, Record<string, any>[]> {
-    const grouped = new Map<string, Record<string, any>[]>();
+  private groupRowsByIri(rows: QueryRow[]): Map<string, QueryRow[]> {
+    const grouped = new Map<string, QueryRow[]>();
     for (const row of rows) {
       const iri = this.normalizeLinkValue(row['@id']) ??
         this.normalizeLinkValue(row.uri) ??

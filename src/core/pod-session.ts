@@ -1,7 +1,7 @@
 import { entityKind } from 'drizzle-orm';
 import { SQL } from 'drizzle-orm';
 import { PodDialect, type PodOperation } from './pod-dialect';
-import { PodTable } from './schema';
+import { PodColumnBase, PodTable } from './schema';
 
 // Import the new Query Builders and types
 import { SelectQueryBuilder } from './query-builders/select-query-builder';
@@ -15,19 +15,21 @@ export type { SelectFieldMap, InsertQueryPlan, UpdateQueryPlan, DeleteQueryPlan 
 export type { PodOperation } from './pod-dialect';
 export { SelectQueryBuilder, InsertQueryBuilder, UpdateQueryBuilder, DeleteQueryBuilder };
 
+type GenericPodTable = PodTable<Record<string, PodColumnBase>>;
+
 export class PodAsyncSession {
   static readonly [entityKind] = 'PodAsyncSession';
 
   constructor(
     private dialect: PodDialect,
-    private _schema?: any,
+    private _schema?: unknown,
     private options: { logger?: boolean } = {}
   ) {}
 
   /**
    * 获取会话关联的 schema
    */
-  getSchema(): any {
+  getSchema(): unknown {
     return this._schema;
   }
 
@@ -52,7 +54,7 @@ export class PodAsyncSession {
     return this.options;
   }
 
-  private async ensureInitialized(table: PodTable<any>): Promise<void> {
+  private async ensureInitialized(table: GenericPodTable): Promise<void> {
     if (table && typeof table.isInitialized === 'function') {
       if (!table.isInitialized()) {
         if (typeof table.init === 'function') {
@@ -70,7 +72,7 @@ export class PodAsyncSession {
   }
 
   // 执行查询操作
-  async execute(operation: PodOperation): Promise<any[]> {
+  async execute(operation: PodOperation): Promise<unknown[]> {
     if (this.options.logger) {
       console.log('Executing operation:', operation);
     }
@@ -105,7 +107,7 @@ export class PodAsyncSession {
   }
 
   // 执行 SQL（Drizzle AST）
-  async executeSql(sql: SQL, table: PodTable): Promise<any[]> {
+  async executeSql(sql: SQL, table: GenericPodTable): Promise<unknown[]> {
     if (this.options.logger) {
       console.log('Executing SQL AST:', sql);
     }
@@ -114,22 +116,22 @@ export class PodAsyncSession {
   }
 
   // SELECT 查询构建器
-  select<TTable extends PodTable<any>>(fields?: SelectFieldMap): SelectQueryBuilder<TTable> {
+  select<TTable extends GenericPodTable>(fields?: SelectFieldMap): SelectQueryBuilder<TTable> {
     return new SelectQueryBuilder<TTable>(this, fields);
   }
 
   // INSERT 查询构建器
-  insert<TTable extends PodTable<any>>(table: TTable): InsertQueryBuilder<TTable> {
+  insert<TTable extends GenericPodTable>(table: TTable): InsertQueryBuilder<TTable> {
     return new InsertQueryBuilder<TTable>(this, table);
   }
 
   // UPDATE 查询构建器
-  update<TTable extends PodTable<any>>(table: TTable): UpdateQueryBuilder<TTable> {
+  update<TTable extends GenericPodTable>(table: TTable): UpdateQueryBuilder<TTable> {
     return new UpdateQueryBuilder<TTable>(this, table);
   }
 
   // DELETE 查询构建器
-  delete<TTable extends PodTable<any>>(table: TTable): DeleteQueryBuilder<TTable> {
+  delete<TTable extends GenericPodTable>(table: TTable): DeleteQueryBuilder<TTable> {
     return new DeleteQueryBuilder<TTable>(this, table);
   }
 

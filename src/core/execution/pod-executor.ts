@@ -172,7 +172,8 @@ export class PodExecutor {
           const subject = this.deps.sparqlConverter.generateSubjectUri(row, operation.table);
           const askQuery = { type: 'ASK' as const, query: `ASK { <${subject}> ?p ?o }`, prefixes: {} };
           const results = await this.deps.sparqlExecutor.executeQueryWithSource(askQuery, resourceUrl);
-          if (results[0]?.result) {
+          const firstResult = results[0] as { result?: unknown } | undefined;
+          if (firstResult?.result) {
             throw new Error(`Duplicate primary key: ${subject} already exists.`);
           }
         } catch (e: any) {

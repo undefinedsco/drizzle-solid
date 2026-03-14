@@ -36,7 +36,7 @@ export interface TypeRegistration {
   forClass: string;        // 对应的本地类名 (如 'Person', 'BlogPost')
 }
 
-export interface PodQueryResult<T = any> {
+export interface PodQueryResult<T = unknown> {
   data: T;
   source: 'pod';
   timestamp: Date;
@@ -46,8 +46,8 @@ export interface PodQueryResult<T = any> {
 export interface PodOperation {
   type: 'select' | 'insert' | 'update' | 'delete';
   resource: string;
-  data?: any;
-  conditions?: any;
+  data?: unknown;
+  conditions?: Record<string, unknown>;
   limit?: number;
   offset?: number;
   orderBy?: Array<{ column: string; direction: 'asc' | 'desc' }>;
