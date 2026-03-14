@@ -36,6 +36,12 @@ const defaultRequireModule = createRequireFn
   ? createRequireFn(moduleFilename)
   : null;
 
+type ActionObserverHttpLike = {
+  observedActors?: unknown[];
+};
+
+type OnRunHandler = (this: ActionObserverHttpLike, actor: unknown, action: unknown, output: unknown) => unknown;
+
 const patchActionObserverHttp = (requireModule: NodeRequire | null, moduleName: string) => {
   if (!requireModule) {
     return false;
@@ -45,9 +51,9 @@ const patchActionObserverHttp = (requireModule: NodeRequire | null, moduleName: 
     const comunica = requireModule(moduleName);
 
     if (comunica && comunica.ActionObserverHttp) {
-      const originalOnRun = comunica.ActionObserverHttp.prototype.onRun;
+      const originalOnRun = comunica.ActionObserverHttp.prototype.onRun as OnRunHandler;
 
-      comunica.ActionObserverHttp.prototype.onRun = function(actor: any, _action: any, _output: any) {
+      comunica.ActionObserverHttp.prototype.onRun = function(actor: unknown, _action: unknown, _output: unknown) {
         if (!this.observedActors || !Array.isArray(this.observedActors)) {
           this.observedActors = [];
         }

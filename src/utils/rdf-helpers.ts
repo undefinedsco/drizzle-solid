@@ -3,14 +3,18 @@
 /**
  * 验证 RDF 三元组格式
  */
-export function validateTriple(triple: any): boolean {
+export function validateTriple(triple: unknown): boolean {
+  if (!triple || typeof triple !== 'object') {
+    return false;
+  }
+
+  const candidate = triple as Record<string, unknown>;
   return (
-    triple &&
-    typeof triple.subject === 'string' &&
-    typeof triple.predicate === 'string' &&
-    (typeof triple.object === 'string' || 
-     typeof triple.object === 'number' || 
-     typeof triple.object === 'boolean')
+    typeof candidate.subject === 'string' &&
+    typeof candidate.predicate === 'string' &&
+    (typeof candidate.object === 'string' || 
+     typeof candidate.object === 'number' || 
+     typeof candidate.object === 'boolean')
   );
 }
 
@@ -41,7 +45,7 @@ export function formatError(error: unknown): string {
 export function buildSparqlQuery(
   selectFields: string[],
   graphUri: string,
-  conditions?: Record<string, any>
+  conditions?: Record<string, unknown>
 ): string {
   let query = `SELECT ${selectFields.map(field => `?${field}`).join(' ')}\n`;
   query += `WHERE {\n`;

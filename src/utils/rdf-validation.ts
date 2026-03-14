@@ -6,23 +6,26 @@ export interface ValidationResult {
   warnings: string[];
 }
 
+type RDFObjectValue = string | number | boolean | Date | null;
+type RDFRecord = Record<string, unknown>;
+
 export interface RDFTriple {
   subject: string;
   predicate: string;
-  object: string | number | Date;
+  object: RDFObjectValue;
 }
 
 export interface ParsedRDFData {
   triples: RDFTriple[];
   subjects: Set<string>;
   predicates: Set<string>;
-  objects: Set<string | number | Date>;
+  objects: Set<RDFObjectValue>;
 }
 
 /**
  * 验证 RDF 数据的有效性
  */
-export function validateRDFData(data: any): ValidationResult {
+export function validateRDFData(data: unknown): ValidationResult {
   const result: ValidationResult = {
     isValid: true,
     errors: [],
@@ -40,7 +43,12 @@ export function validateRDFData(data: any): ValidationResult {
     // 如果是数组，验证每个元素
     if (Array.isArray(data)) {
       for (let i = 0; i < data.length; i++) {
-        const itemResult = validateRDFItem(data[i], `item[${i}]`);
+        const item = asRDFRecord(data[i]);
+        if (!item) {
+          result.warnings.push(`item[${i}]: Non-object item ignored`);
+          continue;
+        }
+        const itemResult = validateRDFItem(item, `item[${i}]`);
         result.errors.push(...itemResult.errors);
         result.warnings.push(...itemResult.warnings);
         if (!itemResult.isValid) {
@@ -49,7 +57,13 @@ export function validateRDFData(data: any): ValidationResult {
       }
     } else {
       // 验证单个对象
-      const itemResult = validateRDFItem(data, 'root');
+      const item = asRDFRecord(data);
+      if (!item) {
+        result.errors.push('root: RDF item must be an object');
+        result.isValid = false;
+        return result;
+      }
+      const itemResult = validateRDFItem(item, 'root');
       result.errors.push(...itemResult.errors);
       result.warnings.push(...itemResult.warnings);
       if (!itemResult.isValid) {
@@ -68,7 +82,7 @@ export function validateRDFData(data: any): ValidationResult {
 /**
  * 验证单个 RDF 项目
  */
-function validateRDFItem(item: any, path: string): ValidationResult {
+function validateRDFItem(item: RDFRecord, path: string): ValidationResult {
   const result: ValidationResult = {
     isValid: true,
     errors: [],
@@ -190,20 +204,34 @@ function parseJsonLD(jsonld: string): ParsedRDFData {
   };
 
   try {
-    const data = JSON.parse(jsonld);
+    const data: unknown = JSON.parse(jsonld);
     
     // 处理单个对象或对象数组
     const items = Array.isArray(data) ? data : [data];
     
-    for (const item of items) {
-      const subject = item['@id'] || item.id || '_:blank';
+    for (const rawItem of items) {
+      const item = asRDFRecord(rawItem);
+      if (!item) {
+        continue;
+      }
+      const subject =
+        (typeof item['@id'] === 'string' && item['@id']) ||
+        (typeof item.id === 'string' && item.id) ||
+        '_:blank';
       
       for (const [key, value] of Object.entries(item)) {
         if (key.startsWith('@')) continue; // 跳过 JSON-LD 关键字
         
         const predicate = expandPredicate(key, item['@context']);
-        const objectValue = typeof value === 'object' && value !== null ? 
-          ((value as any)['@id'] || (value as any).id || JSON.stringify(value)) : value;
+        const linkedValue = asRDFRecord(value);
+        const objectValue: RDFObjectValue =
+          linkedValue
+            ? (typeof linkedValue['@id'] === 'string'
+                ? linkedValue['@id']
+                : typeof linkedValue.id === 'string'
+                  ? linkedValue.id
+                  : JSON.stringify(value))
+            : normalizeObjectValue(value);
 
         parsed.triples.push({
           subject,
@@ -322,14 +350,17 @@ function cleanValue(value: string): string | number | Date {
   return value;
 }
 
-function expandPredicate(key: string, context?: any): string {
+function expandPredicate(key: string, context?: unknown): string {
   if (isURI(key)) {
     return key;
   }
   
   // 简单的上下文扩展
-  if (context && context[key]) {
-    return context[key];
+  if (context && typeof context === 'object' && key in context) {
+    const resolved = (context as RDFRecord)[key];
+    if (typeof resolved === 'string') {
+      return resolved;
+    }
   }
   
   // 默认命名空间扩展
@@ -348,4 +379,22 @@ function expandPredicate(key: string, context?: any): string {
   }
   
   return key;
+}
+
+function asRDFRecord(value: unknown): RDFRecord | null {
+  return value !== null && typeof value === 'object' ? (value as RDFRecord) : null;
+}
+
+function normalizeObjectValue(value: unknown): RDFObjectValue {
+  if (
+    typeof value === 'string' ||
+    typeof value === 'number' ||
+    typeof value === 'boolean' ||
+    value instanceof Date ||
+    value === null
+  ) {
+    return value;
+  }
+
+  return JSON.stringify(value);
 }

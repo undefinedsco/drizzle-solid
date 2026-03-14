@@ -12,6 +12,7 @@ import { Store, Parser, Writer, DataFactory, Quad } from 'n3';
 import { fetch } from '@inrupt/universal-fetch';
 
 const { namedNode, literal, quad } = DataFactory;
+type JsonLdItem = Record<string, unknown>;
 
 export interface QueryResult {
   bindings: Record<string, string>[];
@@ -125,7 +126,7 @@ export class SolidN3Client {
    */
   private async parseJsonLd(jsonData: string, store: Store, baseUri: string): Promise<void> {
     try {
-      const jsonLd = JSON.parse(jsonData);
+      const jsonLd: unknown = JSON.parse(jsonData);
       
       if (Array.isArray(jsonLd)) {
         for (const item of jsonLd) {
@@ -142,15 +143,21 @@ export class SolidN3Client {
   /**
    * 处理单个 JSON-LD 项目
    */
-  private processJsonLdItem(item: any, store: Store, baseUri: string): void {
-    if (!item['@id']) return;
+  private processJsonLdItem(item: unknown, store: Store, baseUri: string): void {
+    if (!item || typeof item !== 'object') return;
 
-    const subject = namedNode(this.resolveUri(item['@id'], baseUri));
+    const jsonLdItem = item as JsonLdItem;
+    if (typeof jsonLdItem['@id'] !== 'string') return;
+
+    const subject = namedNode(this.resolveUri(jsonLdItem['@id'], baseUri));
 
     // 处理类型
-    if (item['@type']) {
-      const types = Array.isArray(item['@type']) ? item['@type'] : [item['@type']];
+    if (jsonLdItem['@type']) {
+      const types = Array.isArray(jsonLdItem['@type']) ? jsonLdItem['@type'] : [jsonLdItem['@type']];
       for (const type of types) {
+        if (typeof type !== 'string') {
+          continue;
+        }
         store.addQuad(quad(
           subject,
           namedNode('http://www.w3.org/1999/02/22-rdf-syntax-ns#type'),
@@ -160,7 +167,7 @@ export class SolidN3Client {
     }
 
     // 处理其他属性
-    for (const [predicate, values] of Object.entries(item)) {
+    for (const [predicate, values] of Object.entries(jsonLdItem)) {
       if (predicate === '@id' || predicate === '@type') continue;
 
       const predicateNode = namedNode(predicate);
@@ -170,10 +177,18 @@ export class SolidN3Client {
         let objectNode;
         
         if (typeof value === 'object' && value !== null) {
-          if (value['@id']) {
-            objectNode = namedNode(this.resolveUri(value['@id'], baseUri));
-          } else if (value['@value'] !== undefined) {
-            objectNode = literal(value['@value'], value['@type'] || value['@language']);
+          const valueRecord = value as JsonLdItem;
+          if (typeof valueRecord['@id'] === 'string') {
+            objectNode = namedNode(this.resolveUri(valueRecord['@id'], baseUri));
+          } else if (valueRecord['@value'] !== undefined) {
+            objectNode = literal(
+              String(valueRecord['@value']),
+              typeof valueRecord['@type'] === 'string'
+                ? valueRecord['@type']
+                : typeof valueRecord['@language'] === 'string'
+                  ? valueRecord['@language']
+                  : undefined
+            );
           } else {
             continue;
           }

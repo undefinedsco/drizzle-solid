@@ -43,7 +43,7 @@ export class WebIdResolver {
    */
   async resolveStorage(webId: string, fetchFn?: typeof fetch): Promise<string | null> {
     if (this.cache.has(webId)) {
-      return this.cache.get(webId)!;
+      return this.cache.get(webId) ?? null;
     }
 
     try {

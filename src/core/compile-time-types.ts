@@ -4,6 +4,14 @@
 import { podTable, string, int, boolean, date } from './schema';
 import { PodTable, PodTableOptions } from './schema';
 
+type AnyTypedField = TypedField<string>;
+type TypedFieldMap = Record<string, AnyTypedField>;
+type SupportedColumn =
+  | ReturnType<typeof string>
+  | ReturnType<typeof int>
+  | ReturnType<typeof boolean>
+  | ReturnType<typeof date>;
+
 // 类型安全的字段定义
 export interface TypedField<T extends string> {
   name: T;
@@ -13,17 +21,17 @@ export interface TypedField<T extends string> {
 }
 
 // 类型安全的表定义
-export type TypedTableDefinition<T extends Record<string, TypedField<any>>> = {
+export type TypedTableDefinition<T extends TypedFieldMap> = {
   [K in keyof T]: T[K];
 };
 
 // 从类型定义创建实际的表
-export function createTypedTable<T extends Record<string, TypedField<any>>>(
+export function createTypedTable<T extends TypedFieldMap>(
   name: string,
   definition: TypedTableDefinition<T>,
   options: PodTableOptions
 ): PodTable {
-  const columns: Record<string, any> = {};
+  const columns: Record<string, SupportedColumn> = {};
   
   for (const [fieldName, fieldDef] of Object.entries(definition)) {
     switch (fieldDef.type) {
@@ -79,17 +87,25 @@ export const CommonFields = {
 } as const;
 
 // 类型安全的表构建器
-export class TypedTableBuilder<T extends Record<string, TypedField<any>>> {
-  private definition: T = {} as T;
-  
-  constructor(private name: string, private options: PodTableOptions) {}
+export class TypedTableBuilder<T extends TypedFieldMap> {
+  constructor(
+    private name: string,
+    private options: PodTableOptions,
+    private definition: TypedTableDefinition<T> = {} as TypedTableDefinition<T>
+  ) {}
   
   // 添加字段
   addField<K extends string>(
     fieldDef: TypedField<K>
   ): TypedTableBuilder<T & Record<K, TypedField<K>>> {
-    this.definition[fieldDef.name] = fieldDef as any;
-    return this as any;
+    return new TypedTableBuilder<T & Record<K, TypedField<K>>>(
+      this.name,
+      this.options,
+      {
+        ...this.definition,
+        [fieldDef.name]: fieldDef,
+      } as TypedTableDefinition<T & Record<K, TypedField<K>>>
+    );
   }
   
   // 构建表
@@ -100,12 +116,12 @@ export class TypedTableBuilder<T extends Record<string, TypedField<any>>> {
 
 // 创建类型安全的表构建器
 export function typedTable(name: string, options: PodTableOptions) {
-  return new TypedTableBuilder(name, options);
+  return new TypedTableBuilder<Record<string, never>>(name, options);
 }
 
 // 类型安全的查询结果类型
-export type TypedTableResult<T extends Record<string, TypedField<any>>> = {
-  [K in keyof T]: T[K] extends TypedField<any> 
+export type TypedTableResult<T extends TypedFieldMap> = {
+  [K in keyof T]: T[K] extends TypedField<string> 
     ? T[K]['type'] extends 'string' ? string
     : T[K]['type'] extends 'number' ? number
     : T[K]['type'] extends 'boolean' ? boolean

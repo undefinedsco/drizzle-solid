@@ -1,11 +1,13 @@
 import { z } from 'zod';
 import { PodTable, InferTableData, InferInsertData, InferUpdateData, PodColumnBase } from './schema';
 
+type GenericPodTable = PodTable<Record<string, PodColumnBase>>;
+
 /**
  * 从 PodTable 生成 Zod 模式
  * 支持 drizzle-zod 集成
  */
-export function createTableSchema<TTable extends PodTable<any>>(
+export function createTableSchema<TTable extends GenericPodTable>(
   table: TTable, 
   customValidations?: Record<string, z.ZodTypeAny>
 ) {
@@ -67,7 +69,7 @@ export function createTableSchema<TTable extends PodTable<any>>(
  * 创建插入数据的 Zod 模式
  * 主键字段可选，必需字段必填
  */
-export function createInsertSchema<TTable extends PodTable<any>>(table: TTable) {
+export function createInsertSchema<TTable extends GenericPodTable>(table: TTable) {
   const schemaFields: Record<string, z.ZodTypeAny> = {};
 
   for (const [columnName, column] of Object.entries(table.columns)) {
@@ -121,7 +123,7 @@ export function createInsertSchema<TTable extends PodTable<any>>(table: TTable) 
  * 创建更新数据的 Zod 模式
  * 所有字段都是可选的
  */
-export function createUpdateSchema<TTable extends PodTable<any>>(table: TTable) {
+export function createUpdateSchema<TTable extends GenericPodTable>(table: TTable) {
   const schemaFields: Record<string, z.ZodTypeAny> = {};
 
   for (const [columnName, column] of Object.entries(table.columns)) {
@@ -165,7 +167,7 @@ export function createUpdateSchema<TTable extends PodTable<any>>(table: TTable) 
  * 类型安全的表模式创建器
  * 提供完整的类型推断支持
  */
-export class TableSchemaBuilder<TTable extends PodTable<any>> {
+export class TableSchemaBuilder<TTable extends GenericPodTable> {
   private customValidations: Record<string, z.ZodTypeAny> = {};
 
   constructor(private table: TTable) {}
@@ -252,13 +254,13 @@ export class TableSchemaBuilder<TTable extends PodTable<any>> {
 /**
  * 为表创建 Zod 模式构建器
  */
-export function getTableSchema<TTable extends PodTable<any>>(table: TTable): TableSchemaBuilder<TTable> {
+export function getTableSchema<TTable extends GenericPodTable>(table: TTable): TableSchemaBuilder<TTable> {
   return new TableSchemaBuilder(table);
 }
 
 /**
  * 直接获取表的 Zod schema（兼容性函数）
  */
-export function getTableSchemaDirect<TTable extends PodTable<any>>(table: TTable) {
+export function getTableSchemaDirect<TTable extends GenericPodTable>(table: TTable) {
   return createTableSchema(table);
 }

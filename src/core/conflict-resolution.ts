@@ -47,6 +47,11 @@ export interface ConflictResolutionResult {
   error?: string;
 }
 
+interface ErrorWithStatusCode {
+  statusCode?: number;
+  message?: string;
+}
+
 /**
  * 默认配置
  */
@@ -110,9 +115,10 @@ export class ConflictResolver {
           retries,
           strategy: this.config.strategy
         };
-      } catch (error: any) {
+      } catch (error: unknown) {
+        const resolvedError = error as ErrorWithStatusCode;
         // 检查是否是 412 Precondition Failed 错误
-        if (error?.statusCode === 412 && attempt < this.config.maxRetries) {
+        if (resolvedError.statusCode === 412 && attempt < this.config.maxRetries) {
           retries++;
 
           if (this.config.logging) {
@@ -135,7 +141,7 @@ export class ConflictResolver {
         return {
           success: false,
           retries,
-          error: error?.message || String(error)
+          error: resolvedError.message || String(error)
         };
       }
     }
@@ -278,7 +284,7 @@ export class ConflictResolver {
   /**
    * 获取谓词的值（支持多种类型）
    */
-  private getPredicateValue(thing: Thing, predicate: string): any {
+  private getPredicateValue(thing: Thing, predicate: string): { type: string; value: string | number | boolean | Date } | null {
     // 尝试不同类型的 getter
     const stringValue = getStringNoLocale(thing, predicate);
     if (stringValue !== null) return { type: 'string', value: stringValue };

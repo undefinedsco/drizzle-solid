@@ -1,7 +1,7 @@
 import { applyComunicaPatches } from './comunica-patch';
 
 export type SPARQLBindingsStream = {
-  toArray(): Promise<any[]>;
+  toArray(): Promise<unknown[]>;
 };
 
 export interface SPARQLQueryEngine {

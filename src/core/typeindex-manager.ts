@@ -436,11 +436,14 @@ export class TypeIndexManager {
     return resolvePodBase({ webId: this.webId, podUrl: this.podUrl, storages });
   }
 
-  private extractStorages(profile: any): string[] {
+  private extractStorages(profile: unknown): string[] {
     try {
+      if (!profile) {
+        return [];
+      }
       const storages = [
-        ...(getUrlAll(profile, 'http://www.w3.org/ns/solid/terms#storage') || []),
-        ...(getUrlAll(profile, 'http://www.w3.org/ns/pim/space#storage') || []),
+        ...(getUrlAll(profile as Parameters<typeof getUrlAll>[0], 'http://www.w3.org/ns/solid/terms#storage') || []),
+        ...(getUrlAll(profile as Parameters<typeof getUrlAll>[0], 'http://www.w3.org/ns/pim/space#storage') || []),
       ].filter(Boolean) as string[];
       return storages;
     } catch {
