@@ -174,6 +174,17 @@ Common patterns:
 
 这不是命名细节，而是持久化语义本身。
 
+## Type hierarchy
+
+Class hierarchy and instance typing are not the same thing.
+
+- `type` is the primary persisted `rdf:type` for an entity
+- `subClassOf` expresses schema / vocabulary hierarchy
+- by default, persisted instance data should keep one most-specific, authoritative `rdf:type`
+- do not persist both a base/table type and a business subtype on the same entity unless they carry genuinely different semantics
+- do not introduce parallel string-based type systems when the meaning is already carried by RDF class membership
+- if parent types must be materialized for no-inference environments, treat that as an explicit compatibility mode rather than the default stored shape
+
 ## Exact-target mutation semantics
 
 Reads and writes do not intentionally behave the same way.

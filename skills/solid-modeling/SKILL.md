@@ -43,15 +43,29 @@ Do not leave property ownership implicit.
 
 If the value identifies another entity, prefer `uri(...).link(target)` and a stable IRI over a string id.
 
-### 4. Keep layout separate from ontology
+### 4. Keep class hierarchy separate from instance typing
+
+Use:
+
+- `subClassOf` for vocabulary / schema hierarchy
+- one primary, most-specific `rdf:type` for persisted instances
+
+By default:
+
+- do **not** materialize parent classes as extra instance `rdf:type` values
+- do **not** add a parallel string `type/kind` field if it only repeats class membership
+
+If parent types are needed for no-inference environments, treat that as an explicit compatibility choice, not the default stored shape.
+
+### 5. Keep layout separate from ontology
 
 `base`, `subjectTemplate`, document bucketing, and container layout are important, but they are not automatically ontology predicates.
 
-### 5. Reuse standard vocabulary first
+### 6. Reuse standard vocabulary first
 
 Prefer standard RDF vocabularies when they fit the meaning. Introduce custom terms only when the semantics are genuinely project-specific.
 
-### 6. Do not fake certainty on unsettled ontology choices
+### 7. Do not fake certainty on unsettled ontology choices
 
 If multiple predicate, IRI, or ownership choices remain plausible, treat the answer as a proposal, not a final rule. Recommend a `kind:decision` + `area:modeling` path instead of pretending one choice is already canonical.
 
@@ -65,6 +79,7 @@ When reviewing a schema or property proposal, answer these in order:
 4. Which values are derived from layout or IRI structure?
 5. Which values belong on another concept, relation object, or runtime status object?
 6. Which vocabulary terms are canonical for these meanings?
+7. Is the proposal duplicating class membership across `rdf:type`, parent types, and string discriminators?
 
 ## Output expectations
 
@@ -73,6 +88,7 @@ When using this skill, produce:
 - a recommended schema shape
 - explicit property ownership decisions
 - notes on `link` vs literal fields
+- notes on `rdf:type` / `subClassOf` responsibilities
 - notes on derived/layout-only values
 - follow-up docs/example gaps if the modeling rule is not yet documented
 - whether the question can be answered directly or must escalate to modeling consensus

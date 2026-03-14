@@ -49,6 +49,19 @@ Do not recommend scan-style `updateMany/deleteMany` as if this were a SQL engine
 
 If a field points at another entity, recommend a link/IRI-based representation, not just a copied SQL id habit.
 
+### 5. Do not migrate SQL discriminators blindly
+
+If a legacy SQL schema has `type`, `kind`, or similar discriminator fields, first ask what they mean:
+
+- if they express RDF class membership, move that meaning to `type` / `subClassOf`
+- if they express a different business dimension, keep them as ordinary fields
+
+Do not recommend duplicating the same meaning into:
+
+- a child `rdf:type`
+- extra parent `rdf:type` values
+- and a parallel string discriminator
+
 ## Migration checklist
 
 1. What SQL assumption is the user carrying over?

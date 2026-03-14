@@ -193,18 +193,6 @@ export class UpdateBuilder {
         object: { termType: 'NamedNode', value: rdfClass }
       });
 
-      if (table.config.subClassOf) {
-        const parents = Array.isArray(table.config.subClassOf) ? table.config.subClassOf : [table.config.subClassOf];
-        parents.forEach(parent => {
-          const parentUri = typeof parent === 'string' ? parent : (parent as any).value || String(parent);
-          triples.push({
-            subject: subjectTerm,
-            predicate: { termType: 'NamedNode', value: 'http://www.w3.org/1999/02/22-rdf-syntax-ns#type' },
-            object: { termType: 'NamedNode', value: parentUri }
-          });
-        });
-      }
-
       Object.entries(row).forEach(([key, value]) => {
         if (key === 'id' || value === undefined || value === null) return;
         

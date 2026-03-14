@@ -132,6 +132,12 @@ Context7 的 `Library` 和 `Skills` 不是一回事：
 
 public skills 的规则，必须来自公开文档和稳定 API，而不是只存在于内部记忆里。
 
+当前已稳定、应该同时体现在文档与 skills 中的建模规则包括：
+
+- 用 `subClassOf` 表达 schema / vocabulary 层级
+- 实例默认只保留一个最具体、最权威的 `rdf:type`
+- 只有在显式兼容模式下，才考虑物化父类类型
+
 ### 2. examples 是对外承诺的一部分
 
 如果 public skill 推荐某种写法，对应 example 和验证测试必须存在。

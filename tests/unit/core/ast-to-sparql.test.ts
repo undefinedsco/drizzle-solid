@@ -250,7 +250,7 @@ describe('ASTToSPARQLConverter', () => {
       expect(result.query).toContain('"carol@example.com"');
     });
 
-    it('should include parent rdf:type triples when table declares subClassOf', () => {
+    it('should keep subClassOf as schema metadata instead of materializing parent rdf:type triples', () => {
       const parentClass = 'https://schema.org/Contact';
       const personTable = podTable('persons', {
         id: string('id').primaryKey().predicate('https://schema.org/identifier'),
@@ -263,7 +263,8 @@ describe('ASTToSPARQLConverter', () => {
 
       const insert = converter.convertInsert({ table: personTable, rows: [{ id: 'p-1', name: 'Alice' }] }, personTable);
       expect(insert.query).toContain('schema:Person');
-      expect(insert.query).toContain('schema:Contact');
+      expect(insert.query).not.toContain('schema:Contact');
+      expect(personTable.getSubClassOf()).toContain(parentClass);
     });
   });
 

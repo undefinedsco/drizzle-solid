@@ -4,11 +4,12 @@
 
 这份文档面向已经熟悉 SQL 版 `drizzle-orm` 的开发者，帮助你把原来的建模与查询习惯迁移到 Solid Pod 的数据模型里。
 
-## 先记住三个变化
+## 先记住四个变化
 
 1. **表/行不是主语义，文档/IRI 才是**
 2. **引用不再只是 foreign key，更接近 RDF link**
 3. **写操作需要更强调 exact-target，而不是默认 SQL 式 set-based mutation**
+4. **类层级放在 schema / vocabulary，实例默认只保留一个主 `rdf:type`**
 
 ## 先说结论
 
@@ -29,6 +30,7 @@ const db = drizzle(session);
 - `table` 如何映射到 Pod resource layout
 - `id` 与 `@id` / IRI 的关系
 - `link` 字段如何映射到 RDF link
+- `type` / `subClassOf` 如何表达类层级，而不是再复制一套字符串分类系统
 - `where(...)` 在读和写上的语义差异
 - `toSQL()` / raw SQL 心智如何迁到 SPARQL
 
@@ -119,6 +121,29 @@ const posts = podTable('posts', {
 - 是一个文档里放很多实体，还是一实体一文档
 - 公开数据和私有数据是否分容器
 - 关联关系是同文档 fragment，还是跨文档 IRI
+
+### SQL discriminator / kind 列 → RDF 类型层级
+
+在 SQL 里，很多项目会用：
+
+- `type`
+- `kind`
+- `category`
+
+去表达“这条记录属于哪个子类”。
+
+迁移到 `drizzle-solid` 时要先区分两种情况：
+
+- 如果它表达的是**RDF 类成员身份**，优先用 `type` / `subClassOf`
+- 如果它表达的是**另一种业务维度**（如状态、来源、执行模式），再保留普通字段
+
+默认口径：
+
+- schema 层用 `subClassOf` 表达类层级
+- 实例层默认只持久化一个最具体、最权威的 `rdf:type`
+- 不要同时把父类、子类、以及一列字符串 `kind` 都写成同一种语义
+
+只有在明确需要兼容无推理环境时，才考虑显式物化父类类型；那应是兼容选项，不应是默认形状。
 
 ### 复用 schema
 

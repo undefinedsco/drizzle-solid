@@ -31,6 +31,12 @@ They are intentionally narrower and more stable than local/private agent instruc
 
 They should not depend on unpublished memory or private operational context.
 
+Stable cross-skill modeling rule:
+
+- use `subClassOf` for class hierarchy
+- keep one authoritative, most-specific instance `rdf:type` by default
+- do not duplicate the same class-membership meaning into parent `rdf:type` materialization plus a parallel string `kind/type` field unless the semantics are genuinely different
+
 ## Feedback loop
 
 If a skill recommendation is unclear, incomplete, or wrong, the feedback should return to this repository as an issue.

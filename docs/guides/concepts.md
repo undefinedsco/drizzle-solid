@@ -102,6 +102,13 @@ await post.delete();
 - 在迁移旧代码时，可以让 link 字段根据 schema 自动补全目标 IRI
 - 关系读取通常落在 Drizzle-shaped read facade，常见入口是 `client.query`
 
+## 类型层级
+
+- `type` 表示实例默认写入的主 `rdf:type`
+- `subClassOf` 表示 schema / vocabulary 层级，不默认额外写入实例数据
+- 默认持久化形状应尽量只保留一个最具体、最权威的 `rdf:type`
+- 如果未来需要兼容无推理环境，再通过显式兼容选项物化父类类型，而不是默认双写
+
 ## Drizzle-shaped surface 仍在，但不是主心智
 
 以下能力仍然存在：

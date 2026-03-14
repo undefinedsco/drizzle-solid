@@ -116,6 +116,25 @@ describe('QueryBuilder toSPARQL()', () => {
     expect(query.query).toContain('Alice');
   });
 
+  it('insert toSPARQL should not materialize parent rdf:type by default', () => {
+    const SpecializedUser = podTable('SpecializedUser', {
+      id: string('id').primaryKey().predicate('https://schema.org/identifier'),
+      name: string('name').predicate('https://schema.org/name'),
+    }, {
+      base: 'https://pod.example/special-users.ttl',
+      type: 'https://schema.org/Person',
+      subClassOf: 'https://schema.org/Thing',
+      subjectTemplate: '#{id}',
+    });
+
+    const query = new InsertQueryBuilder(session, SpecializedUser)
+      .values({ id: 'user-2', name: 'Bob' })
+      .toSPARQL();
+
+    expect(query.query).toContain('schema:Person');
+    expect(query.query).not.toContain('schema:Thing');
+  });
+
   it('update toSPARQL should build SPARQL update', () => {
     const query = new UpdateQueryBuilder(session, Users)
       .set({ age: 21 })

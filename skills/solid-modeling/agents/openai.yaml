@@ -1,6 +1,6 @@
 interface:
   display_name: "Solid Modeling"
   short_description: "Design Solid/RDF schemas and property ownership"
-  default_prompt: "Use $solid-modeling to review this Pod schema and decide which predicates belong on each concept."
+  default_prompt: "Use $solid-modeling to review this Pod schema, decide which predicates belong on each concept, and verify that class hierarchy stays in subClassOf while persisted instances keep one authoritative rdf:type."
 policy:
   allow_implicit_invocation: true
