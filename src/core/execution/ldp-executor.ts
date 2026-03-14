@@ -9,6 +9,15 @@ import type { ComunicaSPARQLExecutor } from '../sparql-executor';
 import { TripleBuilderImpl } from '../triple/builder';
 import type { UriResolver } from '../uri';
 
+type QueryBinding = {
+  get: (key: string) => unknown;
+};
+
+type QueryTerm = {
+  termType?: string;
+  value?: string;
+};
+
 export class LdpExecutor {
   private sparqlExecutor: ComunicaSPARQLExecutor;
   private fetchFn: typeof fetch;
@@ -711,14 +720,14 @@ export class LdpExecutor {
     visited.add(subject);
 
     const query = `SELECT ?p ?o WHERE { <${subject}> ?p ?o . }`;
-    const bindings = await this.sparqlExecutor.queryBindings(query, resourceUrl);
+    const bindings = await this.sparqlExecutor.queryBindings(query, resourceUrl) as QueryBinding[];
     
     const triples: string[] = [];
     const childSubjects: string[] = [];
 
     bindings.forEach((binding) => {
-      const p = binding.get('p');
-      const o = binding.get('o');
+      const p = binding.get('p') as QueryTerm | null;
+      const o = binding.get('o') as QueryTerm | null;
       
       if (!p || !o) return;
 
@@ -733,7 +742,7 @@ export class LdpExecutor {
             const isInline = (col as any).dataType === 'object' || (col as any).dataType === 'json' ||
                      ((col as any).dataType === 'array' && ((col as any).elementType === 'object' || (col as any).options?.baseType === 'object'));
 
-            if (predicate === pVal && isInline) {
+            if (predicate === pVal && isInline && typeof o.value === 'string') {
                childSubjects.push(o.value);
             }
          }
@@ -754,11 +763,11 @@ export class LdpExecutor {
     predicate: string
   ): Promise<string[]> {
     const query = `SELECT ?o WHERE { <${subject}> <${predicate}> ?o . }`;
-    const bindings = await this.sparqlExecutor.queryBindings(query, resourceUrl);
+    const bindings = await this.sparqlExecutor.queryBindings(query, resourceUrl) as QueryBinding[];
 
     return bindings
       .map((binding) => {
-        const o = binding.get('o');
+        const o = binding.get?.('o');
         return this.formatTerm(o);
       })
       .filter((val): val is string => !!val);

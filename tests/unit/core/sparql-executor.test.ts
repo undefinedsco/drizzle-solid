@@ -87,4 +87,33 @@ describe('ComunicaSPARQLExecutor binding normalization', () => {
       }
     ]);
   });
+
+  it('marks explicit endpoint sources as sparql', async () => {
+    const executor: any = new ComunicaSPARQLExecutor({
+      sources: ['https://pod.example/profile/card'],
+    });
+
+    const bindingsStream = {
+      toArray: vi.fn().mockResolvedValue([]),
+    };
+
+    const engine = {
+      queryBindings: vi.fn().mockResolvedValue(bindingsStream),
+    };
+
+    executor.initEngine = vi.fn().mockResolvedValue(engine);
+
+    await executor.executeQueryWithSource(
+      { type: 'SELECT', query: 'SELECT * WHERE { ?s ?p ?o }' },
+      'https://pod.example/-/sparql',
+      'sparql'
+    );
+
+    expect(engine.queryBindings).toHaveBeenCalledWith(
+      'SELECT * WHERE { ?s ?p ?o }',
+      expect.objectContaining({
+        sources: [{ type: 'sparql', value: 'https://pod.example/-/sparql' }],
+      })
+    );
+  });
 });

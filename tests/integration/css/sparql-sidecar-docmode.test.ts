@@ -10,7 +10,8 @@
 import { describe, it, expect, beforeAll } from 'vitest';
 import { createTestSession, ensureContainer } from './helpers';
 import { drizzle } from '../../../src/driver';
-import { podTable, string, timestamp, id } from '../../../src/core/schema';
+import { podTable, string, timestamp, id, uri, object } from '../../../src/core/schema';
+import { eq } from '../../../src/core/query-conditions';
 
 describe('SPARQL Sidecar with Document Mode', () => {
   let session: any;
@@ -174,4 +175,55 @@ describe('SPARQL Sidecar with Document Mode', () => {
     await session.fetch(testResource, { method: 'DELETE' }).catch(() => {});
     
   }, 30000);
+
+  it('should preserve uri().array() values on document-mode sidecar select', async () => {
+    const testId = Date.now();
+    const containerPath = `.data/chat-array-${testId}/`;
+    const baseContainer = `${podBase}${containerPath}`;
+    const sparqlEndpoint = `${baseContainer}-/sparql`;
+
+    await ensureContainer(session, containerPath);
+
+    const chatTable = podTable('chats', {
+      id: id('id'),
+      title: string('title').notNull(),
+      participants: uri('participants').array().predicate('http://www.w3.org/2005/01/wf/flow-1.0#participant'),
+      metadata: object('metadata').predicate('https://undefineds.co/ns#metadata'),
+      createdAt: timestamp('createdAt').notNull().defaultNow(),
+      updatedAt: timestamp('updatedAt').notNull().defaultNow(),
+    }, {
+      base: baseContainer,
+      type: 'http://www.w3.org/ns/pim/meeting#LongChat',
+      namespace: { uri: 'https://undefineds.co/ns#' },
+      subjectTemplate: '{id}/index.ttl#this',
+      sparqlEndpoint,
+    });
+
+    const db = drizzle(session);
+    const chatId = `group-chat-${Date.now()}`;
+    const webId = session.info.webId;
+    const assistantUri = `${podBase}.data/agents/assistant-${chatId}.ttl#this`;
+    const now = new Date();
+
+    await db.insert(chatTable).values({
+      id: chatId,
+      title: 'Group Round Trip',
+      participants: [webId, assistantUri],
+      metadata: {
+        memberRoles: {
+          [webId]: 'owner',
+          [assistantUri]: 'member',
+        },
+      },
+      createdAt: now,
+      updatedAt: now,
+    }).execute();
+
+    const rows = await db.select().from(chatTable).where(eq(chatTable.id, chatId)).execute();
+
+    expect(rows).toHaveLength(1);
+    expect(Array.isArray(rows[0]?.participants)).toBe(true);
+    expect(rows[0]?.participants).toHaveLength(2);
+    expect(rows[0]?.participants).toEqual(expect.arrayContaining([webId, assistantUri]));
+  }, 60000);
 });

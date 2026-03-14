@@ -13,6 +13,22 @@ export interface SPARQLExecutorConfig {
   createQueryEngine?: SPARQLQueryEngineFactory;
 }
 
+type QuerySourceType = 'auto' | 'sparql';
+type ComunicaSource = string | { type: 'sparql'; value: string };
+type BindingLike = Record<string, unknown> & {
+  forEach?: (callback: (value: unknown, key: unknown) => void) => void;
+  entries?: () => Iterable<[unknown, unknown]>;
+  keys?: () => Iterable<unknown>;
+  get?: (key: unknown) => unknown;
+};
+type QueryResultRow = Record<string, unknown>;
+type QueryFailureRow = QueryResultRow & { success?: boolean; error?: string };
+type ComunicaTermLike = {
+  termType?: string;
+  value?: unknown;
+  datatype?: { value?: unknown };
+};
+
 export class ComunicaSPARQLExecutor {
   protected sources: string[];
   protected fetchFn: typeof fetch;
@@ -29,6 +45,14 @@ export class ComunicaSPARQLExecutor {
 
   private formatError(error: unknown): string {
     return error instanceof Error ? error.message : String(error);
+  }
+
+  private createSourceRef(sourceUrl: string, sourceType: QuerySourceType = 'auto'): ComunicaSource {
+    if (sourceType === 'sparql') {
+      return { type: 'sparql', value: sourceUrl };
+    }
+
+    return sourceUrl;
   }
 
   // 创建安全的 fetch 函数，修复 Comunica 的 HTTP 处理问题
@@ -154,7 +178,7 @@ export class ComunicaSPARQLExecutor {
   }
 
   // Execute SPARQL query
-  async executeQuery(sparqlQuery: SPARQLQuery): Promise<any[]> {
+  async executeQuery(sparqlQuery: SPARQLQuery): Promise<unknown[]> {
     try {
       const engine = await this.initEngine();
       
@@ -179,7 +203,7 @@ export class ComunicaSPARQLExecutor {
   }
 
   // Execute SELECT query directly - 简化版本，使用完整的 SPARQL 查询处理
-  async executeSelect(query: string): Promise<any[]> {
+  async executeSelect(query: string): Promise<unknown[]> {
     try {
       if (this.logging) {
         console.log('[SPARQL] Executing SELECT query with full processing');
@@ -212,7 +236,7 @@ export class ComunicaSPARQLExecutor {
   }
 
   // Execute raw bindings query
-  async queryBindings(query: string, sourceUrl: string): Promise<any[]> {
+  async queryBindings(query: string, sourceUrl: string): Promise<unknown[]> {
     const engine = await this.initEngine();
     const bindingsStream = await engine.queryBindings(query, {
       sources: [sourceUrl] as [string, ...string[]],
@@ -222,7 +246,7 @@ export class ComunicaSPARQLExecutor {
   }
 
   // Execute SELECT query
-  private async executeSelectInternal(sparqlQuery: SPARQLQuery, engine: SPARQLQueryEngine): Promise<any[]> {
+  private async executeSelectInternal(sparqlQuery: SPARQLQuery, engine: SPARQLQueryEngine): Promise<QueryResultRow[]> {
     try {
       // 确保有有效的 sources
       if (this.sources.length === 0) {
@@ -240,8 +264,9 @@ export class ComunicaSPARQLExecutor {
       
       const bindings = await bindingsStream.toArray();
 
-      return bindings.map((binding: any) => {
-        const result: Record<string, unknown> = {};
+      return bindings.map((binding) => {
+        const typedBinding = binding as BindingLike;
+        const result: QueryResultRow = {};
 
         const assignValue = (key: unknown, value: unknown) => {
           const keyName = this.extractBindingKeyName(key);
@@ -251,16 +276,16 @@ export class ComunicaSPARQLExecutor {
           result[keyName] = this.convertComunicaTerm(value);
         };
 
-        if (binding && typeof binding.forEach === 'function') {
-          binding.forEach((value: unknown, key: unknown) => assignValue(key, value));
-        } else if (binding && typeof binding.entries === 'function') {
-          for (const [key, value] of binding.entries()) {
+        if (typedBinding && typeof typedBinding.forEach === 'function') {
+          typedBinding.forEach((value: unknown, key: unknown) => assignValue(key, value));
+        } else if (typedBinding && typeof typedBinding.entries === 'function') {
+          for (const [key, value] of typedBinding.entries()) {
             assignValue(key, value);
           }
         } else {
-          for (const key in binding) {
-            if (Object.prototype.hasOwnProperty.call(binding, key)) {
-              assignValue(key, (binding as Record<string, unknown>)[key]);
+          for (const key in typedBinding) {
+            if (Object.prototype.hasOwnProperty.call(typedBinding, key)) {
+              assignValue(key, typedBinding[key]);
             }
           }
         }
@@ -274,7 +299,7 @@ export class ComunicaSPARQLExecutor {
   }
 
   // Execute ASK query
-  private async executeAskInternal(sparqlQuery: SPARQLQuery, engine: SPARQLQueryEngine): Promise<any[]> {
+  private async executeAskInternal(sparqlQuery: SPARQLQuery, engine: SPARQLQueryEngine): Promise<Array<{ result: boolean }>> {
     try {
       if (this.logging) {
         console.log(`[Comunica] Executing ASK query:`, sparqlQuery.query);
@@ -301,13 +326,13 @@ export class ComunicaSPARQLExecutor {
   }
 
   // Execute UPDATE query (INSERT/UPDATE/DELETE) - 改进版本处理409冲突
-  private async executeUpdate(sparqlQuery: SPARQLQuery, engine: SPARQLQueryEngine): Promise<any[]> {
+  private async executeUpdate(sparqlQuery: SPARQLQuery, engine: SPARQLQueryEngine): Promise<QueryFailureRow[]> {
     try {
       if (this.logging) {
         console.log(`[Simple] Executing ${sparqlQuery.type} query:`, sparqlQuery.query);
       }
       
-      const results: any[] = [];
+      const results: QueryFailureRow[] = [];
       
       for (const source of this.sources) {
         try {
@@ -477,11 +502,11 @@ export class ComunicaSPARQLExecutor {
     }
   }
 
-  public async invalidateHttpCache(url: string): Promise<void> {
+  public async invalidateHttpCache(url?: string): Promise<void> {
     if (this.engine) {
       await this.invalidateCache(this.engine, url);
       // Also try clearing all cache as fallback
-      await this.invalidateCache(this.engine, undefined as any);
+      await this.invalidateCache(this.engine, undefined);
     }
   }
 
@@ -527,57 +552,58 @@ export class ComunicaSPARQLExecutor {
   }
 
   // Convert Comunica term to JavaScript value
-  private convertComunicaTerm(term: any): any {
+  private convertComunicaTerm(term: unknown): unknown {
     if (!term) return null;
+    const typedTerm = term as ComunicaTermLike;
     
-    switch (term.termType) {
+    switch (typedTerm.termType) {
       case 'NamedNode':
-        return term.value;
+        return typedTerm.value;
       case 'Literal':
         // Handle typed literals
-        if (term.datatype && term.datatype.value) {
-          const datatypeIri = term.datatype.value;
+        if (typedTerm.datatype && typedTerm.datatype.value) {
+          const datatypeIri = typedTerm.datatype.value;
           if (typeof datatypeIri === 'string') {
             if (datatypeIri.includes('#integer') || datatypeIri.includes('#int')) {
-              return parseInt(term.value, 10);
+              return parseInt(String(typedTerm.value), 10);
             } else if (datatypeIri.includes('#decimal') || datatypeIri.includes('#double')) {
-              return parseFloat(term.value);
+              return parseFloat(String(typedTerm.value));
             } else if (datatypeIri.includes('#boolean')) {
-              return term.value === 'true';
+              return typedTerm.value === 'true';
             } else if (datatypeIri.includes('#dateTime')) {
-              return new Date(term.value);
+              return new Date(String(typedTerm.value));
             } else if (datatypeIri.includes('#json')) {
               try {
-                return JSON.parse(term.value);
+                return JSON.parse(String(typedTerm.value));
             } catch (error: unknown) {
-              console.warn('Failed to parse JSON value:', term.value, this.formatError(error));
-              return term.value;
+              console.warn('Failed to parse JSON value:', typedTerm.value, this.formatError(error));
+              return typedTerm.value;
             }
             } else if (datatypeIri.includes('#jsonArray') || datatypeIri.includes('solid/terms#jsonArray')) {
               try {
-                const parsed = JSON.parse(term.value);
+                const parsed = JSON.parse(String(typedTerm.value));
                 if (!Array.isArray(parsed)) {
                   console.warn('Expected array but got:', typeof parsed, parsed);
                   return [parsed]; // 包装为数组
                 }
                 return parsed;
               } catch (error: unknown) {
-                console.warn('Failed to parse JSON Array value:', term.value, this.formatError(error));
-                return [term.value]; // 失败时包装为数组
+                console.warn('Failed to parse JSON Array value:', typedTerm.value, this.formatError(error));
+                return [typedTerm.value]; // 失败时包装为数组
               }
             }
           }
         }
-        return term.value;
+        return typedTerm.value;
       case 'BlankNode':
-        return `_:${term.value}`;
+        return `_:${String(typedTerm.value)}`;
       default:
-        return term.value;
+        return typedTerm.value;
     }
   }
 
   // Query specific container
-  async queryContainer(containerUrl: string, customQuery?: SPARQLQuery): Promise<any[]> {
+  async queryContainer(containerUrl: string, customQuery?: SPARQLQuery): Promise<unknown[]> {
     const absoluteContainerUrl = containerUrl && containerUrl.startsWith('http') 
       ? containerUrl 
       : `${this.sources[0]}${containerUrl || ''}`;
@@ -604,9 +630,14 @@ export class ComunicaSPARQLExecutor {
   }
 
   // Execute query with specific source
-  async executeQueryWithSource(sparqlQuery: SPARQLQuery, sourceUrl: string): Promise<any[]> {
+  async executeQueryWithSource(
+    sparqlQuery: SPARQLQuery,
+    sourceUrl: string,
+    sourceType: QuerySourceType = 'auto'
+  ): Promise<unknown[]> {
     try {
       const engine = await this.initEngine();
+      const sourceRef = this.createSourceRef(sourceUrl, sourceType);
       
       if (this.logging) {
         console.log(`[Comunica] Executing ${sparqlQuery.type} query on ${sourceUrl}:`, sparqlQuery.query);
@@ -615,30 +646,31 @@ export class ComunicaSPARQLExecutor {
       
       if (sparqlQuery.type === 'SELECT') {
         const bindingsStream = await engine.queryBindings(sparqlQuery.query, {
-          sources: [sourceUrl] as [string, ...string[]],
+          sources: [sourceRef] as [ComunicaSource, ...ComunicaSource[]],
           fetch: this.fetchFn
         });
         
         const bindings = await bindingsStream.toArray();
-        const results = bindings.map((binding: any) => {
-          const result: Record<string, unknown> = {};
+        const results = bindings.map((binding) => {
+          const typedBinding = binding as BindingLike;
+          const result: QueryResultRow = {};
           
           // 调试：打印 binding 对象结构
           if (this.logging && bindings.indexOf(binding) === 0) {
-            console.log('[Debug] Binding object:', binding);
-            console.log('[Debug] Binding type:', typeof binding);
-            console.log('[Debug] Binding constructor:', binding.constructor?.name);
-            console.log('[Debug] Binding keys:', Object.keys(binding));
-            console.log('[Debug] Has entries method:', typeof binding.entries);
-            console.log('[Debug] Has keys method:', typeof binding.keys);
-            console.log('[Debug] Has get method:', typeof binding.get);
+            console.log('[Debug] Binding object:', typedBinding);
+            console.log('[Debug] Binding type:', typeof typedBinding);
+            console.log('[Debug] Binding constructor:', typedBinding.constructor?.name);
+            console.log('[Debug] Binding keys:', Object.keys(typedBinding));
+            console.log('[Debug] Has entries method:', typeof typedBinding.entries);
+            console.log('[Debug] Has keys method:', typeof typedBinding.keys);
+            console.log('[Debug] Has get method:', typeof typedBinding.get);
           }
           
           // 处理不同版本的 Comunica binding 对象
-          if (binding.entries && typeof binding.entries === 'function') {
+          if (typedBinding.entries && typeof typedBinding.entries === 'function') {
             // 新版本 Comunica
             try {
-              for (const [key, value] of binding.entries()) {
+              for (const [key, value] of typedBinding.entries()) {
                 const keyName = this.extractBindingKeyName(key);
                 if (keyName) {
                   result[keyName] = this.convertComunicaTerm(value);
@@ -648,11 +680,11 @@ export class ComunicaSPARQLExecutor {
               console.warn('[Warning] binding.entries() failed:', this.formatError(error));
               // 回退到其他方法
             }
-          } else if (binding.keys && typeof binding.keys === 'function') {
+          } else if (typedBinding.keys && typeof typedBinding.keys === 'function' && typeof typedBinding.get === 'function') {
             // 旧版本 Comunica - 这是我们当前的情况
             try {
-              for (const variable of binding.keys()) {
-                const term = binding.get(variable);
+              for (const variable of typedBinding.keys()) {
+                const term = typedBinding.get(variable);
                 if (term) {
                   // 正确提取变量名和值
                   const varName = this.extractBindingKeyName(variable);
@@ -677,9 +709,9 @@ export class ComunicaSPARQLExecutor {
           
           // 如果上面的方法都失败了，尝试直接遍历
           if (Object.keys(result).length === 0) {
-            for (const key in binding) {
-              if (Object.prototype.hasOwnProperty.call(binding, key) && key !== 'type' && key !== 'size') {
-                const value = binding[key];
+            for (const key in typedBinding) {
+              if (Object.prototype.hasOwnProperty.call(typedBinding, key) && key !== 'type' && key !== 'size') {
+                const value = typedBinding[key];
                 if (value) {
                   const keyName = this.extractBindingKeyName(key);
                   if (keyName) {
@@ -699,7 +731,7 @@ export class ComunicaSPARQLExecutor {
         return results;
       } else if (sparqlQuery.type === 'ASK') {
         const result = await engine.queryBoolean(sparqlQuery.query, {
-          sources: [sourceUrl] as [string, ...string[]],
+          sources: [sourceRef] as [ComunicaSource, ...ComunicaSource[]],
           fetch: this.fetchFn
         });
         
@@ -717,7 +749,7 @@ export class ComunicaSPARQLExecutor {
           const results = await this.executeUpdate(sparqlQuery, engine);
           
           // Check if operation was successful
-          const failures = results.filter(r => !r.success);
+          const failures = results.filter((row) => !row.success);
           if (failures.length > 0) {
             const firstError = failures[0];
             const errorMessage = (firstError && firstError.error) ? firstError.error : 'UPDATE operation failed';

@@ -3,7 +3,7 @@ import type { SelectQueryPlan } from '../select-plan';
 import type { ComunicaSPARQLExecutor } from '../sparql-executor';
 import type { SPARQLQueryEngineFactory } from '../sparql-engine';
 import type { UriResolver } from '../uri';
-import { isSameOrigin, getFetchForOrigin } from '../utils/origin-auth';
+import { isSameOrigin } from '../utils/origin-auth';
 import type { ExecutionStrategy } from './types';
 
 export interface SparqlStrategyDependencies {
@@ -20,7 +20,6 @@ export class SparqlStrategy implements ExecutionStrategy {
 
   private sparqlExecutor: ComunicaSPARQLExecutor;
   private sparqlConverter: ASTToSPARQLConverter;
-  private sessionFetch: typeof fetch;
   private podUrl: string;
   private uriResolver: UriResolver;
   private createQueryEngine?: SPARQLQueryEngineFactory;
@@ -28,7 +27,6 @@ export class SparqlStrategy implements ExecutionStrategy {
   constructor(deps: SparqlStrategyDependencies) {
     this.sparqlExecutor = deps.sparqlExecutor;
     this.sparqlConverter = deps.sparqlConverter;
-    this.sessionFetch = deps.sessionFetch;
     this.podUrl = deps.podUrl;
     this.uriResolver = deps.uriResolver;
     this.createQueryEngine = deps.createQueryEngine;
@@ -49,10 +47,6 @@ export class SparqlStrategy implements ExecutionStrategy {
     return table.config?.base;
   }
 
-  private getFetchForEndpoint(endpoint: string): typeof fetch {
-    return getFetchForOrigin(endpoint, this.podUrl, this.sessionFetch);
-  }
-
   async executeSelect(
     plan: SelectQueryPlan,
     _containerUrl: string,
@@ -67,26 +61,23 @@ export class SparqlStrategy implements ExecutionStrategy {
     };
 
     let sparqlQuery: SPARQLQuery;
-    const useGraphVariable = targetGraph !== undefined;
+    const allowGraphVariable = targetGraph !== undefined;
 
     if (extendedPlan._simpleSelectOptions) {
-      sparqlQuery = this.sparqlConverter.convertSimpleSelect(extendedPlan._simpleSelectOptions as any, targetGraph, undefined, useGraphVariable);
+      sparqlQuery = this.sparqlConverter.convertSimpleSelect(extendedPlan._simpleSelectOptions as any, targetGraph, undefined, allowGraphVariable);
     } else if (extendedPlan._sql && plan.baseTable) {
       const ast = this.sparqlConverter.parseDrizzleAST(extendedPlan._sql as any, plan.baseTable);
-      sparqlQuery = this.sparqlConverter.convertSelect(ast, plan.baseTable, targetGraph, undefined, useGraphVariable);
+      sparqlQuery = this.sparqlConverter.convertSelect(ast, plan.baseTable, targetGraph, undefined, allowGraphVariable);
     } else {
-      sparqlQuery = this.sparqlConverter.convertSelectPlan(plan, targetGraph, undefined, useGraphVariable);
-    }
-
-    console.log('DEBUG: Generated SPARQL Query for SELECT:', sparqlQuery.query);
-    console.log('DEBUG: resourceUrl =', resourceUrl);
-
-    if (resourceUrl.includes('/-/sparql')) {
-      return await this.executeDirectSparqlSelect(resourceUrl, sparqlQuery, plan);
+      sparqlQuery = this.sparqlConverter.convertSelectPlan(plan, targetGraph, undefined, allowGraphVariable);
     }
 
     if (isSameOrigin(resourceUrl, this.podUrl)) {
-      return await this.sparqlExecutor.executeQueryWithSource(sparqlQuery, resourceUrl);
+      return await this.sparqlExecutor.executeQueryWithSource(
+        sparqlQuery,
+        resourceUrl,
+        resourceUrl.includes('/sparql') ? 'sparql' : 'auto'
+      );
     }
 
     const { ComunicaSPARQLExecutor } = await import('../sparql-executor');
@@ -96,47 +87,11 @@ export class SparqlStrategy implements ExecutionStrategy {
       logging: false,
       createQueryEngine: this.createQueryEngine,
     });
-    return await unauthExecutor.executeQueryWithSource(sparqlQuery, resourceUrl);
-  }
-
-  private async executeDirectSparqlSelect(
-    endpoint: string,
-    sparqlQuery: SPARQLQuery,
-    plan: SelectQueryPlan
-  ): Promise<any[]> {
-    const fetchFn = this.getFetchForEndpoint(endpoint);
-
-    console.log('[SparqlStrategy] Direct fetch to SPARQL endpoint:', endpoint);
-
-    const response = await fetchFn(endpoint, {
-      method: 'POST',
-      headers: {
-        'Content-Type': 'application/sparql-query',
-        'Accept': 'application/sparql-results+json'
-      },
-      body: sparqlQuery.query
-    });
-
-    if (!response.ok) {
-      const text = await response.text().catch(() => '');
-      throw new Error(`SPARQL SELECT failed: ${response.status} ${response.statusText} - ${text}`);
-    }
-
-    const json = await response.json();
-
-    const rows = (json.results?.bindings || []).map((binding: any) => {
-      const row: Record<string, any> = {};
-      for (const [key, value] of Object.entries(binding)) {
-        row[key] = this.parseSparqlValue(value as any);
-      }
-      return row;
-    });
-
-    if (plan.limit !== undefined && rows.length > plan.limit) {
-      return rows.slice(0, plan.limit);
-    }
-
-    return rows;
+    return await unauthExecutor.executeQueryWithSource(
+      sparqlQuery,
+      resourceUrl,
+      resourceUrl.includes('/sparql') ? 'sparql' : 'auto'
+    );
   }
 
   async executeInsert(): Promise<any[]> {
@@ -151,28 +106,4 @@ export class SparqlStrategy implements ExecutionStrategy {
     throw new Error('SPARQL mode DELETE is not supported directly; writes should route through LDP strategy');
   }
 
-  private parseSparqlValue(value: any): any {
-    if (!value || typeof value !== 'object') {
-      return value;
-    }
-
-    if (value.type === 'uri') {
-      return value.value;
-    }
-
-    if (value.type === 'literal') {
-      if (value.datatype?.includes('#integer') || value.datatype?.includes('#int')) {
-        return Number.parseInt(value.value, 10);
-      }
-      if (value.datatype?.includes('#decimal') || value.datatype?.includes('#double')) {
-        return Number.parseFloat(value.value);
-      }
-      if (value.datatype?.includes('#boolean')) {
-        return value.value === 'true';
-      }
-      return value.value;
-    }
-
-    return value.value ?? value;
-  }
 }
