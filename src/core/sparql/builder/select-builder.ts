@@ -466,6 +466,21 @@ export class SelectBuilder {
   // 构建 WHERE 模式 - 使用 sparqljs 格式
   private buildWherePatterns(ast: any, table: PodTable, targetGraph?: string, fromSources?: string[], allowGraphVariable = true): any[] {
     const patterns: sparqljs.Pattern[] = [];
+    const subjectConstraint = ast.where
+      ? this.expressionBuilder.extractSubjectConstraint(ast.where, table)
+      : null;
+    const effectiveWhere = subjectConstraint
+      ? subjectConstraint.remainingCondition
+      : ast.where;
+
+    if (subjectConstraint?.values?.length) {
+      patterns.push({
+        type: 'values',
+        values: subjectConstraint.values.map((value) => ({
+          '?subject': { termType: 'NamedNode', value } as any,
+        })),
+      } as any);
+    }
 
     // 添加类型约束
     patterns.push({
@@ -483,7 +498,7 @@ export class SelectBuilder {
 
     // Extract columns referenced in WHERE conditions (these should be required, not optional)
     const whereColumns = new Set<string>();
-    if (ast.where && typeof ast.where === 'object') {
+    if (effectiveWhere && typeof effectiveWhere === 'object') {
       const extractWhereColumns = (condition: any) => {
         if (!condition || typeof condition !== 'object') return;
         // Check for column in BinaryExpression.left
@@ -509,7 +524,7 @@ export class SelectBuilder {
           condition.expressions.forEach(extractWhereColumns);
         }
       };
-      extractWhereColumns(ast.where);
+      extractWhereColumns(effectiveWhere);
     }
 
     // Determine which columns to include in WHERE patterns
@@ -628,8 +643,8 @@ export class SelectBuilder {
     // 不再生成 BIND(STRAFTER(...))，保持 SPARQL 简洁且兼容所有模式
 
     // 添加 FILTER
-    if (ast.where) {
-      const filterString = this.expressionBuilder.buildWhereClause(ast.where, table);
+    if (effectiveWhere) {
+      const filterString = this.expressionBuilder.buildWhereClause(effectiveWhere, table);
       if (filterString) {
         try {
           // Hack: Wrap filter in a dummy query to parse it into AST

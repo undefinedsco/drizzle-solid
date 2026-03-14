@@ -1,5 +1,5 @@
 import { SQL } from 'drizzle-orm';
-import { PodTable } from './schema';
+import { PodColumnBase, PodTable } from './schema';
 import { SelectBuilder } from './sparql/builder/select-builder';
 import { UpdateBuilder } from './sparql/builder/update-builder';
 import { SPARQLQuery } from './sparql/types';
@@ -11,6 +11,20 @@ import type { UriResolver } from './uri';
 import { UriResolverImpl } from './uri';
 
 export type { SPARQLQuery };
+
+interface SimpleSelectOperation {
+  table: PodTable;
+  where?: Record<string, unknown>;
+  limit?: number;
+  offset?: number;
+  orderBy?: Array<{ column: string; direction: 'asc' | 'desc' }>;
+  distinct?: boolean;
+}
+
+interface InsertPlanInput {
+  table: PodTable;
+  rows: Array<Record<string, unknown>>;
+}
 
 /**
  * Table registry context for URI resolution
@@ -59,11 +73,11 @@ export class ASTToSPARQLConverter {
     this.updateBuilder.setTableContext(this.tableContext);
   }
 
-  convertSelect(ast: any, table: PodTable, targetGraph?: string, fromSources?: string[], allowGraphVariable = true): SPARQLQuery {
+  convertSelect(ast: Record<string, unknown>, table: PodTable, targetGraph?: string, fromSources?: string[], allowGraphVariable = true): SPARQLQuery {
     return this.selectBuilder.convertSelect(ast, table, targetGraph, fromSources, allowGraphVariable);
   }
 
-  buildWhereClauseForCondition(whereAst: any, table: PodTable): string {
+  buildWhereClauseForCondition(whereAst: QueryCondition, table: PodTable): string {
     return this.expressionBuilder.buildWhereClause(whereAst as QueryCondition, table);
   }
 
@@ -71,26 +85,19 @@ export class ASTToSPARQLConverter {
     return this.selectBuilder.convertSelectPlan(plan, targetGraph, fromSources, allowGraphVariable);
   }
 
-  convertSimpleSelect(operation: {
-    table: PodTable;
-    where?: Record<string, unknown>;
-    limit?: number;
-    offset?: number;
-    orderBy?: Array<{ column: string; direction: 'asc' | 'desc' }>;
-    distinct?: boolean;
-  }, targetGraph?: string, fromSources?: string[], allowGraphVariable = true): SPARQLQuery {
+  convertSimpleSelect(operation: SimpleSelectOperation, targetGraph?: string, fromSources?: string[], allowGraphVariable = true): SPARQLQuery {
     return this.selectBuilder.convertSimpleSelect(operation, targetGraph, fromSources, allowGraphVariable);
   }
 
-  convertInsert(valuesOrPlan: any[] | { table: PodTable; rows: any[] }, table?: PodTable, targetGraph?: string): SPARQLQuery {
+  convertInsert(valuesOrPlan: Array<Record<string, unknown>> | InsertPlanInput, table?: PodTable, targetGraph?: string): SPARQLQuery {
     return this.updateBuilder.convertInsert(valuesOrPlan, table, targetGraph);
   }
 
-  convertUpdate(setData: any, whereConditions: any, table: PodTable, targetGraph?: string): SPARQLQuery {
+  convertUpdate(setData: Record<string, unknown>, whereConditions: QueryCondition | Record<string, unknown>, table: PodTable, targetGraph?: string): SPARQLQuery {
     return this.updateBuilder.convertUpdate(setData, whereConditions, table, targetGraph);
   }
 
-  convertDelete(whereConditions: any, table: PodTable, targetGraph?: string): SPARQLQuery {
+  convertDelete(whereConditions: QueryCondition | Record<string, unknown>, table: PodTable, targetGraph?: string): SPARQLQuery {
     return this.updateBuilder.convertDelete(whereConditions, table, targetGraph);
   }
 
@@ -104,19 +111,19 @@ export class ASTToSPARQLConverter {
 
   // Legacy / Helper methods exposed for other modules
   
-  getPredicateForColumnPublic(column: any, table: PodTable): string {
+  getPredicateForColumnPublic(column: PodColumnBase | string | Record<string, unknown>, table: PodTable): string {
     return getPredicateForColumn(column, table);
   }
 
-  formatLiteralValue(value: any, column?: any): string | string[] {
+  formatLiteralValue(value: unknown, column?: PodColumnBase | Record<string, unknown>): string | string[] {
     return formatValue(value, column);
   }
 
-  generateSubjectUri(record: any, table: PodTable): string {
+  generateSubjectUri(record: Record<string, unknown>, table: PodTable): string {
     return generateSubjectUri(record, table, this.uriResolver);
   }
 
-  parseDrizzleAST(sql: SQL, _table?: PodTable): any {
+  parseDrizzleAST(sql: SQL, _table?: PodTable): { type: 'select'; columns: '*'; where: Record<string, never> } {
     void _table;
     return {
       type: 'select',
@@ -125,7 +132,7 @@ export class ASTToSPARQLConverter {
     };
   }
 
-  private parseWhereClause(sql: SQL): any {
+  private parseWhereClause(sql: SQL): Record<string, never> {
     void sql;
     return {};
   }

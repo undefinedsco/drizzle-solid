@@ -4,7 +4,7 @@ import { SelectQueryBuilder } from '@src/core/query-builders/select-query-builde
 import { InsertQueryBuilder } from '@src/core/query-builders/insert-query-builder';
 import { UpdateQueryBuilder } from '@src/core/query-builders/update-query-builder';
 import { DeleteQueryBuilder } from '@src/core/query-builders/delete-query-builder';
-import { podTable, string, int, eq, gt, count, sum } from '@src/index';
+import { podTable, string, int, eq, gt, and, count, sum } from '@src/index';
 
 const Users = podTable('Users', {
   id: string('id').primaryKey().predicate('https://schema.org/identifier'),
@@ -14,6 +14,16 @@ const Users = podTable('Users', {
   base: 'https://pod.example/users.ttl',
   type: 'https://schema.org/Person',
   subjectTemplate: '#{id}',
+});
+
+const DocumentUsers = podTable('DocumentUsers', {
+  id: string('id').primaryKey().predicate('@id'),
+  name: string('name').predicate('https://schema.org/name'),
+}, {
+  base: 'https://pod.example/users/',
+  type: 'https://schema.org/Person',
+  subjectTemplate: '{id}/index.ttl#this',
+  sparqlEndpoint: 'https://pod.example/users/-/sparql',
 });
 
 describe('QueryBuilder toSPARQL()', () => {
@@ -41,6 +51,29 @@ describe('QueryBuilder toSPARQL()', () => {
     expect(query.query).toContain('GROUP BY');
     expect(query.query).toContain('?id');
     expect(query.prefixes).toBeDefined();
+  });
+
+  it('select toSPARQL should encode exact subject lookup as VALUES, not FILTER equality', () => {
+    const query = new SelectQueryBuilder(session)
+      .from(DocumentUsers)
+      .where(eq(DocumentUsers.id, 'alice'))
+      .toSPARQL();
+
+    expect(query.query).toContain('VALUES ?subject');
+    expect(query.query).toContain('<https://pod.example/users/alice/index.ttl#this>');
+    expect(query.query).not.toContain('FILTER(?subject =');
+  });
+
+  it('select toSPARQL should keep non-subject filters after rewriting subject lookup to VALUES', () => {
+    const query = new SelectQueryBuilder(session)
+      .from(DocumentUsers)
+      .where(and(eq(DocumentUsers.id, 'alice'), eq(DocumentUsers.name, 'Alice')))
+      .toSPARQL();
+
+    expect(query.query).toContain('VALUES ?subject');
+    expect(query.query).toContain('<https://pod.example/users/alice/index.ttl#this>');
+    expect(query.query).toContain('FILTER(?name = "Alice")');
+    expect(query.query).not.toContain('FILTER(?subject =');
   });
 
   it('select toSPARQL should preserve DISTINCT aggregate modifiers', () => {

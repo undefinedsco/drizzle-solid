@@ -208,8 +208,8 @@ describe('SelectBuilder mode handling', () => {
 
       const result = builder.convertSelect(ast, fragmentTable);
 
-      // Should convert all values to full URIs
-      expect(result.query).toContain('?subject IN');
+      // Should convert all values to full URIs via VALUES
+      expect(result.query).toContain('VALUES ?subject');
       expect(result.query).toContain('https://pod.example/data/tags.ttl#tag-1');
       expect(result.query).toContain('https://pod.example/data/tags.ttl#tag-2');
     });

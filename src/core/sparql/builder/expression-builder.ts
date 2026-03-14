@@ -38,6 +38,22 @@ export class ExpressionBuilder {
     return expr ? `FILTER(${expr})` : '';
   }
 
+  extractSubjectConstraint(
+    condition: QueryCondition | any,
+    table: PodTable
+  ): { values: string[]; remainingCondition?: QueryCondition | any } | null {
+    const extracted = this.extractSubjectConstraintInternal(condition, table);
+    if (!extracted) {
+      return null;
+    }
+
+    if (!extracted.values || extracted.values.length === 0) {
+      return null;
+    }
+
+    return extracted;
+  }
+
   /**
    * Check if a column is a link column that needs URI resolution
    * Delegates to uriResolver for consistency
@@ -167,6 +183,108 @@ export class ExpressionBuilder {
       default:
         return '';
     }
+  }
+
+  private extractSubjectConstraintInternal(
+    condition: QueryCondition | any,
+    table: PodTable
+  ): { values: string[]; remainingCondition?: QueryCondition | any } | null {
+    if (!condition || typeof condition !== 'object') {
+      return null;
+    }
+
+    if (this.isDrizzleSQL(condition)) {
+      return null;
+    }
+
+    if (condition.type === 'binary_expr') {
+      return this.extractSubjectConstraintFromBinary(condition as BinaryExpression, table);
+    }
+
+    if (condition.type === 'logical_expr' && condition.operator === 'AND' && Array.isArray(condition.expressions)) {
+      let values: string[] | null = null;
+      const remaining: any[] = [];
+
+      for (const expression of condition.expressions) {
+        const extracted = this.extractSubjectConstraintInternal(expression, table);
+        if (extracted?.values?.length) {
+          if (values === null) {
+            values = [...extracted.values];
+          } else {
+            const next = new Set(extracted.values);
+            values = values.filter((value) => next.has(value));
+          }
+
+          if (extracted.remainingCondition) {
+            remaining.push(extracted.remainingCondition);
+          }
+          continue;
+        }
+
+        remaining.push(expression);
+      }
+
+      if (!values || values.length === 0) {
+        return null;
+      }
+
+      if (remaining.length === 0) {
+        return { values };
+      }
+
+      if (remaining.length === 1) {
+        return { values, remainingCondition: remaining[0] };
+      }
+
+      return {
+        values,
+        remainingCondition: new LogicalExpression('AND', remaining),
+      };
+    }
+
+    return null;
+  }
+
+  private extractSubjectConstraintFromBinary(
+    condition: BinaryExpression,
+    table: PodTable
+  ): { values: string[]; remainingCondition?: QueryCondition | any } | null {
+    const colName = this.resolveColumnName(condition.left);
+    if (!colName) {
+      return null;
+    }
+
+    const column = table.columns[colName];
+    const isIdColumn = colName === 'id';
+    const idPredicate = isIdColumn && column ? getPredicateForColumn(column, table) : null;
+    const isVirtualId = isIdColumn && idPredicate === '@id';
+    const isSubject = colName === 'subject' || colName === '@id' || isVirtualId;
+
+    if (!isSubject) {
+      return null;
+    }
+
+    if (condition.operator === '=') {
+      const formatted = this.formatSubjectValue(condition.right, table, isVirtualId);
+      if (typeof formatted === 'string' && formatted.startsWith('<') && formatted.endsWith('>')) {
+        return { values: [formatted.slice(1, -1)] };
+      }
+      return null;
+    }
+
+    if (condition.operator === 'IN' && Array.isArray(condition.right) && condition.right.length > 0) {
+      const values: string[] = [];
+      for (const entry of condition.right) {
+        const formatted = this.formatSubjectValue(entry, table, isVirtualId);
+        if (typeof formatted !== 'string' || !formatted.startsWith('<') || !formatted.endsWith('>')) {
+          return null;
+        }
+        values.push(formatted.slice(1, -1));
+      }
+      return values.length > 0 ? { values } : null;
+    }
+
+    return null;
   }
 
   private buildLogicalExpression(condition: LogicalExpression, table: PodTable): string {

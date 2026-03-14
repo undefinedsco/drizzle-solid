@@ -66,7 +66,7 @@ describe('Mode Matrix - Complete Coverage', () => {
           where: { type: 'binary_expr', operator: 'IN', left: { name: 'id' }, right: ['a', 'b'] },
         };
         const result = selectBuilder.convertSelect(ast, table);
-        expect(result.query).toContain('?subject IN');
+        expect(result.query).toContain('VALUES ?subject');
         expect(result.query).toContain('tags.ttl#a');
         expect(result.query).toContain('tags.ttl#b');
       });
@@ -129,7 +129,7 @@ describe('Mode Matrix - Complete Coverage', () => {
           where: { type: 'binary_expr', operator: 'IN', left: { name: 'id' }, right: ['alice', 'bob'] },
         };
         const result = selectBuilder.convertSelect(ast, table);
-        expect(result.query).toContain('?subject IN');
+        expect(result.query).toContain('VALUES ?subject');
         expect(result.query).toContain('users/alice.ttl');
         expect(result.query).toContain('users/bob.ttl');
       });

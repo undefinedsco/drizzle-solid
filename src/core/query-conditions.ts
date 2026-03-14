@@ -10,36 +10,37 @@ import { BinaryExpression, LogicalExpression, UnaryExpression, SPARQLExpression 
 export type QueryCondition = BinaryExpression | LogicalExpression | UnaryExpression;
 
 // 定义一个宽松的列类型，接受任何 PodColumnBase 变体
-type AnyColumn = PodColumnBase<any, any, any, any>;
+type AnyColumn = PodColumnBase;
 type ConditionOperand = AnyColumn | SPARQLExpression | string;
+type ConditionValue = unknown;
 
 // 等于条件
-export function eq(column: ConditionOperand, value: any): QueryCondition {
+export function eq(column: ConditionOperand, value: ConditionValue): QueryCondition {
   return new BinaryExpression(column, '=', value);
 }
 
 // 不等于条件
-export function ne(column: ConditionOperand, value: any): QueryCondition {
+export function ne(column: ConditionOperand, value: ConditionValue): QueryCondition {
   return new BinaryExpression(column, '!=', value);
 }
 
 // 大于条件
-export function gt(column: ConditionOperand, value: any): QueryCondition {
+export function gt(column: ConditionOperand, value: ConditionValue): QueryCondition {
   return new BinaryExpression(column, '>', value);
 }
 
 // 大于等于条件
-export function gte(column: ConditionOperand, value: any): QueryCondition {
+export function gte(column: ConditionOperand, value: ConditionValue): QueryCondition {
   return new BinaryExpression(column, '>=', value);
 }
 
 // 小于条件
-export function lt(column: ConditionOperand, value: any): QueryCondition {
+export function lt(column: ConditionOperand, value: ConditionValue): QueryCondition {
   return new BinaryExpression(column, '<', value);
 }
 
 // 小于等于条件
-export function lte(column: ConditionOperand, value: any): QueryCondition {
+export function lte(column: ConditionOperand, value: ConditionValue): QueryCondition {
   return new BinaryExpression(column, '<=', value);
 }
 
@@ -54,12 +55,12 @@ export function ilike(column: ConditionOperand, pattern: string): QueryCondition
 }
 
 // BETWEEN 条件
-export function between(column: ConditionOperand, min: any, max: any): QueryCondition {
+export function between(column: ConditionOperand, min: ConditionValue, max: ConditionValue): QueryCondition {
   return new BinaryExpression(column, 'BETWEEN', [min, max]);
 }
 
 // NOT BETWEEN 条件
-export function notBetween(column: ConditionOperand, min: any, max: any): QueryCondition {
+export function notBetween(column: ConditionOperand, min: ConditionValue, max: ConditionValue): QueryCondition {
   return new BinaryExpression(column, 'NOT BETWEEN', [min, max]);
 }
 
@@ -69,12 +70,12 @@ export function regex(column: ConditionOperand, pattern: string, flags?: string)
 }
 
 // IN 条件
-export function inArray(column: ConditionOperand, values: any[]): QueryCondition {
+export function inArray(column: ConditionOperand, values: ConditionValue[]): QueryCondition {
   return new BinaryExpression(column, 'IN', values);
 }
 
 // NOT IN 条件
-export function notInArray(column: ConditionOperand, values: any[]): QueryCondition {
+export function notInArray(column: ConditionOperand, values: ConditionValue[]): QueryCondition {
   return new BinaryExpression(column, 'NOT IN', values);
 }
 
