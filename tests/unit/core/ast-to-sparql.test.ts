@@ -392,7 +392,7 @@ describe('ASTToSPARQLConverter', () => {
   });
 
   describe('@id 查询的 SPARQL 模式顺序', () => {
-    it('应该在 @id 查询中注入 VALUES 约束', () => {
+    it('应该在 @id 精确查询中保留 subject FILTER', () => {
       const ast = {
         type: 'select',
         select: ['id', 'name', 'email'],
@@ -402,9 +402,9 @@ describe('ASTToSPARQLConverter', () => {
       const result = converter.convertSelect(ast, mockTable);
 
       // 检查生成的 SPARQL 查询
-      expect(result.query).toContain('VALUES ?subject');
+      expect(result.query).toContain('FILTER(?subject =');
       expect(result.query).toContain('https://example.com/profile/card#me');
-      expect(result.query).not.toContain('FILTER(?subject =');
+      expect(result.query).not.toContain('VALUES ?subject');
       expect(result.query).not.toContain('BIND(');
     });
 
@@ -417,10 +417,10 @@ describe('ASTToSPARQLConverter', () => {
 
       const result = converter.convertSelect(ast, mockTable);
 
-      // 检查生成的 SPARQL 包含正确的 VALUES 约束
-      expect(result.query).toContain('VALUES ?subject');
+      // 检查生成的 SPARQL 包含正确的 subject FILTER
+      expect(result.query).toContain('FILTER(?subject =');
       expect(result.query).toContain('https://example.com/profile/card#me');
-      expect(result.query).not.toContain('FILTER(?subject =');
+      expect(result.query).not.toContain('VALUES ?subject');
 
       expect(result.query).not.toContain('BIND(');
     });

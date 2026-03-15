@@ -53,27 +53,27 @@ describe('QueryBuilder toSPARQL()', () => {
     expect(query.prefixes).toBeDefined();
   });
 
-  it('select toSPARQL should encode exact subject lookup as VALUES, not FILTER equality', () => {
+  it('select toSPARQL should keep exact subject lookup as FILTER equality', () => {
     const query = new SelectQueryBuilder(session)
       .from(DocumentUsers)
       .where(eq(DocumentUsers.id, 'alice'))
       .toSPARQL();
 
-    expect(query.query).toContain('VALUES ?subject');
+    expect(query.query).toContain('FILTER(?subject =');
     expect(query.query).toContain('<https://pod.example/users/alice/index.ttl#this>');
-    expect(query.query).not.toContain('FILTER(?subject =');
+    expect(query.query).not.toContain('VALUES ?subject');
   });
 
-  it('select toSPARQL should keep non-subject filters after rewriting subject lookup to VALUES', () => {
+  it('select toSPARQL should keep non-subject filters alongside exact subject FILTER', () => {
     const query = new SelectQueryBuilder(session)
       .from(DocumentUsers)
       .where(and(eq(DocumentUsers.id, 'alice'), eq(DocumentUsers.name, 'Alice')))
       .toSPARQL();
 
-    expect(query.query).toContain('VALUES ?subject');
+    expect(query.query).toContain('?subject = <https://pod.example/users/alice/index.ttl#this>');
     expect(query.query).toContain('<https://pod.example/users/alice/index.ttl#this>');
-    expect(query.query).toContain('FILTER(?name = "Alice")');
-    expect(query.query).not.toContain('FILTER(?subject =');
+    expect(query.query).toContain('?name = "Alice"');
+    expect(query.query).not.toContain('VALUES ?subject');
   });
 
   it('select toSPARQL should preserve DISTINCT aggregate modifiers', () => {

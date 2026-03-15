@@ -43,11 +43,7 @@ export class ExpressionBuilder {
     table: PodTable
   ): { values: string[]; remainingCondition?: QueryCondition | any } | null {
     const extracted = this.extractSubjectConstraintInternal(condition, table);
-    if (!extracted) {
-      return null;
-    }
-
-    if (!extracted.values || extracted.values.length === 0) {
+    if (!extracted?.values?.length) {
       return null;
     }
 
@@ -185,15 +181,24 @@ export class ExpressionBuilder {
     }
   }
 
+  private buildLogicalExpression(condition: LogicalExpression, table: PodTable): string {
+    if (!condition.expressions || condition.expressions.length === 0) return '';
+    
+    const parts = condition.expressions
+      .map(c => this.buildExpression(c as QueryCondition, table))
+      .filter(s => s.length > 0);
+
+    if (parts.length === 0) return '';
+
+    const op = condition.operator === 'OR' ? ' || ' : ' && ';
+    return `(${parts.join(op)})`;
+  }
+
   private extractSubjectConstraintInternal(
     condition: QueryCondition | any,
     table: PodTable
   ): { values: string[]; remainingCondition?: QueryCondition | any } | null {
-    if (!condition || typeof condition !== 'object') {
-      return null;
-    }
-
-    if (this.isDrizzleSQL(condition)) {
+    if (!condition || typeof condition !== 'object' || this.isDrizzleSQL(condition)) {
       return null;
     }
 
@@ -208,12 +213,9 @@ export class ExpressionBuilder {
       for (const expression of condition.expressions) {
         const extracted = this.extractSubjectConstraintInternal(expression, table);
         if (extracted?.values?.length) {
-          if (values === null) {
-            values = [...extracted.values];
-          } else {
-            const next = new Set(extracted.values);
-            values = values.filter((value) => next.has(value));
-          }
+          values = values === null
+            ? [...extracted.values]
+            : values.filter((value) => new Set(extracted.values).has(value));
 
           if (extracted.remainingCondition) {
             remaining.push(extracted.remainingCondition);
@@ -224,7 +226,7 @@ export class ExpressionBuilder {
         remaining.push(expression);
       }
 
-      if (!values || values.length === 0) {
+      if (!values?.length) {
         return null;
       }
 
@@ -249,6 +251,10 @@ export class ExpressionBuilder {
     condition: BinaryExpression,
     table: PodTable
   ): { values: string[]; remainingCondition?: QueryCondition | any } | null {
+    if (condition.operator !== 'IN' || !Array.isArray(condition.right) || condition.right.length <= 1) {
+      return null;
+    }
+
     const colName = this.resolveColumnName(condition.left);
     if (!colName) {
       return null;
@@ -264,40 +270,16 @@ export class ExpressionBuilder {
       return null;
     }
 
-    if (condition.operator === '=') {
-      const formatted = this.formatSubjectValue(condition.right, table, isVirtualId);
-      if (typeof formatted === 'string' && formatted.startsWith('<') && formatted.endsWith('>')) {
-        return { values: [formatted.slice(1, -1)] };
+    const values: string[] = [];
+    for (const entry of condition.right) {
+      const formatted = this.formatSubjectValue(entry, table, isVirtualId);
+      if (typeof formatted !== 'string' || !formatted.startsWith('<') || !formatted.endsWith('>')) {
+        return null;
       }
-      return null;
+      values.push(formatted.slice(1, -1));
     }
 
-    if (condition.operator === 'IN' && Array.isArray(condition.right) && condition.right.length > 0) {
-      const values: string[] = [];
-      for (const entry of condition.right) {
-        const formatted = this.formatSubjectValue(entry, table, isVirtualId);
-        if (typeof formatted !== 'string' || !formatted.startsWith('<') || !formatted.endsWith('>')) {
-          return null;
-        }
-        values.push(formatted.slice(1, -1));
-      }
-      return values.length > 0 ? { values } : null;
-    }
-
-    return null;
-  }
-
-  private buildLogicalExpression(condition: LogicalExpression, table: PodTable): string {
-    if (!condition.expressions || condition.expressions.length === 0) return '';
-    
-    const parts = condition.expressions
-      .map(c => this.buildExpression(c as QueryCondition, table))
-      .filter(s => s.length > 0);
-
-    if (parts.length === 0) return '';
-
-    const op = condition.operator === 'OR' ? ' || ' : ' && ';
-    return `(${parts.join(op)})`;
+    return values.length > 1 ? { values } : null;
   }
 
   private buildUnaryExpression(condition: UnaryExpression, table: PodTable): string {

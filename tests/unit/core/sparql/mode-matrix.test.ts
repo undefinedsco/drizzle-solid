@@ -57,6 +57,8 @@ describe('Mode Matrix - Complete Coverage', () => {
         const result = selectBuilder.convertSelect(ast, table);
         expect(result.query).toContain('?subject');
         expect(result.query).toContain('https://pod.example/data/tags.ttl#tag-1');
+        expect(result.query).toContain('FILTER(?subject =');
+        expect(result.query).not.toContain('VALUES ?subject');
       });
 
       it('should convert id IN to subject URIs', () => {
@@ -120,6 +122,8 @@ describe('Mode Matrix - Complete Coverage', () => {
         const result = selectBuilder.convertSelect(ast, table);
         expect(result.query).toContain('?subject');
         expect(result.query).toContain('https://pod.example/data/users/alice.ttl');
+        expect(result.query).toContain('FILTER(?subject =');
+        expect(result.query).not.toContain('VALUES ?subject');
       });
 
       it('should convert id IN to document URIs', () => {
