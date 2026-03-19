@@ -1,15 +1,15 @@
 # Session Environments
 
-Chinese version: [`session-environments.zh-CN.md`](session-environments.zh-CN.md)
+English version: [`session-environments.md`](session-environments.md)
 
-`drizzle-solid` does not require authentication to come from one specific environment.
+`drizzle-solid` 不要求认证必须来自某一种环境。
 
-As long as you end up with:
+只要你最终拿到的是：
 
-- a valid `webId`
-- an authenticated `fetch`
+- 一个有效的 `webId`
+- 一个认证过的 `fetch`
 
-you can construct a client.
+你就可以构造客户端。
 
 ## Inrupt Session
 
@@ -22,7 +22,7 @@ if (session.info.isLoggedIn) {
 }
 ```
 
-## Minimal session shell
+## 最小 session 壳
 
 ```ts
 import { pod, solid } from '@undefineds.co/drizzle-solid';
@@ -35,7 +35,7 @@ const client = pod(solid({
 
 ## Drizzle-shaped alternative
 
-If you want to keep builder / `db.query.*` shape:
+如果你更想保持 builder / `db.query.*` 形状，也可以：
 
 ```ts
 import { drizzle } from '@undefineds.co/drizzle-solid';
@@ -43,7 +43,7 @@ import { drizzle } from '@undefineds.co/drizzle-solid';
 const db = drizzle(session);
 ```
 
-## Passing the session into your app layer
+## 传入应用层
 
 ```ts
 import type { SolidAuthSession } from '@undefineds.co/drizzle-solid';
@@ -58,8 +58,8 @@ export function createApp(session: SolidAuthSession) {
 }
 ```
 
-## Choosing between entrypoints
+## 关于选择
 
-- new code usually reads better with `pod()`
-- if you want Drizzle shape, keep `drizzle()`
-- the important part is Pod / IRI / exact-target semantics, not the constructor name
+- 新代码更适合直接用 `pod()`
+- 想保持 Drizzle 形状：继续用 `drizzle()`
+- 真正关键的是 Pod / IRI / exact-target 语义，而不是入口名字本身

@@ -1,158 +1,102 @@
-# API 参考
+# API Reference
 
-这份文档描述当前推荐的 `drizzle-solid` 公共 API。
+Chinese version: [`README.zh-CN.md`](README.zh-CN.md)
 
-新的重点不是强推新的构造函数名字，而是把语义讲清楚：
+This document answers three user-facing questions:
 
-- Resource / Document / Entity / IRI
-- Link 而不是 SQL foreign-key 心智
-- list/filter 读取 与 exact-target path 的区分
-- SPARQL 而不是 raw SQL 的 escape hatch
+- when should you use `pod()` vs `drizzle()`?
+- which API fits each common task?
+- which boundaries are hard constraints in the current version?
 
-仓库文档与 examples 默认先展示 semantic-first surface（`pod()` / `collection()` / `entity()`），再补充 Drizzle-shaped surface。
-
-## 构造入口
+## Choose an entrypoint
 
 ### `pod(session, config?)`
 
-`pod()` 是建立在同一运行时之上的语义优先 façade。
-
-仓库里的新文档和 examples 默认用它来表达这些对象：
+Best for new code or when you want Solid concepts to be explicit:
 
 - `collection(table)`
 - `entity(table, iri)`
 - `bind(schema, options)`
-
-```ts
-import { pod } from '@undefineds.co/drizzle-solid';
-
-const client = pod(session, {
-  schema,
-  autoConnect: false,
-});
-```
+- `sparql(query)`
 
 ### `drizzle(session, config?)`
 
-这是同一运行时上的 Drizzle-aligned 标准构造入口。
+Best when migrating from `drizzle-orm` or keeping builder-shaped code:
 
-```ts
-import { drizzle } from '@undefineds.co/drizzle-solid';
-
-const db = drizzle(session, {
-  schema,
-  autoConnect: false,
-  sparql: {
-    createQueryEngine,
-  },
-});
-```
-
-常用配置：
-- `schema`: 传入表注册表，启用 link 解析和 Drizzle-shaped 查询层
-- `autoConnect`: 是否自动连接 Pod
-- `debug`: 输出调试日志
-- `sparql.createQueryEngine`: 注入自定义 SPARQL QueryEngine 工厂
-- `notifications.preferredChannels`: 通知通道偏好顺序
+- `select / insert / update / delete`
+- `db.query.<table>`
+- `findByLocator / findByIri`
+- `updateByLocator / updateByIri`
+- `deleteByLocator / deleteByIri`
 
 ### `solid({ webId, fetch })`
 
-这是轻量 inline session helper，用于先构造一个最小 Solid session：
+A lightweight inline session helper when you already have an authenticated `fetch`.
 
-```ts
-import { pod, solid } from '@undefineds.co/drizzle-solid';
+## Common tasks
 
-const session = solid({
-  webId: 'https://alice.example/profile/card#me',
-  fetch: authenticatedFetch,
-});
+| Task | Recommended API |
+| --- | --- |
+| start new business code | `pod(session)` |
+| keep Drizzle-style shape | `drizzle(session)` |
+| define a model with placement | `podTable(name, columns, config)` |
+| define a reusable schema | `solidSchema(...)` |
+| bind a schema to a location at runtime | `client.bind(...)` / `db.createTable(...)` |
+| list or filtered reads | `collection(table).list(...)` / `db.select()` / `db.query.<table>.findMany()` |
+| read one exact entity | `client.entity(table, iri)` / `db.findByIri(...)` / `db.findByLocator(...)` |
+| update one exact entity | `entity.update(...)` / `db.updateByIri(...)` / `db.updateByLocator(...)` |
+| delete one exact entity | `entity.delete()` / `db.deleteByIri(...)` / `db.deleteByLocator(...)` |
+| execute SPARQL directly | `client.sparql(...)` / `db.executeSPARQL(...)` |
 
-const client = pod(session);
-```
-
-## 建模
+## Modeling APIs
 
 ### `podTable(name, columns, config)`
 
-当前仍然是主要建模入口。
+The main modeling entrypoint.
 
-关键配置：
-- `base`: 资源文件或容器路径
-- `subjectTemplate`: subject 生成模板
-- `type`: RDF class IRI
-- `namespace`: 可选命名空间配置
-- `sparqlEndpoint`: 显式指定 sidecar endpoint
+Key config fields:
 
-列级链接字段统一写成 `uri(...).link(target)`。
+- `base`
+- `subjectTemplate`
+- `type`
+- `namespace`
+- `sparqlEndpoint`
 
 ### `solidSchema(...)`
 
-适合定义可复用 schema。
+Use this when shape and placement should stay separate until runtime.
 
-如果你使用 `pod()` façade：
+### Link fields
 
-```ts
-const profileTable = client.bind(profileSchema, {
-  base: 'https://alice.example/profile/card',
-});
-```
+Relationship fields should be modeled as RDF links / IRIs.
 
-如果你保持 `drizzle()` 入口：
+Preferred form:
 
-```ts
-const profileTable = db.createTable(profileSchema, {
-  base: 'https://alice.example/profile/card',
-});
-```
+- `uri(...).link(target)`
 
-## Drizzle-shaped surface
-
-如果你保持 Drizzle 风格 builder / query 代码形状，这一层仍然是正式支持的公共 API。
-
-### Query builders
-
-当前仍支持：
-- `db.select()`
-- `db.insert()`
-- `db.update()`
-- `db.delete()`
-
-### Read facade
-
-当前仍支持：
-- `db.query.<table>`
-- `findMany`
-- `findFirst`
-- `findByLocator`
-- `findByIri`
-- `count`
-
-这部分能力是 **读导向 facade**，不应该被理解成“所有 SQL 语义都成立”。
-
-注意：
-- `findByLocator` / `findByIri` 是 exact-target 入口
-- `findMany` / `findFirst` / `count` 是否可用，取决于后端是否具备 collection 查询能力
-
-## Semantic-first surface
+## `pod()` style APIs
 
 ### `client.collection(table)`
 
-Collection 表达“一个模型在某个 Pod 布局下的可枚举实体集合”。
+Collection-oriented surface.
 
-支持：
+Common methods:
+
 - `list(options?)`
 - `first(options?)`
-- `create(record)` / `createMany(records)`
+- `create(record)`
+- `createMany(records)`
 - `subscribe(options)`
 - `iriFor(record)`
-- `byIri(iri)` / `entity(iri)`
+- `entity(iri)` / `byIri(iri)`
 - `select(fields?)`
 
 ### `client.entity(table, iri)`
 
-Entity 表达“一个由完整 IRI 唯一标识的实体”。
+Exact-entity surface.
 
-支持：
+Common methods:
+
 - `get()` / `read()`
 - `update(data)`
 - `delete()`
@@ -160,93 +104,120 @@ Entity 表达“一个由完整 IRI 唯一标识的实体”。
 - `documentUrl`
 - `fragment`
 
-这组 helper 的价值是把“集合读取”和“精确实体目标”显式写在代码里。
+### Other `client` capabilities
 
-## Discovery / Federation helpers
+- `bind(schema, options)`
+- `asDrizzle()`
+- `query`
+- `sparql(query)`
+- `batch(operations)`
+- `locationToTable(location, options?)`
+- `discoverTablesFor(rdfClass, options?, tableOptions?)`
+- `discovery`
+- `getLastFederatedErrors()`
 
-如果你使用 `pod()` façade，还可以直接通过 `client` 访问：
+## `drizzle()` style APIs
 
-- `client.discovery.discover(...)`
-- `client.locationToTable(location, options?)`
-- `client.discoverTablesFor(rdfClass, options?, tableOptions?)`
-- `client.query`
-- `client.getLastFederatedErrors()`
+### Query builders
 
-如果你使用 `drizzle()`，对应能力仍然在 `db` 上可用。
+- `db.select()`
+- `db.insert()`
+- `db.update()`
+- `db.delete()`
 
-## SPARQL API
+### Read facade
+
+- `db.query.<table>.findMany(...)`
+- `db.query.<table>.findFirst(...)`
+- `db.query.<table>.findByLocator(...)`
+- `db.query.<table>.findByIri(...)`
+- `db.query.<table>.count(...)`
+
+### Exact-target helpers
+
+- `db.findByLocator(table, locator)`
+- `db.findByIri(table, iri)`
+- `db.updateByLocator(table, locator, data)`
+- `db.updateByIri(table, iri, data)`
+- `db.deleteByLocator(table, locator)`
+- `db.deleteByIri(table, iri)`
+
+## SPARQL APIs
 
 ### `client.sparql(query)` / `db.executeSPARQL(query)`
 
-显式 SPARQL 入口：
+This is the graph-query escape hatch. It accepts SPARQL, not SQL.
 
-```ts
-await db.executeSPARQL(`SELECT ?s WHERE { ?s ?p ?o } LIMIT 10`);
-```
+### Builder output
 
-或者：
+Supported:
 
-```ts
-await client.sparql(`SELECT ?s WHERE { ?s ?p ?o } LIMIT 10`);
-```
-
-这是图查询 escape hatch，**只接受 SPARQL，不接受 raw SQL**。
-
-### Builder 输出
-
-查询构建器支持：
 - `toSPARQL()`
 - `toSparql()`
 
-当前 **不再提供** `toSQL()` 兼容别名。
+Not provided:
 
-## 语义边界
-
-### collection 路径与 exact-target 路径不同
-
-- list/filter 读取可以保持 collection-oriented
-- exact-target 路径应该优先保持 exact-target semantics
-- 信息不足时不会静默退化成 scan-style execution
-
-这不仅适用于 mutation，也适用于其他 exact-target 路径。
-
-如果 `subjectTemplate` 需要多个变量才能唯一定位 subject，就不要把 mutation 或 exact-target join 建立在模糊条件之上；优先显式使用 IRI 或补齐完整 locator。
-
-另外，公共 `where()` 不再接受 `id` / `@id` 作为 exact-target 条件。精确目标读取请使用 `findByLocator()` 或 `findByIri()`。
-
-对于 **plain LDP document mode**（没有 SPARQL endpoint / index）：
-- 只保证 exact-target read/write
-- 不保证 `findMany` / `findFirst` / `count` 这类 collection 查询
-- 这类调用会直接报错，而不是隐式做 scan / recursion
-
-## 什么时候该用哪个入口
-
-### 用 `pod()` façade
-
-适合：
-- 你想把集合读取和精确实体操作写得更显式
-- 你希望 `collection()` / `entity()` / `bind()` 这些名字直接出现在代码里
-- 你在写新的业务代码，或希望统一团队的 Solid 语义表达
-
-### 继续用 `drizzle()`
-
-适合：
-- 你已经大量使用 Drizzle 风格 builder
-- 你想先保留原来的代码形状
-- 你当前更关心迁移成本，而不是 API 组织方式
-
-## 不承诺的能力
-
-当前不把以下能力当作稳定主线契约：
-- raw SQL / `sql`` fragment` surface
 - `toSQL()`
-- 隐式扫描式 `updateMany/deleteMany`
-- 与关系数据库完全一致的事务、DDL、自增、外键语义
 
-## 相关阅读
+## Hard semantic boundaries
+
+### 1. collection reads and exact-target operations are different
+
+Collection reads:
+
+- `collection().list(...)`
+- `db.select().from(...).where(...)`
+- `db.query.<table>.findMany(...)`
+
+Exact-target operations:
+
+- `entity(table, iri)`
+- `findByIri`
+- `findByLocator`
+- `updateByIri` / `updateByLocator`
+- `deleteByIri` / `deleteByLocator`
+
+### 2. public `where()` is not an exact-target shortcut
+
+Do not treat these as exact single-entity APIs:
+
+- `where({ id: ... })`
+- `where({ '@id': ... })`
+- `where(eq(table.id, ...))`
+
+Use exact-target helpers instead.
+
+### 3. multi-variable templates require complete locator information
+
+For example:
+
+```ts
+subjectTemplate: '{chatId}/messages.ttl#{id}'
+```
+
+You need either:
+
+- a full IRI, or
+- a complete locator such as `{ chatId, id }`
+
+### 4. plain LDP document mode has explicit limits
+
+Without SPARQL endpoint / sidecar / index:
+
+- exact-target read/write still works
+- collection queries are not guaranteed
+- the library does not silently widen into global scans
+
+## Not part of the stable contract
+
+- raw SQL / `sql`` fragments`
+- `toSQL()`
+- implicit scan-based `updateMany/deleteMany`
+- full relational database semantics for foreign keys, DDL, auto-increment, or transactions
+
+## Related reading
 
 - `README.md`
 - `docs/guides/installation.md`
 - `docs/guides/migrating-from-drizzle-orm.md`
 - `docs/guides/multi-variable-templates.md`
-- `docs/xpod-features.md`

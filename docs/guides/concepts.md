@@ -1,128 +1,135 @@
-# Solid 基础概念
+# Core Concepts
 
-`drizzle-solid` 不是把 Solid 假装成 SQL 数据库。
+Chinese version: [`concepts.zh-CN.md`](concepts.zh-CN.md)
 
-它做的是：
+This guide keeps only the minimum mental model you need to use `drizzle-solid` correctly.
 
-- 用类型化 schema 描述 Pod 数据
-- 把 RDF predicate、文档位置、IRI 身份一起纳入建模
-- 提供一套迁移友好的 API，让 Drizzle 用户能逐步进入 Solid 心智
+If you already know `drizzle-orm`, the biggest change is not syntax. It is identity and placement.
 
-## 四个核心对象
+## Remember these four objects
 
 ### Pod
 
-Pod 是用户的数据空间。
+A Pod is a data space.
+
+It is closer to “a user-owned set of accessible resources” than to a database instance.
 
 ### Document
 
-Document 是真实持久化单元，通常是一个 Turtle / JSON-LD 资源。
+A document is the real persistence unit.
+
+Usually that means a Turtle or JSON-LD resource.
 
 ### Entity
 
-Entity 是 document 里的一个 RDF subject。
+An entity is one RDF subject — the business object you actually read and write.
 
 ### IRI
 
-IRI 是实体的原生身份，通常比本地 `id` 更接近真实唯一标识。
+An IRI is the final identity of the entity.
 
-## 建模入口
+In many cases, `id` is only one variable used to build that IRI.
 
-### `podTable(...)`
+## Why `base` and `subjectTemplate` matter
 
-当模型和存储位置一起确定时：
+In `drizzle-solid`, a model describes both fields and placement.
 
 ```ts
 const posts = podTable('posts', {
   id: string('id').primaryKey(),
   title: string('title').predicate('http://schema.org/headline'),
 }, {
-  base: '/data/posts/',
+  base: 'https://alice.example/data/posts/',
   subjectTemplate: '{id}.ttl',
   type: 'http://schema.org/CreativeWork',
 });
 ```
 
-### `solidSchema(...)` + `client.bind(...)`
+Here:
 
-当你想把“模型”与“落在哪里”分开时：
+- `base` defines the document or container location
+- `subjectTemplate` defines how business fields map to an IRI
 
-```ts
-const profileTable = client.bind(profileSchema, {
-  base: 'https://alice.example/profile/card',
-});
-```
+## Three common layouts
 
-## `base` 与 `subjectTemplate`
-
-这是 `drizzle-solid` 最重要的两项配置。
-
-- `base`：资源容器或资源文件的基础位置
-- `subjectTemplate`：如何从业务字段生成实体 IRI
-
-常见模式：
-
-- `#{id}`：一个文档里多个实体
-- `{id}.ttl`：一实体一文档
-- `{id}.ttl#it`：一实体一文档，并保留文档内 fragment
-- `{chatId}/messages.ttl#{id}`：多变量布局
-
-## 读取与写入为什么分开建模
-
-### 集合读取
+### Many entities in one document
 
 ```ts
-const postsCollection = client.collection(posts);
-const rows = await postsCollection.list({ where: { id: 'post-1' } });
+subjectTemplate: '#{id}'
 ```
 
-### 精确实体操作
+### One document per entity
 
 ```ts
-const post = client.entity(posts, iri);
-await post.update({ title: 'Updated' });
-await post.delete();
+subjectTemplate: '{id}.ttl'
 ```
 
-原因是：
+### Partitioned by a business dimension
 
-- 读取可以在边界可控时做筛选和枚举
-- 当某条 API 路径语义上已经进入“精确目标”模式时，执行器应保持精确，或者显式失败，不应偷偷扩成集合扫描
-- 写入不应该在信息不足时隐式退化成扫描式 mutation
-- 如果目标依赖完整模板变量，最安全的写法是直接使用 IRI
-- 如果 join 的右表依赖完整模板变量，也不应隐式退化成扫描式 join；应提供完整 locator 或直接使用 IRI
+```ts
+subjectTemplate: '{chatId}/messages.ttl#{id}'
+```
 
-## 引用与关系
+## Collection reads vs exact-entity operations
 
-`uri()` / `iri()` 字段表示链接，不要把它只理解成 SQL 外键。
+This is the most important runtime distinction.
 
-列级链接统一写成 `uri(...).link(target)`。
+### Collection reads
 
-推荐做法：
+Use these when you want a set of rows:
 
-- 存完整 IRI 或能稳定补全为 IRI 的值
-- 在迁移旧代码时，可以让 link 字段根据 schema 自动补全目标 IRI
-- 关系读取通常落在 Drizzle-shaped read facade，常见入口是 `client.query`
+- `collection(table).list(...)`
+- `db.select().from(...)`
+- `db.query.<table>.findMany(...)`
 
-## 类型层级
+### Exact entity operations
 
-- `type` 表示实例默认写入的主 `rdf:type`
-- `subClassOf` 表示 schema / vocabulary 层级，不默认额外写入实例数据
-- 默认持久化形状应尽量只保留一个最具体、最权威的 `rdf:type`
-- 如果未来需要兼容无推理环境，再通过显式兼容选项物化父类类型，而不是默认双写
+Use these when you already know the concrete target:
 
-## Drizzle-shaped surface 仍在，但不是主心智
+- `entity(table, iri)`
+- `findByIri`
+- `findByLocator`
+- `updateByIri` / `updateByLocator`
+- `deleteByIri` / `deleteByLocator`
 
-以下能力仍然存在：
+## Why relationship fields should be modeled as links
 
-- `client.query.*`
-- `client.asDrizzle()`
-- `select / insert / update / delete`
+In SQL, relation fields usually start as foreign keys.
 
-但新的主线业务代码更推荐：
+In `drizzle-solid`, a better rule is:
 
-- `pod()`
-- `collection()`
-- `entity()`
-- `bind()`
-- `sparql()`
+- they are RDF links
+- they should ideally point to stable IRIs
+
+Preferred new code:
+
+```ts
+uri('author').link(users)
+```
+
+## Type hierarchy
+
+When you model class hierarchy:
+
+- `type` is the main persisted `rdf:type`
+- `subClassOf` is the vocabulary / schema hierarchy
+
+In normal cases, persist one most-specific main type per entity.
+
+## When to use `pod()` vs `drizzle()`
+
+### Use `pod()`
+
+- for new code
+- when you want `collection()` / `entity()` semantics to stay obvious
+
+### Use `drizzle()`
+
+- when migrating existing `drizzle-orm` code
+- when you want to keep builder / `db.query` shape
+
+Both share the same runtime.
+
+## The one-line version
+
+> In `drizzle-solid`, a model describes fields, entity IRI, and placement in the Pod.

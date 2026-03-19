@@ -1,59 +1,61 @@
-# 安装指南
+# Installation
 
-## 环境要求
+Chinese version: [`installation.zh-CN.md`](installation.zh-CN.md)
+
+## Requirements
+
 - Node.js 18+
-- TypeScript 5+（若在 TS 项目中使用）
-- Yarn / npm / pnpm 任一 Node 包管理器
+- TypeScript 5+ for TS projects
+- Yarn / npm / pnpm
 
-## 1. 安装核心库
+## 1. Install the core package
 
 ```bash
 yarn add @undefineds.co/drizzle-solid drizzle-orm
 ```
 
-或：
+or:
 
 ```bash
 npm install @undefineds.co/drizzle-solid drizzle-orm
 ```
 
-## 2. 选择认证实现
+## 2. Pick an authentication package
 
-Node 服务端通常使用：
+For Node services:
 
 ```bash
 yarn add @inrupt/solid-client-authn-node
 ```
 
-浏览器项目可改用 `@inrupt/solid-client-authn-browser`。
+Browser apps can use `@inrupt/solid-client-authn-browser`.
 
-## 3. 选择 SPARQL 引擎接法
+## 3. Pick a SPARQL engine strategy
 
-`@comunica/query-sparql-solid` 现在是 **可选 peer dependency**。
+`@comunica/query-sparql-solid` is an optional peer dependency.
 
-当前兼容口径：
-- **官方支持**：`4.x`
-- **暂不承诺支持矩阵**：`3.x`
+Current support:
 
-适合直接安装到应用里的场景：
-- LDP-backed 查询回退
+- supported: `4.x`
+- not in the current support matrix: `3.x`
+
+Install it in the app when you need:
+
+- built-in SPARQL execution
 - `db.executeSPARQL()` / `client.sparql()`
-- 需要内置 SPARQL client 的跨资源查询
+- SPARQL-backed cross-resource reads
 
 ```bash
 yarn add @comunica/query-sparql-solid
 ```
 
-### 如果宿主已经带了自己的 Comunica
+### If the host runtime already ships Comunica
 
-比如 `xpod` 在同一进程里已经安装了自己的 Comunica，则不需要再装第二份；直接把工厂传给 `drizzle-solid`：
+Reuse that copy instead of installing another one:
 
 ```ts
 import { createRequire } from 'node:module';
-import {
-  pod,
-  createNodeModuleSparqlEngineFactory,
-} from '@undefineds.co/drizzle-solid';
+import { pod, createNodeModuleSparqlEngineFactory } from '@undefineds.co/drizzle-solid';
 
 const requireFromHere = createRequire(import.meta.url);
 
@@ -66,7 +68,7 @@ const client = pod(session, {
 });
 ```
 
-如果你希望整个进程共享同一套配置，也可以：
+Or configure one shared process-wide engine:
 
 ```ts
 import { createRequire } from 'node:module';
@@ -84,11 +86,9 @@ configureSparqlEngine({
 });
 ```
 
-## 4. 最小化验证
+## 4. Minimal verification
 
-仓库文档与 examples 默认用 `pod()` 展开主线语义，因此这里也使用 `pod(session)` 做最小验证。
-
-如果你想保留 Drizzle 风格 builder，`drizzle(session)` 仍然是正式可用入口。
+This example uses `pod(session)` because it shows collection and entity semantics directly.
 
 ```ts
 import { Session } from '@inrupt/solid-client-authn-node';
@@ -114,43 +114,38 @@ async function main() {
   await client.init(profiles);
 
   const rows = await client.collection(profiles).list({ limit: 1 });
-  console.log('drizzle-solid 初始化成功', rows);
+  console.log(rows);
 }
 
 main().catch((error) => {
-  console.error('验证失败', error);
+  console.error(error);
   process.exit(1);
 });
 ```
 
-## 5. 从 `drizzle-orm` 迁移？
+If you prefer a Drizzle-shaped surface, you can keep using `drizzle(session)`.
 
-如果你本来熟悉的是 SQL 版 `drizzle-orm`，下一步优先看：
+## 5. Migrating from `drizzle-orm`
+
+Start here:
 
 - `docs/guides/migrating-from-drizzle-orm.md`
 
-那份指南重点解释：
-- `table/row` 心智如何映射到 `Resource/Document/IRI`
-- 为什么写操作需要更强调 exact target
-- 为什么入口名不是最关键的问题，真正关键的是语义收口
+## 6. Repository development / testing
 
-## 6. 仓库内开发 / 测试补充
-
-如果你是在本仓库里跑真实 CSS / xpod 测试，还需要：
+If you are working inside this repository and want real CSS / xpod tests:
 
 ```bash
 yarn css:install
 ```
 
-这会把测试用的隔离 CSS 运行时装到 `.internal/css-runtime/`，避免和库本身的依赖栈混在一起。
+This installs the isolated CSS runtime under `.internal/css-runtime/`.
 
-## 常见问题
+## FAQ
 
 - **`Cannot find module '@comunica/query-sparql-solid'`**
-  - 直接在应用里安装它；或通过 `sparql.createQueryEngine` / `configureSparqlEngine()` 注入宿主已有的那一份。
-- **认证失败**
-  - 检查 `SOLID_CLIENT_ID`、`SOLID_CLIENT_SECRET`、`SOLID_OIDC_ISSUER`。
-- **CSS / xpod 依赖冲突**
-  - 仓库内开发请使用 `yarn css:install` 保持测试运行时隔离。
-
-下一步建议阅读：`docs/api/README.md`、`docs/guides/migrating-from-drizzle-orm.md`、`docs/quick-start-local.md`
+  - install it in the app, or inject the host runtime copy through `sparql.createQueryEngine` / `configureSparqlEngine()`
+- **Authentication fails**
+  - check `SOLID_CLIENT_ID`, `SOLID_CLIENT_SECRET`, and `SOLID_OIDC_ISSUER`
+- **CSS / xpod dependency conflicts**
+  - use `yarn css:install` inside this repository to keep the test runtime isolated

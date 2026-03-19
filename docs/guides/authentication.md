@@ -1,21 +1,22 @@
-# 认证与连接
+# Authentication and Connection
 
-`drizzle-solid` 直接复用 Solid `Session`。
+Chinese version: [`authentication.zh-CN.md`](authentication.zh-CN.md)
 
-重点不是必须换入口名，而是：
+`drizzle-solid` reuses a Solid `Session` directly.
 
-- 先拿到一个已登录的 `Session`
-- 仓库主线文档与 examples 默认用 `pod(session)` 表达 `collection()` / `entity()` 语义
-- `drizzle(session)` 仍然可用于保留 Drizzle 代码形状
-- 真正要理解的是 Pod / IRI / exact-target mutation 语义
+What matters is:
 
-## 核心概念
+- you have a logged-in `Session`
+- `pod(session)` vs `drizzle(session)` is only an API-shape choice
+- Pod / IRI / exact-target semantics are the real runtime model
 
-- **WebID**：Solid 用户身份 URL，例如 `https://alice.example/profile/card#me`
-- **Pod**：用户自己的数据空间
-- **Session**：Inrupt SDK 的认证状态载体，包含令牌状态与认证 `fetch`
+## Core concepts
 
-## Node.js 客户端凭证登录
+- **WebID** — a Solid identity URL such as `https://alice.example/profile/card#me`
+- **Pod** — the user-owned data space
+- **Session** — the Inrupt SDK authentication holder with tokens and authenticated `fetch`
+
+## Node.js client-credentials login
 
 ```ts
 import { Session } from '@inrupt/solid-client-authn-node';
@@ -35,7 +36,7 @@ async function createDatabase(env: {
   });
 
   if (!session.info.isLoggedIn) {
-    throw new Error('Solid session 登录失败');
+    throw new Error('Solid session login failed');
   }
 
   const profiles = podTable('profiles', {
@@ -51,7 +52,7 @@ async function createDatabase(env: {
 }
 ```
 
-## 浏览器交互式登录
+## Browser interactive login
 
 ```ts
 import {
@@ -78,31 +79,23 @@ export async function ensureAuthenticated() {
 }
 ```
 
-## 为什么主线文档优先用 `pod()`
+## When to use `pod()`
 
-如果你希望把集合读取、精确实体和运行时绑定写得更显式，可以在同样的 `Session` 上使用：
+Use it when you want collection reads, exact entities, and runtime binding to stay explicit.
 
-```ts
-import { pod } from '@undefineds.co/drizzle-solid';
+If your app already relies heavily on builders or `db.query.*`, keeping `drizzle()` is fine.
 
-const client = pod(session);
-```
+## Session reuse
 
-它不是唯一入口，但更适合在新代码里直接表达 link、collection 和 exact-entity 语义。
+- **token caching** — tests can reuse `session.info.sessionId`-related state to reduce repeated login work
+- **expiry handling** — if an operation returns 401/403, re-authenticate instead of letting later queries fail silently
+- **multi-Pod access** — one `Session` is one auth context; permissions matter more than constructor naming
 
-如果你的应用已经大量使用 builder / `db.query.*`，继续保留 `drizzle()` 也完全可以。
+## Troubleshooting
 
-## 会话复用
-
-- **令牌缓存**：测试环境可复用 `session.info.sessionId` 相关状态，减少重复登录成本
-- **过期处理**：若操作返回 401/403，可触发重新登录，而不是让后续查询隐式失败
-- **多 Pod**：一个 `Session` 对应一个认证上下文；重要的是访问语义和权限，而不是构造函数名字
-
-## 常见故障排查
-
-| 现象 | 可能原因 | 处理方式 |
+| Symptom | Likely cause | What to check |
 | --- | --- | --- |
-| 登录成功但查询 403 | Pod 资源不存在或 ACL 无权限 | 检查容器存在性与授权策略 |
-| 登录卡住 | OIDC issuer / client 凭证不匹配 | 核对 `.env.local` 与服务端配置 |
-| 浏览器回调后未登录 | `redirectUrl` 不匹配 | 确保与应用实际地址一致 |
-| `drizzle(session)` / `pod(session)` 报未登录 | `Session.login()` 未正确等待完成 | 调用前确认 `session.info.isLoggedIn === true` |
+| login succeeds but queries return 403 | missing Pod resource or ACL permissions | verify resource existence and authorization |
+| login hangs | mismatched OIDC issuer or client credentials | verify `.env.local` and server config |
+| browser callback returns but no login state | redirect URL mismatch | verify the real app URL |
+| `drizzle(session)` / `pod(session)` says not logged in | `Session.login()` was not fully awaited | check `session.info.isLoggedIn === true` before constructing the client |
