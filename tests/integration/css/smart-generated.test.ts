@@ -107,23 +107,18 @@ describe('Smart Generated Tests', () => {
   test('Fragment mode basic CRUD', async () => {
     await db.insert(FragmentTable).values({ id: 'fragment-1', name: 'Test 1' });
 
-    const inserted = await db.select().from(FragmentTable)
-      .where(eq(FragmentTable.id, 'fragment-1'));
-    expect(inserted).toHaveLength(1);
-    expect(inserted[0].name).toBe('Test 1');
+    const inserted = await db.findByLocator(FragmentTable, { id: 'fragment-1' });
+    expect(inserted).not.toBeNull();
+    expect(inserted?.name).toBe('Test 1');
 
-    await db.update(FragmentTable)
-      .set({ name: 'Updated' })
-      .where(eq(FragmentTable.id, 'fragment-1'));
+    await db.updateByLocator(FragmentTable, { id: 'fragment-1' }, { name: 'Updated' });
 
-    const updated = await db.select().from(FragmentTable)
-      .where(eq(FragmentTable.id, 'fragment-1'));
-    expect(updated[0].name).toBe('Updated');
+    const updated = await db.findByLocator(FragmentTable, { id: 'fragment-1' });
+    expect(updated?.name).toBe('Updated');
 
-    await db.delete(FragmentTable).where(eq(FragmentTable.id, 'fragment-1'));
-    const deleted = await db.select().from(FragmentTable)
-      .where(eq(FragmentTable.id, 'fragment-1'));
-    expect(deleted).toHaveLength(0);
+    await db.deleteByLocator(FragmentTable, { id: 'fragment-1' });
+    const deleted = await db.findByLocator(FragmentTable, { id: 'fragment-1' });
+    expect(deleted).toBeNull();
   });
 
   test('Document mode full URI lookup works', async () => {
@@ -169,8 +164,8 @@ describe('Smart Generated Tests', () => {
     await db.insert(MultiVarTable).values({ id: 'multi-1', chatId: 'chat-1', name: 'Test' });
 
     await expect(async () => {
-      await db.select().from(MultiVarTable).where(eq(MultiVarTable.id, 'multi-1'));
-    }).rejects.toThrow(/missing required variable/);
+      await db.findByLocator(MultiVarTable, { id: 'multi-1' });
+    }).rejects.toThrow(/requires a complete locator/);
   });
 
   test('Numeric operators support equality, range and OR logic', async () => {

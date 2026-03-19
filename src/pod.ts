@@ -5,7 +5,7 @@ import type {
 } from './core/notifications';
 import type { OrderByExpression } from './core/order-by';
 import type { SelectFieldMap } from './core/pod-session';
-import type { QueryCondition } from './core/query-conditions';
+import type { PublicQueryCondition, PublicWhereObject } from './core/query-conditions';
 import { generateSubjectUri } from './core/sparql/helpers';
 import {
   PodTable,
@@ -24,7 +24,7 @@ import {
   type SolidDrizzleConfig,
 } from './driver';
 
-type CollectionWhere = Record<string, unknown> | QueryCondition;
+type CollectionWhere = PublicWhereObject | PublicQueryCondition;
 type CollectionOrderBy = PodColumnBase | string | OrderByExpression | 'asc' | 'desc';
 
 export interface PodCollectionQueryOptions<TTable extends PodTable<any> = PodTable<any>> {

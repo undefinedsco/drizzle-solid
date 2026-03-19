@@ -63,7 +63,7 @@ const agentsSchema = solidSchema({
   public: boolean('public').predicate('https://schema.org/isAccessibleForFree'),
 }, {
   type: 'https://schema.org/SoftwareApplication',
-  subjectTemplate: '{id}.ttl',
+  subjectTemplate: '#{id}',
 });
 
 async function run(providedSession?: Session) {
@@ -78,7 +78,7 @@ async function run(providedSession?: Session) {
   console.log('');
 
   const agents = client.bind(agentsSchema, {
-    base: `${podBase}data/hooks-example/agents/`,
+    base: `${podBase}data/hooks-example/agents.ttl`,
     hooks: {
       afterInsert: async (ctx: HookContext, record: Record<string, unknown>) => {
         console.log(`  [Hook] afterInsert: ${record.name}`);

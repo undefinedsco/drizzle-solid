@@ -35,7 +35,9 @@ It is fine to keep:
 
 As long as the underlying Solid semantics stay explicit.
 
-### 3. Writes need exact targets
+For joins on targets with multi-variable `subjectTemplate`, do not carry over the SQL assumption that `id` alone is enough. The join must carry the full locator (all required template variables) or a full IRI.
+
+### 3. Exact-target paths need exact targets
 
 When the subject depends on a full IRI or multiple template variables, prefer:
 
@@ -44,6 +46,7 @@ When the subject depends on a full IRI or multiple template variables, prefer:
 - explicit subject generation
 
 Do not recommend scan-style `updateMany/deleteMany` as if this were a SQL engine.
+Do not recommend under-specified joins or other exact-target paths silently widening into scans.
 
 ### 4. Links are not just renamed foreign keys
 

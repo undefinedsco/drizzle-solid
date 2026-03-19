@@ -1,8 +1,7 @@
 /**
  * Document Mode Integration Tests
  *
- * Tests CRUD operations with document mode (base ends with /)
- * Each record gets its own .ttl file: /users/alice.ttl, /users/bob.ttl
+ * Plain-LDP document mode only supports exact-target APIs.
  */
 import { afterAll, beforeAll, describe, expect, test, vi } from 'vitest';
 import { drizzle } from '../../../src/driver';
@@ -13,11 +12,10 @@ import {
   int,
   id,
   eq,
-  inArray
 } from '../../../src/index';
 import type { SolidDatabase } from '../../../src/driver';
 import type { Session } from '@inrupt/solid-client-authn-node';
-import { createTestSession, ensureContainer } from './helpers';
+import { buildTestPodUrl, createTestSession, ensureContainer } from './helpers';
 
 const timestamp = Date.now();
 const containerPath = `/doc-mode-test-${timestamp}/`;
@@ -26,21 +24,26 @@ const schemaNamespace = { prefix: SCHEMA.PREFIX, uri: SCHEMA.NAMESPACE };
 
 vi.setConfig({ testTimeout: 60_000 });
 
-// Document mode table: base ends with /
 const usersTable = podTable('users', {
-  id: id(),  // @id predicate - derived from filename
+  id: id(),
   name: string('name').notNull().predicate('https://schema.org/name'),
   age: int('age').predicate('https://schema.org/age'),
 }, {
-  base: usersPath,  // Document mode!
+  base: usersPath,
   type: 'https://schema.org/Person',
   namespace: schemaNamespace,
-  typeIndex: undefined
+  typeIndex: undefined,
 });
 
 describe('CSS integration: Document Mode CRUD', () => {
   let session: Session;
   let db: SolidDatabase;
+  const insertedIds = new Set<string>();
+
+  const track = <T extends { id: string }>(record: T): T => {
+    insertedIds.add(record.id);
+    return record;
+  };
 
   beforeAll(async () => {
     session = await createTestSession();
@@ -51,127 +54,85 @@ describe('CSS integration: Document Mode CRUD', () => {
   }, 120_000);
 
   afterAll(async () => {
-    // Cleanup: delete test resources
-    try {
-      const users = await db.select().from(usersTable);
-      for (const user of users) {
-        if (user.id) {
-          await db.delete(usersTable).where({ id: user.id });
-        }
-      }
-    } catch {
-      // Ignore cleanup errors
+    for (const userId of insertedIds) {
+      await db.deleteByLocator(usersTable, { id: userId }).catch(() => undefined);
     }
   });
 
-  test('INSERT should create individual .ttl files', async () => {
-    const alice = {
+  test('INSERT should create individual .ttl files and support exact locator reads', async () => {
+    const alice = track({
       id: `alice-${timestamp}`,
       name: 'Alice',
       age: 30,
-    };
+    });
 
     await db.insert(usersTable).values(alice);
 
-    // Verify by SELECT
-    const containerUrl = `${session.info.webId!.split('profile')[0]}${usersPath}`.replace(/([^:]\/)\/+/g, '$1');
-    const containerTurtle = await session.fetch(containerUrl, {
-      method: 'GET',
-      headers: { Accept: 'text/turtle' }
-    }).then((res) => res.text()).catch(() => '');
-    const aliceUrl = `${containerUrl}alice-${timestamp}.ttl`;
-    const aliceTurtle = await session.fetch(aliceUrl, {
-      method: 'GET',
-      headers: { Accept: 'text/turtle' }
-    }).then((res) => res.text()).catch(() => '');
-    console.log('DEBUG container url:', containerUrl, 'turtle:', containerTurtle, 'alice:', aliceTurtle);
+    const row = await db.findByLocator(usersTable, { id: alice.id });
+    expect(row).toMatchObject(alice);
 
-    const users = await db.select().from(usersTable);
-    const found = users.find(u => u.name === 'Alice');
+    const documentUrl = `${buildTestPodUrl(usersPath)}${alice.id}.ttl`;
+    const turtle = await session.fetch(documentUrl, {
+      method: 'GET',
+      headers: { Accept: 'text/turtle' },
+    }).then((res) => res.text());
 
-    expect(found).toBeDefined();
-    expect(found?.id).toBe(`alice-${timestamp}`);
-    expect(found?.name).toBe('Alice');
-    expect(found?.age).toBe(30);
+    expect(turtle).toContain('Alice');
   });
 
-  test('SELECT with id = should work in document mode', async () => {
-    // Insert another user
-    const bob = {
+  test('findByIri should resolve exact document URI', async () => {
+    const bob = track({
       id: `bob-${timestamp}`,
       name: 'Bob',
       age: 25,
-    };
+    });
+
     await db.insert(usersTable).values(bob);
 
-    // Select by id
-    const results = await db.select().from(usersTable).where(eq(usersTable.columns.id as any, `bob-${timestamp}`));
+    const iri = `${buildTestPodUrl(usersPath)}${bob.id}.ttl`;
+    const row = await db.findByIri(usersTable, iri);
 
-    expect(results).toHaveLength(1);
-    expect(results[0].name).toBe('Bob');
+    expect(row).toMatchObject(bob);
+    expect(row?.['@id']).toBe(iri);
   });
 
-  test('SELECT with id IN should work in document mode', async () => {
-    const results = await db.select().from(usersTable).where(
-      inArray(usersTable.columns.id as any, [`alice-${timestamp}`, `bob-${timestamp}`])
+  test('collection reads should fail in plain-LDP document mode', async () => {
+    await expect(db.select().from(usersTable)).rejects.toThrow(
+      /Document-mode collection queries over plain LDP are not supported/i,
     );
 
-    expect(results.length).toBeGreaterThanOrEqual(2);
-    const names = results.map(r => r.name);
-    expect(names).toContain('Alice');
-    expect(names).toContain('Bob');
+    await expect(
+      db.select().from(usersTable).where(eq(usersTable.name, 'Alice')),
+    ).rejects.toThrow(/Document-mode collection queries over plain LDP are not supported/i);
   });
 
-  test('UPDATE should modify correct document', async () => {
-    await db.update(usersTable)
-      .set({ age: 31 })
-      .where({ id: `alice-${timestamp}` });
-
-    // Allow time for update to propagate
-    await new Promise(resolve => setTimeout(resolve, 500));
-
-    const results = await db.select().from(usersTable).where(eq(usersTable.columns.id as any, `alice-${timestamp}`));
-
-    expect(results).toHaveLength(1);
-    expect(results[0].age).toBe(31);
-  });
-
-  test('DELETE should remove correct document', async () => {
-    // Insert a user to delete
-    const carol = {
+  test('updateByLocator should modify the exact document', async () => {
+    const carol = track({
       id: `carol-${timestamp}`,
       name: 'Carol',
       age: 28,
-    };
+    });
+
     await db.insert(usersTable).values(carol);
+    await db.updateByLocator(usersTable, { id: carol.id }, { age: 29 });
 
-    // Verify inserted
-    let results = await db.select().from(usersTable).where(eq(usersTable.columns.id as any, `carol-${timestamp}`));
-    expect(results).toHaveLength(1);
-
-    // Delete
-    await db.delete(usersTable).where({ id: `carol-${timestamp}` });
-
-    // Allow time for delete to propagate
-    await new Promise(resolve => setTimeout(resolve, 500));
-
-    // Verify deleted
-    results = await db.select().from(usersTable).where(eq(usersTable.columns.id as any, `carol-${timestamp}`));
-    expect(results).toHaveLength(0);
+    const row = await db.findByLocator(usersTable, { id: carol.id });
+    expect(row?.age).toBe(29);
   });
 
-  test('id should be correctly extracted from document URI', async () => {
-    const users = await db.select().from(usersTable);
+  test('deleteByLocator should remove the exact document', async () => {
+    const dave = track({
+      id: `dave-${timestamp}`,
+      name: 'Dave',
+      age: 31,
+    });
 
-    // All users should have id extracted from filename
-    for (const user of users) {
-      expect(user.id).toBeDefined();
-      expect(typeof user.id).toBe('string');
-      expect(user.id.length).toBeGreaterThan(0);
-      // id should NOT contain .ttl extension
-      expect(user.id).not.toContain('.ttl');
-      // id should NOT be a full URI
-      expect(user.id).not.toContain('http');
-    }
+    await db.insert(usersTable).values(dave);
+    expect(await db.findByLocator(usersTable, { id: dave.id })).toMatchObject(dave);
+
+    await db.deleteByLocator(usersTable, { id: dave.id });
+    insertedIds.delete(dave.id);
+
+    expect(await db.findByLocator(usersTable, { id: dave.id })).toBeNull();
   });
 });

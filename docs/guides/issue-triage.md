@@ -9,6 +9,12 @@
 - 每一类问题最终需要沉淀成什么仓库资产
 - 哪个 issue 模板应该被使用
 
+补充规则：
+
+- issue 是入口，不是仓库级语义来源
+- 如果结论会影响多个 API 路径、README、examples 或 skills，必须落成 decision record
+- 例如 `exact-target 不退化` 这种规则，应归档到 `docs/guides/decisions/`，而不是停留在某个 issue 的修复说明里
+
 ## 两个维度
 
 每个 issue 都至少要有两个维度：
@@ -123,6 +129,7 @@
 - `having` 要不要支持
 - `toSQL()` 是否保留
 - 是否允许隐式扫描式 updateMany/deleteMany
+- exact-target path 是否允许静默扩成 scan
 - public skills 是否应该默认建议某种建模方案
 - 某个 predicate / IRI / ownership 选择是否需要多 AI 共识，而不是接受单次回答
 

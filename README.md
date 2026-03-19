@@ -75,7 +75,9 @@ npm install @comunica/query-sparql-solid
 
 `@comunica/query-sparql-solid` is an optional peer dependency.
 
-Install it in the consuming app when you need built-in SPARQL query execution, LDP-backed query fallback, or direct SPARQL workflows.
+Install it in the consuming app when you need built-in SPARQL query execution or direct SPARQL workflows.
+
+Without a SPARQL endpoint or index, plain-LDP document mode is limited to exact-target access (`findByLocator` / `findByIri` and the matching update/delete APIs). Collection queries are not implicitly expanded into scans.
 
 Current public compatibility stance:
 
@@ -172,6 +174,8 @@ Common patterns:
 - `{id}.ttl#it`: one document per entity with stable in-document fragment
 - `{chatId}/messages.ttl#{id}`: multi-variable layouts and partitioned resources
 
+If a layout uses multiple template variables, exact lookup is only exact when all required locator variables are present, or when you already hold the full IRI.
+
 这不是命名细节，而是持久化语义本身。
 
 ## Type hierarchy
@@ -191,8 +195,11 @@ Reads and writes do not intentionally behave the same way.
 
 - list / filter reads can stay collection-oriented
 - writes should prefer exact-target semantics
+- if an API path semantically requires exact-target resolution, it should remain exact or fail explicitly; do not silently widen it into scan-style execution
 - incomplete `where(...)` information should not silently degrade into scan + mutate
 - if a subject can only be resolved by multiple template variables, mutation should use an explicit IRI or provide all required variables
+- join on a multi-variable target should also provide all required locator variables, or join via full IRI values
+- do not silently degrade unresolved multi-variable joins into scan-style fallback
 
 所以最重要的变化不是“要不要换成 `pod()`”，而是：
 
@@ -252,6 +259,7 @@ If you already know `drizzle-orm`, start here:
 - `docs/api/README.md` — current public API and constructor positioning
 - `docs/guides/installation.md` — installation and SPARQL engine setup
 - `docs/guides/migrating-from-drizzle-orm.md` — migration guide for Drizzle users
+- `docs/guides/testing.md` — canonical testing policy, verification layers, and execution-path guardrails
 - `docs/guides/context7-and-skills.md` — Context7 publication scope, skills plan, and feedback flow
 - `docs/guides/issue-triage.md` — classify code, docs, tooling, and decision issues
 - `docs/guides/modeling-consensus.md` — when modeling questions require multi-AI consensus instead of a single answer
@@ -261,7 +269,7 @@ If you already know `drizzle-orm`, start here:
 - `docs/guides/data-discovery.md` — discovery workflows
 - `docs/guides/notifications.md` — notification flows
 - `docs/xpod-features.md` — xpod runtime notes
-- `ACTION-PLAN.md` — parity and implementation plan
+- `ACTION-PLAN.md` — testing/parity backlog and execution log, not the testing policy
 
 ## Contributing
 

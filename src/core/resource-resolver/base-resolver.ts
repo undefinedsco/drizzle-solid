@@ -205,24 +205,18 @@ export abstract class BaseResourceResolver implements ResourceResolver {
 
     // Handle simple object: { id: 'value' }, { id: ['v1', 'v2'] }, or { '@id': 'iri' }
     if (typeof condition === 'object' && !('type' in condition)) {
-      // Handle '@id' field (from whereByIri)
-      if ('@id' in condition) {
-        const iriValue = (condition as any)['@id'];
-        if (Array.isArray(iriValue)) {
-          ids.push(...iriValue.map(String));
-        } else if (iriValue != null) {
-          ids.push(String(iriValue));
+      for (const [rawKey, rawValue] of Object.entries(condition)) {
+        const key = this.normalizeConditionColumnName(rawKey);
+        if (key !== 'id' && key !== '@id') {
+          continue;
         }
-        return ids;
+        if (Array.isArray(rawValue)) {
+          ids.push(...rawValue.map(String));
+        } else if (rawValue != null) {
+          ids.push(String(rawValue));
+        }
       }
-
-      if ('id' in condition) {
-        const idValue = (condition as any).id;
-        if (Array.isArray(idValue)) {
-          ids.push(...idValue.map(String));
-        } else if (idValue != null) {
-          ids.push(String(idValue));
-        }
+      if (ids.length > 0) {
         return ids;
       }
     }
@@ -242,12 +236,13 @@ export abstract class BaseResourceResolver implements ResourceResolver {
 
     // Handle simple object: { col: 'value' }
     if (typeof condition === 'object' && !('type' in condition)) {
-      for (const col of columns) {
-        if (col in condition) {
-          const val = (condition as any)[col];
-          if (val != null && !Array.isArray(val)) {
-             values[col] = String(val);
-          }
+      for (const [rawKey, rawValue] of Object.entries(condition)) {
+        const key = this.normalizeConditionColumnName(rawKey);
+        if (!columns.includes(key)) {
+          continue;
+        }
+        if (rawValue != null && !Array.isArray(rawValue)) {
+          values[key] = String(rawValue);
         }
       }
       return values;
@@ -269,14 +264,7 @@ export abstract class BaseResourceResolver implements ResourceResolver {
 
     // BinaryExpression: { type: 'binary_expr', left: ..., operator: ..., right: ... }
     if (condition.type === 'binary_expr') {
-      let colName: string | undefined;
-      const left = condition.left;
-
-      if (typeof left === 'string') {
-        colName = left;
-      } else if (left && typeof left === 'object') {
-        colName = left.name;
-      }
+      const colName = this.normalizeConditionColumnName(condition.left);
 
       if (colName === targetCol) {
         if (condition.operator === '=' && condition.right != null) {
@@ -303,15 +291,7 @@ export abstract class BaseResourceResolver implements ResourceResolver {
 
     // BinaryExpression: { type: 'binary_expr', left: ..., operator: ..., right: ... }
     if (condition.type === 'binary_expr') {
-      let colName: string | undefined;
-      const left = condition.left;
-
-      if (typeof left === 'string') {
-        colName = left;
-      } else if (left && typeof left === 'object') {
-        // PodColumnBase or similar object with name property
-        colName = left.name;
-      }
+      const colName = this.normalizeConditionColumnName(condition.left);
 
       if (colName === 'id' || colName === '@id') {
         if (condition.operator === '=' && condition.right != null) {
@@ -328,6 +308,23 @@ export abstract class BaseResourceResolver implements ResourceResolver {
         this.collectIdValues(expr, ids);
       }
     }
+  }
+
+  protected normalizeConditionColumnName(target: unknown): string {
+    let rawName: string | undefined;
+
+    if (typeof target === 'string') {
+      rawName = target;
+    } else if (target && typeof target === 'object' && 'name' in target) {
+      const candidate = (target as { name?: unknown }).name;
+      rawName = typeof candidate === 'string' ? candidate : undefined;
+    }
+
+    if (!rawName) {
+      return '';
+    }
+
+    return rawName.includes('.') ? rawName.split('.').pop() ?? rawName : rawName;
   }
 
   /**

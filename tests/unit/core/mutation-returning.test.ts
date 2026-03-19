@@ -95,10 +95,10 @@ describe('Mutation builders returning()', () => {
 
     const rows = await new UpdateQueryBuilder(session, Users)
       .set({ name: 'Caroline' })
-      .where({ id: 'user-3' })
+      .whereByIri('https://pod.example/users.ttl#user-3')
       .returning();
 
-    expect(selectCalls[0]?.where).toBeTruthy();
+    expect(selectCalls[0]).toEqual({ whereByIri: 'https://pod.example/users.ttl#user-3' });
     expect(selectCalls[1]).toEqual({ whereByIri: ['https://pod.example/users.ttl#user-3'] });
     expect(rows).toEqual([
       { '@id': 'https://pod.example/users.ttl#user-3', id: 'user-3', name: 'Caroline', age: 25 },
@@ -113,9 +113,10 @@ describe('Mutation builders returning()', () => {
 
     const rows = await new UpdateQueryBuilder(session, Users)
       .set({ age: 41 })
-      .where({ id: 'user-4' })
+      .whereByIri('https://pod.example/users.ttl#user-4')
       .returning({ id: Users.id, age: Users.age });
 
+    expect(selectCalls[0]).toEqual({ whereByIri: 'https://pod.example/users.ttl#user-4' });
     expect(rows).toEqual([{ id: 'user-4', age: 41 }]);
   });
 
@@ -125,10 +126,10 @@ describe('Mutation builders returning()', () => {
     ]];
 
     const rows = await new DeleteQueryBuilder(session, Users)
-      .where({ id: 'user-5' })
+      .whereByIri('https://pod.example/users.ttl#user-5')
       .returning();
 
-    expect(selectCalls[0]?.where).toBeTruthy();
+    expect(selectCalls[0]).toEqual({ whereByIri: 'https://pod.example/users.ttl#user-5' });
     expect(rows).toEqual([
       { '@id': 'https://pod.example/users.ttl#user-5', id: 'user-5', name: 'Eve', age: 35 },
     ]);
@@ -140,9 +141,10 @@ describe('Mutation builders returning()', () => {
     ]];
 
     const rows = await new DeleteQueryBuilder(session, Users)
-      .where({ id: 'user-6' })
+      .whereByIri('https://pod.example/users.ttl#user-6')
       .returning({ id: Users.id, name: Users.name });
 
+    expect(selectCalls[0]).toEqual({ whereByIri: 'https://pod.example/users.ttl#user-6' });
     expect(rows).toEqual([{ id: 'user-6', name: 'Frank' }]);
   });
 

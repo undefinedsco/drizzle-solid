@@ -87,14 +87,14 @@ describe('Drizzle query facade integration', () => {
     expect(row).toMatchObject({ id: 'user-3', name: 'Cara' });
   });
 
-  test('query.findById should filter by id', async () => {
-    const row = await db.query.users.findById('user-2');
+  test('query.findByLocator should resolve template-based exact target', async () => {
+    const row = await db.query.users.findByLocator({ id: 'user-2' });
 
     expect(row).toMatchObject({ id: 'user-2', name: 'Bob' });
   });
 
-  test('query.findByIRI should resolve absolute subject IRI', async () => {
-    const row = await db.query.users.findByIRI(
+  test('query.findByIri should resolve absolute subject IRI', async () => {
+    const row = await db.query.users.findByIri(
       `${buildTestPodUrl(containerPath)}users.ttl#user-1`,
     );
 
@@ -127,7 +127,7 @@ describe('Drizzle query facade integration', () => {
   test('query.findMany should filter by non-selected columns', async () => {
     const rows = await db.query.users.findMany({
       columns: { name: Users.name },
-      where: { id: 'user-2' },
+      where: { name: 'Bob' },
     });
 
     expect(rows).toEqual([{ name: 'Bob' }]);
@@ -136,7 +136,7 @@ describe('Drizzle query facade integration', () => {
   test('query.findMany with relations should support where/orderBy/limit', async () => {
     const rows = await db.query.users.findMany({
       with: { posts: true },
-      where: { id: ['user-1', 'user-2'] },
+      where: { name: ['Alice', 'Bob'] },
       orderBy: { column: Users.name, direction: 'desc' },
       limit: 1,
     });
@@ -149,7 +149,7 @@ describe('Drizzle query facade integration', () => {
   test('query.findFirst with relations should support where and eager loading', async () => {
     const row = await db.query.users.findFirst({
       with: { posts: true },
-      where: { id: 'user-1' },
+      where: { name: 'Alice' },
       orderBy: { column: Users.name, direction: 'asc' },
     });
 
@@ -163,7 +163,7 @@ describe('Drizzle query facade integration', () => {
   test('query.findFirst with relations should return null when no rows match', async () => {
     const row = await db.query.users.findFirst({
       with: { posts: true },
-      where: { id: 'missing-user' },
+      where: { name: 'Missing User' },
     });
 
     expect(row).toBeNull();
@@ -173,7 +173,7 @@ describe('Drizzle query facade integration', () => {
     const rows = await db.query.users.findMany({
       columns: { name: Users.name },
       with: { posts: true },
-      where: { id: 'user-1' },
+      where: { name: 'Alice' },
     });
 
     expect(rows).toHaveLength(1);
@@ -198,7 +198,7 @@ describe('Drizzle query facade integration', () => {
     const row = await db.query.users.findFirst({
       columns: { name: Users.name },
       with: { posts: true },
-      where: { id: 'user-1' },
+      where: { name: 'Alice' },
     });
 
     expect(row).toMatchObject({ name: 'Alice' });

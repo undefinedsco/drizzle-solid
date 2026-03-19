@@ -10,6 +10,7 @@ type Priority = 'P0' | 'P1' | 'P2' | 'P3';
 interface CliOptions {
   source: string;
   outDir: string;
+  manifest?: string;
 }
 
 interface ParityCase {
@@ -33,6 +34,8 @@ interface ParityCase {
 
 interface QueueItem {
   dedupeKey: string;
+  planningKey: string;
+  sourceDedupeKeys: string[];
   representativeId: string;
   title: string;
   suitePath: string[];
@@ -43,6 +46,7 @@ interface QueueItem {
   reasons: string[];
   needsFixture: boolean;
   needsManualAssertion: boolean;
+  implemented: boolean;
   variants: Array<{
     id: string;
     sourceFile: string;
@@ -67,6 +71,8 @@ interface OutputQueue {
   generatedAt: string;
   sourceRoot: string;
   totalItems: number;
+  totalImplemented: number;
+  totalRemaining: number;
   totalsByStatus: Record<SolidStatus, number>;
   totalsByPriority: Record<Priority, number>;
   items: QueueItem[];
@@ -168,7 +174,7 @@ const IMPLEMENTED_PARITY_CASES = new Set([
   'tests/integration/css/drizzle-query-api.test.ts::[Find Many] Get users with posts + where + partial',
   'tests/integration/css/drizzle-query-api.test.ts::[Find One] Get users with posts + orderBy',
   'tests/integration/css/drizzle-query-api.test.ts::[Find One] Get users with posts + where + partial',
-].map((entry) => normalizeForDedupe(entry)));
+].map((entry) => normalizeImplementedReference(entry)));
 
 const TAG_PATTERNS: Array<{ tag: string; patterns: RegExp[] }> = [
   { tag: 'select', patterns: [/\.select\(/i, /\bselect\b/i] },
@@ -250,6 +256,11 @@ function parseArgs(argv: string[]): CliOptions {
       index += 1;
       continue;
     }
+    if (value === '--manifest') {
+      options.manifest = argv[index + 1] ?? options.manifest;
+      index += 1;
+      continue;
+    }
   }
 
   return options;
@@ -271,6 +282,14 @@ function resolveSourceRoot(source: string): string {
     `Cannot find Drizzle integration tests under ${resolved}. `
       + 'Pass --source /path/to/drizzle-orm or --source /path/to/drizzle-orm/integration-tests/tests.',
   );
+}
+
+function tryResolveSourceRoot(source: string): string | undefined {
+  try {
+    return resolveSourceRoot(source);
+  } catch {
+    return undefined;
+  }
 }
 
 function walkTsFiles(rootDir: string): string[] {
@@ -369,6 +388,38 @@ function normalizeForDedupe(value: string): string {
     .replace(/[^a-z0-9]+/g, ' ')
     .replace(/\s+/g, ' ')
     .trim();
+}
+
+function normalizeForTracking(value: string): string {
+  return normalizeWhitespace(value)
+    .replace(/\\/g, '/')
+    .toLowerCase();
+}
+
+function normalizeImplementedReference(value: string): string {
+  return normalizeForTracking(value)
+    .replace(/::common\s+›\s+/g, '::');
+}
+
+function normalizePlanningSuitePath(suitePath: string[]): string[] {
+  return suitePath
+    .map((segment) => normalizeWhitespace(segment))
+    .filter((segment) => normalizeForTracking(segment) !== 'common');
+}
+
+function buildPlanningKeyFromParts(targetFile: string, suitePath: string[], title: string): string {
+  const normalizedSuite = normalizePlanningSuitePath(suitePath).map((segment) => normalizeForTracking(segment)).join(' › ');
+  return [
+    normalizeForTracking(targetFile),
+    normalizedSuite,
+    normalizeForTracking(title),
+  ].join('::');
+}
+
+function buildTrackingCaseKey(targetFile: string, suitePath: string[], title: string): string {
+  const normalizedSuite = normalizePlanningSuitePath(suitePath);
+  const suiteLabel = normalizedSuite.length > 0 ? `${normalizedSuite.join(' › ')} › ` : '';
+  return normalizeImplementedReference(`${targetFile}::${suiteLabel}${title}`);
 }
 
 function collectTags(relativeFile: string, suitePath: string[], testName: string, bodyText: string): string[] {
@@ -828,9 +879,14 @@ function buildQueue(cases: ParityCase[]): QueueItem[] {
   const grouped = new Map<string, ParityCase[]>();
 
   for (const parityCase of cases) {
-    const group = grouped.get(parityCase.dedupeKey) ?? [];
+    const planningKey = buildPlanningKeyFromParts(
+      parityCase.suggestedTargetFile,
+      parityCase.suitePath,
+      parityCase.testName,
+    );
+    const group = grouped.get(planningKey) ?? [];
     group.push(parityCase);
-    grouped.set(parityCase.dedupeKey, group);
+    grouped.set(planningKey, group);
   }
 
   const queue: QueueItem[] = [];
@@ -870,18 +926,40 @@ function buildQueue(cases: ParityCase[]): QueueItem[] {
     return `${statusWeight}:${priorityWeight}:${sourceWeight}:${parityCase.sourceFile}:${parityCase.sourceLine}`;
   };
 
-  for (const [dedupeKey, variants] of grouped.entries()) {
+  for (const [planningKey, variants] of grouped.entries()) {
     const representative = [...variants].sort((left, right) => {
       const leftScore = getRepresentativeWeight(left);
       const rightScore = getRepresentativeWeight(right);
       return leftScore.localeCompare(rightScore);
     })[0];
 
+    const representativeSuitePath = normalizePlanningSuitePath(representative.suitePath);
+    const sourceDedupeKeys = [...new Set(variants.map((item) => item.dedupeKey))].sort();
+    const seenVariantIds = new Set<string>();
+    const mergedVariants = variants
+      .map((item) => ({
+        id: item.id,
+        sourceFile: item.sourceFile,
+        sourceLine: item.sourceLine,
+        dialect: item.dialect,
+        testName: item.testName,
+      }))
+      .filter((item) => {
+        if (seenVariantIds.has(item.id)) {
+          return false;
+        }
+        seenVariantIds.add(item.id);
+        return true;
+      })
+      .sort((left, right) => `${left.sourceFile}:${left.sourceLine}`.localeCompare(`${right.sourceFile}:${right.sourceLine}`));
+
     queue.push({
-      dedupeKey,
+      dedupeKey: planningKey,
+      planningKey,
+      sourceDedupeKeys,
       representativeId: representative.id,
       title: representative.testName,
-      suitePath: representative.suitePath,
+      suitePath: representativeSuitePath,
       solidStatus: representative.solidStatus,
       priority: representative.priority,
       suggestedTargetFile: representative.suggestedTargetFile,
@@ -889,15 +967,8 @@ function buildQueue(cases: ParityCase[]): QueueItem[] {
       reasons: representative.reasons,
       needsFixture: variants.some((item) => item.needsFixture),
       needsManualAssertion: representative.needsManualAssertion,
-      variants: variants
-        .map((item) => ({
-          id: item.id,
-          sourceFile: item.sourceFile,
-          sourceLine: item.sourceLine,
-          dialect: item.dialect,
-          testName: item.testName,
-        }))
-        .sort((left, right) => `${left.sourceFile}:${left.sourceLine}`.localeCompare(`${right.sourceFile}:${right.sourceLine}`)),
+      implemented: false,
+      variants: mergedVariants,
     });
   }
 
@@ -916,9 +987,16 @@ function writeJson(filePath: string, data: unknown) {
   fs.writeFileSync(filePath, `${JSON.stringify(data, null, 2)}\n`, 'utf8');
 }
 
+function loadCachedManifest(manifestPath: string): OutputManifest {
+  const manifest = JSON.parse(fs.readFileSync(manifestPath, 'utf8')) as Partial<OutputManifest>;
+  if (!manifest || !Array.isArray(manifest.cases) || typeof manifest.sourceRoot !== 'string' || typeof manifest.totalFiles !== 'number') {
+    throw new Error(`Invalid parity manifest: ${manifestPath}`);
+  }
+  return manifest as OutputManifest;
+}
+
 function buildImplementedCaseKey(item: QueueItem): string {
-  const suiteLabel = item.suitePath.length > 0 ? `${item.suitePath.join(' › ')} › ` : '';
-  return normalizeForDedupe(`${item.suggestedTargetFile}::${suiteLabel}${item.title}`);
+  return buildTrackingCaseKey(item.suggestedTargetFile, item.suitePath, item.title);
 }
 
 function isImplementedParityCase(item: QueueItem): boolean {
@@ -927,6 +1005,9 @@ function isImplementedParityCase(item: QueueItem): boolean {
 
 function buildSummary(manifest: OutputManifest, queue: OutputQueue): string {
   const lines: string[] = [];
+  const activeItems = queue.items.filter((item) => item.solidStatus !== 'skip');
+  const implementedItems = activeItems.filter((item) => item.implemented);
+  const remainingItems = activeItems.filter((item) => !item.implemented);
 
   lines.push('# Drizzle Parity Summary');
   lines.push('');
@@ -935,6 +1016,8 @@ function buildSummary(manifest: OutputManifest, queue: OutputQueue): string {
   lines.push(`- Parsed files: ${manifest.totalFiles}`);
   lines.push(`- Parsed tests: ${manifest.totalTests}`);
   lines.push(`- Unique parity cases: ${manifest.totalUniqueCases}`);
+  lines.push(`- Implemented active cases: ${queue.totalImplemented}`);
+  lines.push(`- Remaining active cases: ${queue.totalRemaining}`);
   lines.push('');
   lines.push('## By Status');
   lines.push('');
@@ -954,19 +1037,31 @@ function buildSummary(manifest: OutputManifest, queue: OutputQueue): string {
   lines.push(`| P2 | ${manifest.totalsByPriority.P2} | ${queue.totalsByPriority.P2} |`);
   lines.push(`| P3 | ${manifest.totalsByPriority.P3} | ${queue.totalsByPriority.P3} |`);
   lines.push('');
+  lines.push('## Implementation Progress');
+  lines.push('');
+  lines.push('| Scope | Count |');
+  lines.push('| --- | ---: |');
+  lines.push(`| Active cases | ${activeItems.length} |`);
+  lines.push(`| Implemented | ${implementedItems.length} |`);
+  lines.push(`| Remaining | ${remainingItems.length} |`);
+  lines.push('');
   lines.push('## Suggested Targets');
   lines.push('');
 
-  const targets = new Map<string, number>();
-  for (const item of queue.items) {
-    if (item.solidStatus === 'skip') {
-      continue;
+  const targets = new Map<string, { total: number; implemented: number; remaining: number }>();
+  for (const item of activeItems) {
+    const current = targets.get(item.suggestedTargetFile) ?? { total: 0, implemented: 0, remaining: 0 };
+    current.total += 1;
+    if (item.implemented) {
+      current.implemented += 1;
+    } else {
+      current.remaining += 1;
     }
-    targets.set(item.suggestedTargetFile, (targets.get(item.suggestedTargetFile) ?? 0) + 1);
+    targets.set(item.suggestedTargetFile, current);
   }
 
-  for (const [target, count] of [...targets.entries()].sort((left, right) => left[0].localeCompare(right[0]))) {
-    lines.push(`- \`${target}\`: ${count} unique cases`);
+  for (const [target, counts] of [...targets.entries()].sort((left, right) => left[0].localeCompare(right[0]))) {
+    lines.push(`- \`${target}\`: ${counts.implemented} implemented, ${counts.remaining} remaining (${counts.total} total)`);
   }
 
   lines.push('');
@@ -979,7 +1074,12 @@ function buildSummary(manifest: OutputManifest, queue: OutputQueue): string {
   lines.push('## Notes');
   lines.push('');
   lines.push('- `all-tests.json` keeps every upstream `test()` / `it()` occurrence.');
-  lines.push('- `queue.json` deduplicates repeated dialect variants and is the main implementation queue.');
+  lines.push('- `Unique parity cases` means the deduplicated candidate pool imported from upstream Drizzle tests; it is not the same thing as committed support scope.');
+  lines.push('- `skip` means the case was reviewed and intentionally excluded from the current Solid support surface, usually because it is SQL-engine-specific, driver-specific, or infrastructure-specific.');
+  lines.push('- `Active cases` means `direct + adapted + investigate`; this is the current scope that still matters for implementation tracking.');
+  lines.push('- `Implemented` is measured only within active cases. Do not read this summary as `implemented / total unique candidates`.');
+  lines.push('- `queue.json` is the behavior-level planning ledger; repeated dialect variants and `common` harness wrappers are collapsed into one parity item.');
+  lines.push('- `queue.json` keeps `implemented` and `sourceDedupeKeys` so progress stays explicit without losing source traceability.');
   lines.push('- `tests/integration/css/generated-parity/*.parity.todo.test.ts` emits one `test.todo()` skeleton per non-skip, not-yet-implemented queue item.');
   lines.push('- Queue items marked `direct` are the best first wave for Solid parity implementation.');
   lines.push('- Queue items marked `adapted` or `investigate` still need hand-written fixtures and assertions.');
@@ -989,6 +1089,7 @@ function buildSummary(manifest: OutputManifest, queue: OutputQueue): string {
 
 function writeQueueBoards(outDir: string, queue: QueueItem[]) {
   const boardDir = path.join(outDir, 'boards');
+  fs.rmSync(boardDir, { recursive: true, force: true });
   ensureDir(boardDir);
 
   const grouped = new Map<string, QueueItem[]>();
@@ -1153,10 +1254,26 @@ function writeTodoSuites(queue: QueueItem[]) {
 function main() {
 
   const options = parseArgs(process.argv.slice(2));
-  const sourceRoot = resolveSourceRoot(options.source);
-  const files = walkTsFiles(sourceRoot);
-  const cases = files.flatMap((filePath) => extractCasesFromFile(sourceRoot, filePath));
-  const queueItems = buildQueue(cases);
+  const outDir = path.resolve(options.outDir);
+  const cachedManifestPath = path.resolve(options.manifest ?? path.join(outDir, 'all-tests.json'));
+  const sourceRoot = tryResolveSourceRoot(options.source);
+  const cachedManifest = sourceRoot ? undefined : (fs.existsSync(cachedManifestPath) ? loadCachedManifest(cachedManifestPath) : undefined);
+
+  if (!sourceRoot && !cachedManifest) {
+    throw new Error(
+      `Cannot find Drizzle integration tests under ${path.resolve(options.source)} and no cached manifest at ${cachedManifestPath}. `
+        + 'Pass --source /path/to/drizzle-orm, or regenerate from a valid all-tests.json via --manifest.',
+    );
+  }
+
+  const files = sourceRoot ? walkTsFiles(sourceRoot) : [];
+  const cases = sourceRoot
+    ? files.flatMap((filePath) => extractCasesFromFile(sourceRoot, filePath))
+    : cachedManifest!.cases;
+  const queueItems = buildQueue(cases).map((item) => ({
+    ...item,
+    implemented: isImplementedParityCase(item),
+  }));
 
   const manifestTotalsByStatus: Record<SolidStatus, number> = {
     direct: 0,
@@ -1194,8 +1311,8 @@ function main() {
 
   const manifest: OutputManifest = {
     generatedAt: new Date().toISOString(),
-    sourceRoot,
-    totalFiles: files.length,
+    sourceRoot: sourceRoot ?? cachedManifest!.sourceRoot,
+    totalFiles: sourceRoot ? files.length : cachedManifest!.totalFiles,
     totalTests: cases.length,
     totalUniqueCases: queueItems.length,
     totalsByStatus: manifestTotalsByStatus,
@@ -1205,14 +1322,15 @@ function main() {
 
   const queue: OutputQueue = {
     generatedAt: manifest.generatedAt,
-    sourceRoot,
+    sourceRoot: manifest.sourceRoot,
     totalItems: queueItems.length,
+    totalImplemented: queueItems.filter((item) => item.solidStatus !== 'skip' && item.implemented).length,
+    totalRemaining: queueItems.filter((item) => item.solidStatus !== 'skip' && !item.implemented).length,
     totalsByStatus: queueTotalsByStatus,
     totalsByPriority: queueTotalsByPriority,
     items: queueItems,
   };
 
-  const outDir = path.resolve(options.outDir);
   ensureDir(outDir);
 
   const activeQueueItems = queueItems.filter((item) => item.solidStatus !== 'skip' && !isImplementedParityCase(item));
@@ -1225,6 +1343,9 @@ function main() {
 
   console.log(`Parsed ${manifest.totalTests} tests from ${manifest.totalFiles} files.`);
   console.log(`Unique queue items: ${queue.totalItems}`);
+  if (!sourceRoot) {
+    console.log(`Loaded raw cases from cached manifest: ${cachedManifestPath}`);
+  }
   console.log(`Output directory: ${outDir}`);
 }
 

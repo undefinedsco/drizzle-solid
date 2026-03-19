@@ -1,7 +1,5 @@
 /**
- * Drizzle ORM CRUD Tests
- * Auto-generated from Drizzle ORM SQLite tests
- * Generated on: 2026-03-05T15:20:30.902Z
+ * CRUD behavior across fragment mode and plain-LDP document mode.
  */
 
 import { afterAll, beforeAll, describe, expect, test, vi } from 'vitest';
@@ -11,8 +9,6 @@ import {
   string,
   int,
   eq,
-  and,
-  or,
 } from '../../../src/index';
 import type { SolidDatabase } from '../../../src/driver';
 import type { Session } from '@inrupt/solid-client-authn-node';
@@ -20,21 +16,39 @@ import { buildTestPodUrl, createTestSession, ensureContainer } from './helpers';
 
 const timestamp = Date.now();
 const containerPath = `/drizzle-crud-${timestamp}/`;
+const baseUrl = buildTestPodUrl(containerPath);
 
 vi.setConfig({ testTimeout: 60_000 });
 
 describe('Drizzle ORM CRUD Tests', () => {
   let session: Session;
   let db: SolidDatabase;
+  const fragmentIds = new Set<string>();
+  const documentIds = new Set<string>();
+  const multiVarLocators = new Set<string>();
 
-  // Define test tables
+  const trackFragment = <T extends { id: string }>(record: T): T => {
+    fragmentIds.add(record.id);
+    return record;
+  };
+
+  const trackDocument = <T extends { id: string }>(record: T): T => {
+    documentIds.add(record.id);
+    return record;
+  };
+
+  const trackMultiVar = <T extends { id: string; chatId: string }>(record: T): T => {
+    multiVarLocators.add(`${record.chatId}:${record.id}`);
+    return record;
+  };
+
   const FragmentTable = podTable('FragmentTest', {
     id: string('id').primaryKey().predicate('http://schema.org/identifier'),
     name: string('name').notNull().predicate('http://schema.org/name'),
     value: int('value').predicate('http://schema.org/value'),
   }, {
     type: 'http://schema.org/Thing',
-    base: `${buildTestPodUrl(containerPath)}fragment/index.ttl`,
+    base: `${baseUrl}fragment/index.ttl`,
     subjectTemplate: '#{id}',
   });
 
@@ -44,7 +58,7 @@ describe('Drizzle ORM CRUD Tests', () => {
     value: int('value').predicate('http://schema.org/value'),
   }, {
     type: 'http://schema.org/Thing',
-    base: `${buildTestPodUrl(containerPath)}document/`,
+    base: `${baseUrl}document/`,
     subjectTemplate: '{id}.ttl',
   });
 
@@ -55,7 +69,7 @@ describe('Drizzle ORM CRUD Tests', () => {
     value: int('value').predicate('http://schema.org/value'),
   }, {
     type: 'http://schema.org/Thing',
-    base: `${buildTestPodUrl(containerPath)}multivar/`,
+    base: `${baseUrl}multivar/`,
     subjectTemplate: '{chatId}/{id}.ttl',
   });
 
@@ -69,485 +83,217 @@ describe('Drizzle ORM CRUD Tests', () => {
   }, 120_000);
 
   afterAll(async () => {
-    // Cleanup
+    for (const id of fragmentIds) {
+      await db.deleteByLocator(FragmentTable, { id }).catch(() => undefined);
+    }
+    for (const id of documentIds) {
+      await db.deleteByLocator(DocumentTable, { id }).catch(() => undefined);
+    }
+    for (const locator of multiVarLocators) {
+      const [chatId, id] = locator.split(':', 2);
+      await db.deleteByLocator(MultiVarTable, { chatId, id }).catch(() => undefined);
+    }
   });
 
-  test('select all fields - fragment mode', async () => {
-    // Insert test data
-    await db.insert(FragmentTable).values({
-      id: 'test-1',
-      name: 'Test Item 1',
+  test('fragment mode still supports collection queries', async () => {
+    await db.insert(FragmentTable).values(trackFragment({
+      id: 'fragment-1',
+      name: 'Fragment One',
       value: 100,
-    });
+    }));
 
-    // Select all fields
-    const results = await db.select().from(FragmentTable);
-
-    expect(results).toBeDefined();
-    expect(results.length).toBeGreaterThan(0);
-    expect(results[0]).toHaveProperty('id');
-    expect(results[0]).toHaveProperty('name');
-    expect(results[0]).toHaveProperty('value');
-  });
-
-  test('select all fields - document mode', async () => {
-    // Insert test data
-    await db.insert(DocumentTable).values({
-      id: 'test-1',
-      name: 'Test Item 1',
-      value: 100,
-    });
-
-    // Select all fields
-    const results = await db.select().from(DocumentTable);
-
-    expect(results).toBeDefined();
-    expect(results.length).toBeGreaterThan(0);
-    expect(results[0]).toHaveProperty('id');
-    expect(results[0]).toHaveProperty('name');
-    expect(results[0]).toHaveProperty('value');
-  });
-
-  test('select all fields - multi-var mode', async () => {
-    // Insert test data
-    await db.insert(MultiVarTable).values({
-      id: 'test-1',
-      chatId: 'chat-1',
-      name: 'Test Item 1',
-      value: 100,
-    });
-
-    // Multi-variable templates require all path variables for deterministic lookup
-    const results = await db.select().from(MultiVarTable)
-      .where(and(
-        eq(MultiVarTable.chatId, 'chat-1'),
-        eq(MultiVarTable.id, 'test-1')
-      ));
-
-    expect(results).toBeDefined();
-    expect(results.length).toBe(1);
-    expect(results[0]).toHaveProperty('id', 'test-1');
-    expect(results[0]).toHaveProperty('chatId', 'chat-1');
-    expect(results[0]).toHaveProperty('name', 'Test Item 1');
-    expect(results[0]).toHaveProperty('value', 100);
-  });
-
-  test('select partial fields - fragment mode', async () => {
-    // Insert test data
-    await db.insert(FragmentTable).values({
-      id: 'test-2',
-      name: 'Test Item 2',
-      value: 200,
-    });
-
-    // Select partial fields
-    const results = await db.select({
-      id: FragmentTable.id,
-      name: FragmentTable.name
-    }).from(FragmentTable).where(eq(FragmentTable.id, 'test-2'));
-
-    expect(results).toBeDefined();
-    expect(results.length).toBe(1);
-    expect(results[0]).toHaveProperty('id', 'test-2');
-    expect(results[0]).toHaveProperty('name', 'Test Item 2');
-    expect(results[0]).not.toHaveProperty('value');
-  });
-
-  test('select partial fields - document mode', async () => {
-    // Insert test data
-    await db.insert(DocumentTable).values({
-      id: 'test-2',
-      name: 'Test Item 2',
-      value: 200,
-    });
-
-    // Select partial fields
-    const results = await db.select({
-      id: DocumentTable.id,
-      name: DocumentTable.name
-    }).from(DocumentTable).where(eq(DocumentTable.id, 'test-2'));
-
-    expect(results).toBeDefined();
-    expect(results.length).toBe(1);
-    expect(results[0]).toHaveProperty('id', 'test-2');
-    expect(results[0]).toHaveProperty('name', 'Test Item 2');
-    expect(results[0]).not.toHaveProperty('value');
-  });
-
-  test('insert many + select - fragment mode', async () => {
-    await db.insert(FragmentTable).values([
-      { id: 'bulk-1', name: 'Bulk Item 1', value: 11 },
-      { id: 'bulk-2', name: 'Bulk Item 2', value: 22 },
-    ]);
-
-    const results = await db.select().from(FragmentTable)
-      .where(or(
-        eq(FragmentTable.id, 'bulk-1'),
-        eq(FragmentTable.id, 'bulk-2')
-      ));
-
-    expect(results).toHaveLength(2);
-    expect(results.map((row) => row.id).sort()).toEqual(['bulk-1', 'bulk-2']);
-  });
-
-  test('insert + select - fragment mode', async () => {
-    await db.insert(FragmentTable).values({
-      id: 'single-insert-1',
-      name: 'Single Insert Item',
-      value: 321,
-    });
-
-    const results = await db.select().from(FragmentTable)
-      .where(eq(FragmentTable.id, 'single-insert-1'));
+    const results = await db.select().from(FragmentTable).where(eq(FragmentTable.name, 'Fragment One'));
 
     expect(results).toHaveLength(1);
     expect(results[0]).toMatchObject({
-      id: 'single-insert-1',
-      name: 'Single Insert Item',
-      value: 321,
-    });
-  });
-
-  test('insert many + select - document mode', async () => {
-    await db.insert(DocumentTable).values([
-      { id: 'doc-bulk-1', name: 'Document Bulk 1', value: 101 },
-      { id: 'doc-bulk-2', name: 'Document Bulk 2', value: 202 },
-    ]);
-
-    const results = await db.select().from(DocumentTable)
-      .where(or(
-        eq(DocumentTable.id, 'doc-bulk-1'),
-        eq(DocumentTable.id, 'doc-bulk-2')
-      ));
-
-    expect(results).toHaveLength(2);
-    expect(results.map((row) => row.id).sort()).toEqual(['doc-bulk-1', 'doc-bulk-2']);
-  });
-
-  test('insert many + select - multi-var mode', async () => {
-    await db.insert(MultiVarTable).values([
-      { id: 'multi-bulk-1', chatId: 'chat-bulk', name: 'Multi Bulk 1', value: 501 },
-      { id: 'multi-bulk-2', chatId: 'chat-bulk', name: 'Multi Bulk 2', value: 502 },
-    ]);
-
-    const results = await db.select().from(MultiVarTable)
-      .where(eq(MultiVarTable.chatId, 'chat-bulk'));
-
-    expect(results).toHaveLength(2);
-    expect(results.map((row) => row.id).sort()).toEqual(['multi-bulk-1', 'multi-bulk-2']);
-  });
-
-  test('select partial fields - multi-var mode', async () => {
-    // Insert test data
-    await db.insert(MultiVarTable).values({
-      id: 'test-2',
-      chatId: 'chat-1',
-      name: 'Test Item 2',
-      value: 200,
-    });
-
-    // Select partial fields
-    const results = await db.select({
-      id: MultiVarTable.id,
-      name: MultiVarTable.name
-    }).from(MultiVarTable).where(and(
-      eq(MultiVarTable.chatId, 'chat-1'),
-      eq(MultiVarTable.id, 'test-2')
-    ));
-
-    expect(results).toBeDefined();
-    expect(results.length).toBe(1);
-    expect(results[0]).toHaveProperty('id', 'test-2');
-    expect(results[0]).toHaveProperty('name', 'Test Item 2');
-    expect(results[0]).not.toHaveProperty('value');
-  });
-
-  test('insert single row - fragment mode', async () => {
-    // Insert single row
-    await db.insert(FragmentTable).values({
-      id: 'insert-1',
-      name: 'Inserted Item',
-      value: 300,
-    });
-
-    // Verify insertion
-    const results = await db.select().from(FragmentTable).where(eq(FragmentTable.id, 'insert-1'));
-
-    expect(results).toBeDefined();
-    expect(results.length).toBe(1);
-    expect(results[0]).toHaveProperty('id', 'insert-1');
-    expect(results[0]).toHaveProperty('name', 'Inserted Item');
-    expect(results[0]).toHaveProperty('value', 300);
-  });
-
-  test('insert single row - document mode', async () => {
-    // Insert single row
-    await db.insert(DocumentTable).values({
-      id: 'insert-1',
-      name: 'Inserted Item',
-      value: 300,
-    });
-
-    // Verify insertion
-    const results = await db.select().from(DocumentTable).where(eq(DocumentTable.id, 'insert-1'));
-
-    expect(results).toBeDefined();
-    expect(results.length).toBe(1);
-    expect(results[0]).toHaveProperty('id', 'insert-1');
-    expect(results[0]).toHaveProperty('name', 'Inserted Item');
-    expect(results[0]).toHaveProperty('value', 300);
-  });
-
-  test('insert single row - multi-var mode', async () => {
-    // Insert single row
-    await db.insert(MultiVarTable).values({
-      id: 'insert-1',
-      chatId: 'chat-2',
-      name: 'Inserted Item',
-      value: 300,
-    });
-
-    // Verify insertion
-    const results = await db.select().from(MultiVarTable)
-      .where(and(
-        eq(MultiVarTable.chatId, 'chat-2'),
-        eq(MultiVarTable.id, 'insert-1')
-      ));
-
-    expect(results).toBeDefined();
-    expect(results.length).toBe(1);
-    expect(results[0]).toHaveProperty('id', 'insert-1');
-    expect(results[0]).toHaveProperty('chatId', 'chat-2');
-    expect(results[0]).toHaveProperty('name', 'Inserted Item');
-    expect(results[0]).toHaveProperty('value', 300);
-  });
-
-  test('insert multiple rows - fragment mode', async () => {
-    // Insert multiple rows
-    await db.insert(FragmentTable).values([
-      { id: 'multi-1', name: 'Multi Item 1', value: 400 },
-      { id: 'multi-2', name: 'Multi Item 2', value: 500 },
-    ]);
-
-    // Verify insertions
-    const results = await db.select().from(FragmentTable)
-      .where(or(
-        eq(FragmentTable.id, 'multi-1'),
-        eq(FragmentTable.id, 'multi-2')
-      ));
-
-    expect(results).toBeDefined();
-    expect(results.length).toBe(2);
-  });
-
-  test('insert multiple rows - document mode', async () => {
-    // Insert multiple rows
-    await db.insert(DocumentTable).values([
-      { id: 'multi-1', name: 'Multi Item 1', value: 400 },
-      { id: 'multi-2', name: 'Multi Item 2', value: 500 },
-    ]);
-
-    // Verify insertions
-    const results = await db.select().from(DocumentTable)
-      .where(or(
-        eq(DocumentTable.id, 'multi-1'),
-        eq(DocumentTable.id, 'multi-2')
-      ));
-
-    expect(results).toBeDefined();
-    expect(results.length).toBe(2);
-  });
-
-  test('insert multiple rows - multi-var mode', async () => {
-    // Insert multiple rows
-    await db.insert(MultiVarTable).values([
-      { id: 'multi-1', chatId: 'chat-3', name: 'Multi Item 1', value: 400 },
-      { id: 'multi-2', chatId: 'chat-3', name: 'Multi Item 2', value: 500 },
-    ]);
-
-    // Verify insertions
-    const results = await db.select().from(MultiVarTable)
-      .where(and(
-        eq(MultiVarTable.chatId, 'chat-3'),
-        or(
-          eq(MultiVarTable.id, 'multi-1'),
-          eq(MultiVarTable.id, 'multi-2')
-        )
-      ));
-
-    expect(results).toBeDefined();
-    expect(results.length).toBe(2);
-  });
-
-  test('update with where - fragment mode', async () => {
-    // Insert test data
-    await db.insert(FragmentTable).values({
-      id: 'update-1',
-      name: 'Original Name',
-      value: 600,
-    });
-
-    // Update
-    await db.update(FragmentTable)
-      .set({ name: 'Updated Name' })
-      .where(eq(FragmentTable.id, 'update-1'));
-
-    // Verify update
-    const results = await db.select().from(FragmentTable)
-      .where(eq(FragmentTable.id, 'update-1'));
-
-    expect(results).toBeDefined();
-    expect(results.length).toBe(1);
-    expect(results[0]).toHaveProperty('name', 'Updated Name');
-  });
-
-  test('update with where - document mode', async () => {
-    // Insert test data
-    await db.insert(DocumentTable).values({
-      id: 'update-1',
-      name: 'Original Name',
-      value: 600,
-    });
-
-    // Update
-    await db.update(DocumentTable)
-      .set({ name: 'Updated Name' })
-      .where(eq(DocumentTable.id, 'update-1'));
-
-    // Verify update
-    const results = await db.select().from(DocumentTable)
-      .where(eq(DocumentTable.id, 'update-1'));
-
-    expect(results).toBeDefined();
-    expect(results.length).toBe(1);
-    expect(results[0]).toHaveProperty('name', 'Updated Name');
-  });
-
-  test('update with where - multi-var mode', async () => {
-    // Insert test data
-    await db.insert(MultiVarTable).values({
-      id: 'update-1',
-      chatId: 'chat-4',
-      name: 'Original Name',
-      value: 600,
-    });
-
-    // Update
-    await db.update(MultiVarTable)
-      .set({ name: 'Updated Name' })
-      .where(and(
-        eq(MultiVarTable.chatId, 'chat-4'),
-        eq(MultiVarTable.id, 'update-1')
-      ));
-
-    // Verify update
-    const results = await db.select().from(MultiVarTable)
-      .where(and(
-        eq(MultiVarTable.chatId, 'chat-4'),
-        eq(MultiVarTable.id, 'update-1')
-      ));
-
-    expect(results).toBeDefined();
-    expect(results.length).toBe(1);
-    expect(results[0]).toHaveProperty('name', 'Updated Name');
-  });
-
-  test('delete with where - fragment mode', async () => {
-    // Insert test data
-    await db.insert(FragmentTable).values({
-      id: 'delete-1',
-      name: 'To Be Deleted',
-      value: 700,
-    });
-
-    // Delete
-    await db.delete(FragmentTable)
-      .where(eq(FragmentTable.id, 'delete-1'));
-
-    // Verify deletion
-    const results = await db.select().from(FragmentTable)
-      .where(eq(FragmentTable.id, 'delete-1'));
-
-    expect(results).toBeDefined();
-    expect(results.length).toBe(0);
-  });
-
-  test('delete with where - document mode', async () => {
-    // Insert test data
-    await db.insert(DocumentTable).values({
-      id: 'delete-1',
-      name: 'To Be Deleted',
-      value: 700,
-    });
-
-    // Delete
-    await db.delete(DocumentTable)
-      .where(eq(DocumentTable.id, 'delete-1'));
-
-    // Verify deletion
-    const results = await db.select().from(DocumentTable)
-      .where(eq(DocumentTable.id, 'delete-1'));
-
-    expect(results).toBeDefined();
-    expect(results.length).toBe(0);
-  });
-
-  test('delete with where - multi-var mode', async () => {
-    // Insert test data
-    await db.insert(MultiVarTable).values({
-      id: 'delete-1',
-      chatId: 'chat-5',
-      name: 'To Be Deleted',
-      value: 700,
-    });
-
-    // Delete
-    await db.delete(MultiVarTable)
-      .where(and(
-        eq(MultiVarTable.chatId, 'chat-5'),
-        eq(MultiVarTable.id, 'delete-1')
-      ));
-
-    // Verify deletion
-    const results = await db.select().from(MultiVarTable)
-      .where(and(
-        eq(MultiVarTable.chatId, 'chat-5'),
-        eq(MultiVarTable.id, 'delete-1')
-      ));
-
-    expect(results).toBeDefined();
-    expect(results.length).toBe(0);
-  });
-
-  test('update multiple fields - fragment mode', async () => {
-    await db.insert(FragmentTable).values({
-      id: 'update-multi-1',
-      name: 'Original',
+      id: 'fragment-1',
+      name: 'Fragment One',
       value: 100,
     });
-
-    await db.update(FragmentTable)
-      .set({ name: 'Updated', value: 200 })
-      .where(eq(FragmentTable.id, 'update-multi-1'));
-
-    const results = await db.select().from(FragmentTable)
-      .where(eq(FragmentTable.id, 'update-multi-1'));
-
-    expect(results[0].name).toBe('Updated');
-    expect(results[0].value).toBe(200);
   });
 
-  test('insert and select with null value', async () => {
-    await db.insert(FragmentTable).values({
-      id: 'null-test-1',
-      name: 'Null Test',
-      value: null,
+  test('document mode requires exact locator reads', async () => {
+    await db.insert(DocumentTable).values(trackDocument({
+      id: 'document-1',
+      name: 'Document One',
+      value: 200,
+    }));
+
+    const row = await db.findByLocator(DocumentTable, { id: 'document-1' });
+    expect(row).toMatchObject({
+      id: 'document-1',
+      name: 'Document One',
+      value: 200,
+    });
+  });
+
+  test('multi-variable document mode requires exact locator reads', async () => {
+    await db.insert(MultiVarTable).values(trackMultiVar({
+      id: 'multi-1',
+      chatId: 'chat-1',
+      name: 'Multi One',
+      value: 300,
+    }));
+
+    const row = await db.findByLocator(MultiVarTable, { chatId: 'chat-1', id: 'multi-1' });
+    expect(row).toMatchObject({
+      id: 'multi-1',
+      chatId: 'chat-1',
+      name: 'Multi One',
+      value: 300,
+    });
+  });
+
+  test('document mode plain-LDP collection reads should throw', async () => {
+    await expect(db.select().from(DocumentTable)).rejects.toThrow(
+      /Document-mode collection queries over plain LDP are not supported/i,
+    );
+
+    await expect(
+      db.select().from(DocumentTable).where(eq(DocumentTable.name, 'Document One')),
+    ).rejects.toThrow(/Document-mode collection queries over plain LDP are not supported/i);
+  });
+
+  test('multi-variable document mode plain-LDP collection reads should throw', async () => {
+    await expect(
+      db.select().from(MultiVarTable).where(eq(MultiVarTable.chatId, 'chat-1')),
+    ).rejects.toThrow(/Document-mode collection queries over plain LDP are not supported/i);
+  });
+
+  test('fragment exact APIs work alongside collection reads', async () => {
+    await db.insert(FragmentTable).values(trackFragment({
+      id: 'fragment-exact-1',
+      name: 'Fragment Exact',
+      value: 400,
+    }));
+
+    const row = await db.findByLocator(FragmentTable, { id: 'fragment-exact-1' });
+    expect(row).toMatchObject({
+      id: 'fragment-exact-1',
+      name: 'Fragment Exact',
+      value: 400,
+    });
+  });
+
+  test('document exact reads can also use full IRI', async () => {
+    await db.insert(DocumentTable).values(trackDocument({
+      id: 'document-iri-1',
+      name: 'Document Iri',
+      value: 500,
+    }));
+
+    const iri = `${baseUrl}document/document-iri-1.ttl`;
+    const row = await db.findByIri(DocumentTable, iri);
+
+    expect(row).toMatchObject({
+      id: 'document-iri-1',
+      name: 'Document Iri',
+      value: 500,
+      '@id': iri,
+    });
+  });
+
+  test('fragment updates use exact-target APIs', async () => {
+    await db.insert(FragmentTable).values(trackFragment({
+      id: 'fragment-update-1',
+      name: 'Before',
+      value: 10,
+    }));
+
+    await db.updateByLocator(FragmentTable, { id: 'fragment-update-1' }, {
+      name: 'After',
+      value: 20,
     });
 
-    const results = await db.select().from(FragmentTable)
-      .where(eq(FragmentTable.id, 'null-test-1'));
+    const row = await db.findByLocator(FragmentTable, { id: 'fragment-update-1' });
+    expect(row).toMatchObject({
+      id: 'fragment-update-1',
+      name: 'After',
+      value: 20,
+    });
+  });
 
-    expect(results).toBeDefined();
-    expect(results[0].value).toBeUndefined();
+  test('document updates use exact-target APIs', async () => {
+    await db.insert(DocumentTable).values(trackDocument({
+      id: 'document-update-1',
+      name: 'Before',
+      value: 10,
+    }));
+
+    await db.updateByLocator(DocumentTable, { id: 'document-update-1' }, {
+      name: 'After',
+      value: 20,
+    });
+
+    const row = await db.findByLocator(DocumentTable, { id: 'document-update-1' });
+    expect(row).toMatchObject({
+      id: 'document-update-1',
+      name: 'After',
+      value: 20,
+    });
+  });
+
+  test('multi-variable updates use exact-target APIs', async () => {
+    await db.insert(MultiVarTable).values(trackMultiVar({
+      id: 'multi-update-1',
+      chatId: 'chat-update',
+      name: 'Before',
+      value: 10,
+    }));
+
+    await db.updateByLocator(MultiVarTable, { chatId: 'chat-update', id: 'multi-update-1' }, {
+      name: 'After',
+      value: 20,
+    });
+
+    const row = await db.findByLocator(MultiVarTable, { chatId: 'chat-update', id: 'multi-update-1' });
+    expect(row).toMatchObject({
+      id: 'multi-update-1',
+      chatId: 'chat-update',
+      name: 'After',
+      value: 20,
+    });
+  });
+
+  test('exact-target deletes remove only the addressed row', async () => {
+    await db.insert(FragmentTable).values(trackFragment({
+      id: 'fragment-delete-1',
+      name: 'Delete Me',
+      value: 1,
+    }));
+    await db.insert(DocumentTable).values(trackDocument({
+      id: 'document-delete-1',
+      name: 'Delete Me',
+      value: 2,
+    }));
+    await db.insert(MultiVarTable).values(trackMultiVar({
+      id: 'multi-delete-1',
+      chatId: 'chat-delete',
+      name: 'Delete Me',
+      value: 3,
+    }));
+
+    await db.deleteByLocator(FragmentTable, { id: 'fragment-delete-1' });
+    await db.deleteByLocator(DocumentTable, { id: 'document-delete-1' });
+    await db.deleteByLocator(MultiVarTable, { chatId: 'chat-delete', id: 'multi-delete-1' });
+
+    fragmentIds.delete('fragment-delete-1');
+    documentIds.delete('document-delete-1');
+    multiVarLocators.delete('chat-delete:multi-delete-1');
+
+    expect(await db.findByLocator(FragmentTable, { id: 'fragment-delete-1' })).toBeNull();
+    expect(await db.findByLocator(DocumentTable, { id: 'document-delete-1' })).toBeNull();
+    expect(await db.findByLocator(MultiVarTable, { chatId: 'chat-delete', id: 'multi-delete-1' })).toBeNull();
+  });
+
+  test('fragment mode preserves null/undefined roundtrip behavior', async () => {
+    await db.insert(FragmentTable).values(trackFragment({
+      id: 'fragment-null-1',
+      name: 'Null Test',
+      value: null,
+    }));
+
+    const row = await db.findByLocator(FragmentTable, { id: 'fragment-null-1' });
+    expect(row?.value).toBeUndefined();
   });
 });

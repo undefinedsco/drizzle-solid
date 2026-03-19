@@ -107,7 +107,7 @@ describe('Drizzle ORM FEATURES Tests', () => {
     ]);
 
     const results = await db.select().from(TestTable)
-      .where(inArray(TestTable.id, ['feature-order-1', 'feature-order-2']))
+      .where(inArray(TestTable.name, ['Omega', 'Eta']))
       .orderBy(asc(TestTable.name));
 
     expect(results).toHaveLength(2);
@@ -121,7 +121,7 @@ describe('Drizzle ORM FEATURES Tests', () => {
     ]);
 
     const results = await db.select().from(TestTable)
-      .where(inArray(TestTable.id, ['feature-order-3', 'feature-order-4']))
+      .where(inArray(TestTable.name, ['Iota', 'Kappa']))
       .orderBy(desc(TestTable.value));
 
     expect(results).toHaveLength(2);
@@ -221,7 +221,7 @@ describe('Drizzle ORM FEATURES Tests', () => {
     ]);
 
     const results = await db.select({ value: TestTable.value }).from(TestTable)
-      .where(inArray(TestTable.id, ['distinct-1', 'distinct-2', 'distinct-3']))
+      .where(inArray(TestTable.name, ['Dup One', 'Dup Two', 'Dup Three']))
       .distinct()
       .orderBy(asc(TestTable.value));
 
@@ -235,7 +235,10 @@ describe('Drizzle ORM FEATURES Tests', () => {
     ]);
 
     const results = await db.select({ name: TestTable.name, value: TestTable.value }).from(TestTable)
-      .where(inArray(TestTable.id, ['distinct-4', 'distinct-5']))
+      .where(and(
+        eq(TestTable.name, 'Same Name'),
+        eq(TestTable.value, 400),
+      ))
       .distinct();
 
     expect(results).toHaveLength(1);

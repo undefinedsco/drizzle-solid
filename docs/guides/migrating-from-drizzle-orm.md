@@ -190,18 +190,24 @@ await client.collection(posts).create({
 ### Read list / filter
 
 ```ts
-const rows = await db.select().from(posts).where({ id: 'post-1' });
+const rows = await db.select().from(posts).where({ title: 'Hello Solid' });
 ```
 
 或者：
 
 ```ts
 const rows = await client.collection(posts).list({
-  where: { id: 'post-1' },
+  where: { title: 'Hello Solid' },
 });
 ```
 
 ### Read exact entity
+
+当你知道模板变量时，用 exact-target API：
+
+```ts
+const row = await db.findByLocator(posts, { id: 'post-1' });
+```
 
 当你已经有完整 IRI 时，应该把它当成真正的身份：
 
@@ -250,6 +256,39 @@ subjectTemplate: '{chatId}/messages.ttl#{id}'
 
 - 列表页 / 检索页：继续走 `select().where(...)` 或集合读取都可以
 - 详情页 / 精确变更：优先拿到 `@id`，按精确目标写
+
+## 多变量 join 也不是 SQL 主键 join
+
+当 `subjectTemplate` 是多变量时，例如：
+
+```ts
+subjectTemplate: '{chatId}/messages.ttl#{id}'
+```
+
+就不要再默认认为：
+
+```ts
+eq(Post.messageId, Message.id)
+```
+
+已经足够表达右表目标。
+
+在 Solid 里，这只给了局部 `id`，没有给出完整 locator。正确迁移方式是：
+
+```ts
+leftJoin(Message, and(
+  eq(Post.messageId, Message.id),
+  eq(Post.chatId, Message.chatId),
+))
+```
+
+或者直接让关系字段保存完整 IRI。
+
+这背后的通用规则是：
+
+- 集合读取可以是范围驱动
+- 但一旦语义进入 exact-target 路径，执行器应保持精确，或者直接失败
+- 不要把 under-specified join 伪装成“库会帮你扫描补齐”
 
 ## Raw SQL 迁移
 

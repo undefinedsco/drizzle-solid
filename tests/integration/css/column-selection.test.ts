@@ -62,7 +62,7 @@ describe('Column Selection in SPARQL', () => {
       const records = await db.select().from(testTable).execute();
       for (const record of records) {
         if (record.id) {
-          await db.delete(testTable).where({ id: record.id }).execute();
+          await db.deleteByLocator(testTable, { id: record.id });
         }
       }
     } catch (e) {

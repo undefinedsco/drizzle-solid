@@ -137,9 +137,10 @@ describe('CSS integration: Notifications', () => {
       await new Promise(resolve => setTimeout(resolve, 1000));
 
       // 更新数据
-      await db.update(testTable)
-        .set({ name: 'After Update', value: 300 })
-        .where({ id: updateId });
+      await db.updateByLocator(testTable, { id: updateId }, {
+        name: 'After Update',
+        value: 300,
+      });
 
       const timeoutPromise = new Promise<null>((resolve) => 
         setTimeout(() => resolve(null), 10000)
@@ -186,7 +187,7 @@ describe('CSS integration: Notifications', () => {
       await new Promise(resolve => setTimeout(resolve, 1000));
 
       // 删除数据
-      await db.delete(testTable).where({ id: deleteId });
+      await db.deleteByLocator(testTable, { id: deleteId });
 
       const timeoutPromise = new Promise<null>((resolve) => 
         setTimeout(() => resolve(null), 10000)
@@ -349,9 +350,10 @@ describe('CSS integration: Notifications', () => {
       await new Promise(resolve => setTimeout(resolve, 1000));
 
       // 更新数据
-      await db.update(testTable)
-        .set({ name: 'After SSE Update', value: 300 })
-        .where({ id: updateId });
+      await db.updateByLocator(testTable, { id: updateId }, {
+        name: 'After SSE Update',
+        value: 300,
+      });
 
       const timeoutPromise = new Promise<null>((resolve) => 
         setTimeout(() => resolve(null), 10000)
@@ -398,7 +400,7 @@ describe('CSS integration: Notifications', () => {
       await new Promise(resolve => setTimeout(resolve, 1000));
 
       // 删除数据
-      await db.delete(testTable).where({ id: deleteId });
+      await db.deleteByLocator(testTable, { id: deleteId });
 
       const timeoutPromise = new Promise<null>((resolve) => 
         setTimeout(() => resolve(null), 10000)

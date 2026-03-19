@@ -17,18 +17,18 @@ export async function findByIRI<TTable extends GenericPodTable>(
   table: TTable,
   iri: string
 ): Promise<InferTableData<TTable> | null> {
-  const session = isPodDatabase(dbOrSession)
-    ? (dbOrSession as PodDatabase).session
-    : (dbOrSession as PodAsyncSession);
+  if (!iri || (typeof iri === 'string' && !iri.includes('://'))) {
+    throw new Error('findByIRI requires an absolute IRI. Use findByLocator() for template-based exact lookups.');
+  }
 
-  const where = iri.includes('://')
-    ? { '@id': iri }
-    : { id: iri };
+  if (isPodDatabase(dbOrSession)) {
+    return await dbOrSession.findByIri(table, iri);
+  }
 
-  const rows = await session
+  const rows = await dbOrSession
     .select()
     .from(table)
-    .where(where)
+    .whereByIri(iri)
     .limit(1);
 
   return rows[0] ?? null;

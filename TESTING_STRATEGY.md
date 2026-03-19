@@ -1,5 +1,9 @@
 # Testing Strategy
 
+> Historical note: this file is kept as an older workflow snapshot, not the current testing policy.
+>
+> The canonical testing guide is `docs/guides/testing.md`. If this file disagrees with maintained tests, public docs, or current support scope, follow `docs/guides/testing.md`.
+
 ## Suite Layout
 - `tests/unit/**`: fast TypeScript unit coverage for builders, parsers, and utilities.
 - `tests/integration/css/**`: end-to-end flows against a local Community Solid Server (CSS) booted via `jest.global-setup.js`.

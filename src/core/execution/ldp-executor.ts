@@ -60,24 +60,9 @@ export class LdpExecutor {
   ): Promise<any[]> {
     const insertTriples: string[] = [];
 
-    // DEBUG: Log insert operation details
-    console.log('[DEBUG executeInsert]', {
-      tableName: table.config?.name,
-      resourceUrl,
-      rowCount: rows.length,
-      template: table.config?.subjectTemplate,
-      base: table.config?.base,
-    });
-
     rows.forEach((row, idx) => {
-      // DEBUG: Log row data
-      console.log(`[DEBUG executeInsert] Row ${idx}:`, JSON.stringify(row));
-
       // 使用 SubjectResolver 生成 URI
       const subject = this.uriResolver.resolveSubject(table, row, idx);
-
-      // DEBUG: Log generated subject URI
-      console.log(`[DEBUG executeInsert] Generated subject URI: ${subject}`);
 
       // 1. rdf:type
       const typeTriple = this.tripleBuilder.buildTypeTriple(subject, table.config.type as string);
@@ -104,18 +89,14 @@ export class LdpExecutor {
     });
 
     if (insertTriples.length === 0) {
-      console.log('[DEBUG executeInsert] No triples to insert, returning empty');
       return [];
     }
 
     const mode = this.uriResolver.getResourceMode(table);
-    console.log(`[DEBUG executeInsert] Mode for table ${table.config?.name}: ${mode}`);
 
     // Document Mode: 每条记录写入各自的文件
     // 但如果多条记录共享同一个资源 URL（如同一天的 messages.ttl），则合并写入
     if (mode === 'document') {
-      console.log('[DEBUG executeInsert] Entering Document mode branch');
-
       // 按 resourceUrl 分组收集三元组
       const resourceTriples = new Map<string, string[]>();
 
@@ -163,8 +144,6 @@ export class LdpExecutor {
         if (resourceExists) {
           // 资源已存在，使用 SPARQL UPDATE 追加三元组
           const sparql = `INSERT DATA {\n${triples.join('\n')}\n}`;
-          console.log(`[DEBUG executeInsert] Document mode PATCH to: ${docResourceUrl}`);
-          console.log(`[DEBUG executeInsert] Triples being added:\n${triples.join('\n')}`);
 
           response = await this.fetchFn(docResourceUrl, {
             method: 'PATCH',
@@ -174,8 +153,6 @@ export class LdpExecutor {
         } else {
           // 资源不存在，使用 PUT 创建
           const body = triples.join('\n');
-          console.log(`[DEBUG executeInsert] Document mode PUT to: ${docResourceUrl}`);
-          console.log(`[DEBUG executeInsert] Triples being stored:\n${body}`);
 
           response = await this.fetchFn(docResourceUrl, {
             method: 'PUT',

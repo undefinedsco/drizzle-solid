@@ -439,6 +439,139 @@ describe('resolveSelectSources() - multi-variable templates', () => {
       'http://localhost:3000/test/.data/items/item-123.ttl',
     ]);
   });
+
+  it('should recognize alias-qualified exact @id conditions', async () => {
+    const resolver = new DocumentResourceResolver('http://localhost:3000/test/');
+    const table = podTable('messages', {
+      id: id(),
+      chatId: string('chatId').predicate('https://schema.org/chatId'),
+      content: string('content').predicate('https://schema.org/text'),
+    }, {
+      base: '/.data/messages/',
+      subjectTemplate: '{chatId}/messages.ttl#{id}',
+      type: 'https://example.org/Message',
+      namespace: ns,
+    });
+
+    const condition = {
+      type: 'binary_expr',
+      left: 'messages.@id',
+      operator: '=',
+      right: 'http://localhost:3000/test/.data/messages/chat-1/messages.ttl#msg-123',
+    };
+
+    const sources = await resolver.resolveSelectSources(
+      table,
+      'http://localhost:3000/test/.data/messages/',
+      condition
+    );
+
+    expect(sources).toEqual([
+      'http://localhost:3000/test/.data/messages/chat-1/messages.ttl',
+    ]);
+  });
+
+  it('should recognize alias-qualified template variables', async () => {
+    const resolver = new DocumentResourceResolver('http://localhost:3000/test/');
+    const table = podTable('threads', {
+      id: id(),
+      chatId: string('chatId').predicate('https://schema.org/chatId'),
+      content: string('content').predicate('https://schema.org/text'),
+    }, {
+      base: '/.data/chats/',
+      subjectTemplate: '{chatId}/index.ttl#{id}',
+      type: 'https://example.org/Thread',
+      namespace: ns,
+    });
+
+    const condition = {
+      type: 'logical_expr',
+      operator: 'AND',
+      expressions: [
+        {
+          type: 'binary_expr',
+          left: 'threads.id',
+          operator: '=',
+          right: 'thread_abc123'
+        },
+        {
+          type: 'binary_expr',
+          left: 'threads.chatId',
+          operator: '=',
+          right: 'chat1'
+        }
+      ]
+    };
+
+    const sources = await resolver.resolveSelectSources(
+      table,
+      'http://localhost:3000/test/.data/chats/',
+      condition
+    );
+
+    expect(sources).toEqual([
+      'http://localhost:3000/test/.data/chats/chat1/index.ttl',
+    ]);
+  });
+
+  it('should reject non-exact collection reads in document mode LDP', async () => {
+    const resolver = new DocumentResourceResolver('http://localhost:3000/test/');
+    const table = podTable('messages', {
+      id: id(),
+      chatId: string('chatId').predicate('https://schema.org/chatId'),
+      content: string('content').predicate('https://schema.org/text'),
+    }, {
+      base: '/.data/messages/',
+      subjectTemplate: '{chatId}/messages.ttl#{id}',
+      type: 'https://example.org/Message',
+      namespace: ns,
+    });
+
+    const condition = {
+      type: 'binary_expr',
+      left: { type: 'column_ref', name: 'chatId' },
+      operator: '=',
+      right: 'chat-1',
+    };
+
+    await expect(
+      resolver.resolveSelectSources(
+        table,
+        'http://localhost:3000/test/.data/messages/',
+        condition,
+      )
+    ).rejects.toThrow(/Document-mode collection queries over plain LDP are not supported/i);
+  });
+
+  it('should reject non-exact collection mutations in document mode LDP', async () => {
+    const resolver = new DocumentResourceResolver('http://localhost:3000/test/');
+    const table = podTable('messages', {
+      id: id(),
+      chatId: string('chatId').predicate('https://schema.org/chatId'),
+      content: string('content').predicate('https://schema.org/text'),
+    }, {
+      base: '/.data/messages/',
+      subjectTemplate: '{chatId}/messages.ttl#{id}',
+      type: 'https://example.org/Message',
+      namespace: ns,
+    });
+
+    const condition = {
+      type: 'binary_expr',
+      left: { type: 'column_ref', name: 'chatId' },
+      operator: '=',
+      right: 'chat-1',
+    };
+
+    await expect(
+      resolver.resolveSubjectsForMutation(
+        table,
+        condition,
+        async () => [],
+        async () => [],
+      )
+    ).rejects.toThrow(/Document-mode collection mutations over plain LDP are not supported/i);
+  });
 });
 
 describe('Edge cases', () => {

@@ -3,11 +3,12 @@
  *
  * 展示多变量 subjectTemplate 的使用：
  * 1. 按 chatId 分区存储消息
- * 2. 三种查询方式：完整 URI、所有变量、部分变量
- * 3. 设计理念和最佳实践
+ * 2. 区分集合读取与精确定位
+ * 3. 多变量 join 需要完整 locator
+ * 4. 设计理念和最佳实践
  */
 
-import { pod, podTable, string, datetime, eq, and } from 'drizzle-solid';
+import { pod, podTable, string, datetime, eq, and, drizzle, asc } from 'drizzle-solid';
 import { Session } from '@inrupt/solid-client-authn-node';
 import { config as loadEnv } from 'dotenv';
 import { v4 as uuid } from 'uuid';
@@ -49,23 +50,39 @@ function getPodBaseUrl(session: Session): string {
 async function run(providedSession?: Session) {
   const session = providedSession || await getAuthenticatedSession();
   const podBase = getPodBaseUrl(session);
+  const exampleBase = `${podBase}data/examples/${uuid()}/`;
   console.log(`Connected to Pod: ${podBase}`);
 
-  const Message = podTable('Message', {
+  const MessagesTable = podTable('ExampleMessages', {
     id: string('id').primaryKey(),
     chatId: string('chatId').predicate('http://example.org/chatId'),
     content: string('content').predicate('http://schema.org/text'),
     timestamp: datetime('timestamp').predicate('http://schema.org/dateCreated'),
   }, {
-    base: `${podBase}data/chats/`,
+    base: `${exampleBase}chats/`,
+    sparqlEndpoint: `${exampleBase}chats/-/sparql`,
     subjectTemplate: '{chatId}/messages.ttl#{id}',
     type: 'http://schema.org/Message',
   });
 
-  const client = pod(session);
-  await client.init(Message);
+  const PostsTable = podTable('ExamplePosts', {
+    id: string('id').primaryKey(),
+    chatId: string('chatId').predicate('http://schema.org/isPartOf'),
+    title: string('title').predicate('http://schema.org/headline').notNull(),
+    messageId: string('messageId').predicate('http://schema.org/identifier'),
+  }, {
+    base: `${exampleBase}posts/`,
+    sparqlEndpoint: `${exampleBase}posts/-/sparql`,
+    subjectTemplate: '{id}.ttl',
+    type: 'http://schema.org/Article',
+  });
 
-  const messages = client.collection(Message);
+  const client = pod(session);
+  await client.init(MessagesTable);
+  await client.init(PostsTable);
+
+  const messages = client.collection(MessagesTable);
+  const db = drizzle(session);
 
   console.log('\n=== 1. 插入数据到不同的 chat ===');
 
@@ -96,9 +113,9 @@ async function run(providedSession?: Session) {
   });
   console.log(`✅ Inserted message to chat-2: ${msg3Id}`);
 
-  console.log('\n=== 2. 查询方式 1: 提供部分变量（查询某个 chat 的所有消息）===');
+  console.log('\n=== 2. 显式集合读取：按 chat 分区读取消息 ===');
   const chat1Messages = await messages.list({
-    where: eq(Message.chatId, 'chat-1'),
+    where: eq(MessagesTable.chatId, 'chat-1'),
   });
 
   console.log(`Found ${chat1Messages.length} messages in chat-1:`);
@@ -106,32 +123,29 @@ async function run(providedSession?: Session) {
     console.log(`  - [${msg.timestamp}] ${msg.content}`);
   });
 
-  console.log('\n=== 3. 查询方式 2: 提供所有变量（精确查询）===');
-  const exactMessage = await messages.list({
-    where: and(
-      eq(Message.id, msg1Id),
-      eq(Message.chatId, 'chat-1'),
-    ),
-    limit: 1,
+  console.log('\n=== 3. 精确读取：提供完整 locator ===');
+  const exactMessage = await db.findByLocator(MessagesTable, {
+    id: msg1Id,
+    chatId: 'chat-1',
   });
 
   console.log('Found exact message:');
-  console.log(`  - ID: ${exactMessage[0].id}`);
-  console.log(`  - Content: ${exactMessage[0].content}`);
+  console.log(`  - ID: ${exactMessage?.id}`);
+  console.log(`  - Content: ${exactMessage?.content}`);
 
-  console.log('\n=== 4. 查询方式 3: 使用完整 URI（最高效）===');
-  const fullUri = `${podBase}data/chats/chat-1/messages.ttl#${msg1Id}`;
+  console.log('\n=== 4. 精确读取：使用完整 IRI ===');
+  const fullUri = `${exampleBase}chats/chat-1/messages.ttl#${msg1Id}`;
   console.log(`Querying with full URI: ${fullUri}`);
 
-  const messageByUri = await client.entity(Message, fullUri).get();
+  const messageByUri = await client.entity(MessagesTable, fullUri).get();
 
   console.log('Found message by URI:');
   console.log(`  - Content: ${messageByUri?.content}`);
 
-  console.log('\n=== 5. 错误示例：只提供短 id（会报错）===');
+  console.log('\n=== 5. 错误示例：只给局部 id，不足以精确定位 ===');
   try {
-    await messages.list({
-      where: eq(Message.id, msg1Id),
+    await db.findByLocator(MessagesTable, {
+      id: msg1Id,
     });
     console.log('❌ Should have thrown an error');
   } catch (error: any) {
@@ -139,11 +153,74 @@ async function run(providedSession?: Session) {
     console.log(`   ${error.message}`);
   }
 
+  console.log('\n=== 6. 准备 join 数据 ===');
+  const JoinMessagesTable = podTable('ExampleJoinMessages', {
+    id: string('id').primaryKey(),
+    chatId: string('chatId').predicate('http://example.org/chatId'),
+    content: string('content').predicate('http://schema.org/text'),
+    timestamp: datetime('timestamp').predicate('http://schema.org/dateCreated'),
+  }, {
+    base: `${exampleBase}chats/`,
+    subjectTemplate: '{chatId}/messages.ttl#{id}',
+    type: 'http://schema.org/Message',
+  });
+
+  const JoinPostsTable = podTable('ExampleJoinPosts', {
+    id: string('id').primaryKey(),
+    chatId: string('chatId').predicate('http://schema.org/isPartOf'),
+    title: string('title').predicate('http://schema.org/headline').notNull(),
+    messageId: string('messageId').predicate('http://schema.org/identifier'),
+  }, {
+    base: `${exampleBase}join-posts.ttl`,
+    subjectTemplate: '#{id}',
+    type: 'http://schema.org/Article',
+  });
+
+  await client.init(JoinPostsTable);
+
+  await db.insert(JoinPostsTable).values([
+    { id: uuid(), chatId: 'chat-1', title: 'Post for chat 1', messageId: msg1Id },
+    { id: uuid(), chatId: 'chat-2', title: 'Post for chat 2', messageId: msg3Id },
+    { id: uuid(), chatId: 'chat-3', title: 'Post without message', messageId: 'missing-message' },
+  ]);
+  console.log('✅ Inserted post rows for join demo');
+
+  console.log('\n=== 7. 错误 join：只给 messageId，不给 chatId ===');
+  try {
+    await db.select({
+      postTitle: JoinPostsTable.title,
+      messageBody: JoinMessagesTable.content,
+    })
+      .from(JoinPostsTable)
+      .leftJoin(JoinMessagesTable, eq(JoinPostsTable.messageId, JoinMessagesTable.id))
+      .orderBy(asc(JoinPostsTable.title));
+    console.log('❌ Should have thrown an error');
+  } catch (error: any) {
+    console.log('✅ Expected join error:');
+    console.log(`   ${error.message}`);
+  }
+
+  console.log('\n=== 8. 正确 join：补齐完整 locator ===');
+  const joinedRows = await db.select({
+    postTitle: JoinPostsTable.title,
+    messageBody: JoinMessagesTable.content,
+  })
+    .from(JoinPostsTable)
+    .leftJoin(JoinMessagesTable, and(
+      eq(JoinPostsTable.messageId, JoinMessagesTable.id),
+      eq(JoinPostsTable.chatId, JoinMessagesTable.chatId),
+    ))
+    .orderBy(asc(JoinPostsTable.title));
+
+  joinedRows.forEach((row) => {
+    console.log(`  - ${row.postTitle} -> ${row.messageBody ?? '(no match)'}`);
+  });
+
   console.log('\n=== 设计理念总结 ===');
-  console.log('1. 完整 URI 查询：O(1) - 直接定位资源');
-  console.log('2. 所有变量查询：O(1) - 解析路径后直接定位');
-  console.log('3. 部分变量查询：O(n) - 扫描子容器');
-  console.log('4. 缺少变量时报错：避免意外的全容器扫描');
+  console.log('1. 多变量模板首先是在表达物理定位，而不只是字段拼接');
+  console.log('2. 集合读取可以按分区进行，但这是显式 collection read');
+  console.log('3. exact-target 路径要么提供完整 locator，要么直接用完整 IRI');
+  console.log('4. 信息不足时直接报错，不要偷偷退化成扫描式执行');
   console.log('\n详细文档：docs/guides/multi-variable-templates.md');
 }
 

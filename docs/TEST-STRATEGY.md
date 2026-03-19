@@ -1,5 +1,9 @@
 # Test Strategy - 测试策略
 
+> 历史策略说明：本文件保留为早期测试矩阵设计背景，不是当前测试规范。
+>
+> 当前唯一正式测试口径见 `docs/guides/testing.md`。如本文件与维护中的测试、README 或指南冲突，以 `docs/guides/testing.md` 为准。
+
 ## 维度分析
 
 ### 核心维度

@@ -42,13 +42,6 @@ export class PodRuntime {
 
     const allowedHeaders = response.headers.get('Access-Control-Allow-Headers') || '';
     const supported = allowedHeaders.toLowerCase().includes('x-request-id');
-
-    if (supported) {
-      console.log('[PodRuntime] X-Request-ID header is supported by server');
-    } else {
-      console.log('[PodRuntime] X-Request-ID header is not in Access-Control-Allow-Headers, disabling');
-    }
-
     return supported;
   }
 

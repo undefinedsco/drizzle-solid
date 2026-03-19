@@ -13,6 +13,7 @@
 import { describe, it, expect, beforeAll, afterAll, vi } from 'vitest';
 import { drizzle } from '../../../../src/driver';
 import { podTable, string, boolean, object, timestamp } from '../../../../src/core/schema';
+import { eq } from '../../../../src/core/query-conditions';
 import { createTestSession, ensureContainer } from '../../css/helpers';
 import type { Session } from '@inrupt/solid-client-authn-node';
 import type { SolidDatabase } from '../../../../src/driver';
@@ -147,11 +148,10 @@ describe('Scenario: Model Provider', () => {
   });
 
   it('should update model provider', async () => {
-    const { eq } = await import('../../../../src/index');
-
-    await db.update(modelProviderTable)
-      .set({ enabled: false, baseUrl: 'https://api.example.com/v2/' })
-      .where(eq(modelProviderTable.id, 'google-gemini'));
+    await db.updateByLocator(modelProviderTable, { id: 'google-gemini' }, {
+      enabled: false,
+      baseUrl: 'https://api.example.com/v2/',
+    });
 
     const updated = await db.select().from(modelProviderTable);
     const provider = updated.find((p: any) => p.id === 'google-gemini');
@@ -188,10 +188,7 @@ describe('Scenario: Model Provider', () => {
   });
 
   it('should delete model provider', async () => {
-    const { eq } = await import('../../../../src/index');
-
-    await db.delete(modelProviderTable)
-      .where(eq(modelProviderTable.id, 'anthropic-claude'));
+    await db.deleteByLocator(modelProviderTable, { id: 'anthropic-claude' });
 
     const remaining = await db.select().from(modelProviderTable);
     const deleted = remaining.find((p: any) => p.id === 'anthropic-claude');
@@ -199,8 +196,6 @@ describe('Scenario: Model Provider', () => {
   });
 
   it('should support delete + reinsert + query workflow', async () => {
-    const { eq } = await import('../../../../src/index');
-
     // 1. Insert initial data
     await db.insert(modelProviderTable).values({
       id: 'reinserted-provider',
@@ -217,8 +212,7 @@ describe('Scenario: Model Provider', () => {
     expect(provider.apiKey).toBe('old-api-key');
 
     // 3. Delete
-    await db.delete(modelProviderTable)
-      .where(eq(modelProviderTable.id, 'reinserted-provider'));
+    await db.deleteByLocator(modelProviderTable, { id: 'reinserted-provider' });
 
     // 4. Verify deletion
     providers = await db.select().from(modelProviderTable);

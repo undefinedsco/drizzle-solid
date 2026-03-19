@@ -121,12 +121,12 @@ describe('subjectTemplate Discovery via SAI', () => {
     expect(notesTable.getSubjectTemplate()).toBe('{id}.ttl');
 
     // 读取数据验证
-    const notes = await db.select().from(notesTable);
-    console.log('Read notes:', notes);
+    const note = await db.findByLocator(notesTable, { id: 'note-abc' });
+    console.log('Read note:', note);
     
-    expect(notes.length).toBe(1);
-    expect(notes[0].content).toBe('Document mode test note');
-    expect(notes[0].id).toBe('note-abc');
+    expect(note).not.toBeNull();
+    expect(note?.content).toBe('Document mode test note');
+    expect(note?.id).toBe('note-abc');
 
     // 写入新数据
     await db.insert(notesTable).values({
@@ -220,12 +220,12 @@ describe('subjectTemplate Discovery via SAI', () => {
     consumerTable.setSubjectTemplate('{id}.ttl');
 
     // === 消费者：读取数据 ===
-    const articles = await db.select().from(consumerTable);
-    console.log('Consumer read articles:', articles);
+    const firstArticle = await db.findByLocator(consumerTable, { id: 'article-001' });
+    console.log('Consumer read first article:', firstArticle);
 
-    expect(articles.length).toBe(1);
-    expect(articles[0].title).toBe('First Article');
-    expect(articles[0].id).toBe('article-001');
+    expect(firstArticle).not.toBeNull();
+    expect(firstArticle?.title).toBe('First Article');
+    expect(firstArticle?.id).toBe('article-001');
 
     // === 消费者：写入新数据 ===
     await db.insert(consumerTable).values({
@@ -244,7 +244,11 @@ describe('subjectTemplate Discovery via SAI', () => {
     expect(content).toContain('Content from consumer');
 
     // === 验证读取包含新数据 ===
-    const allArticles = await db.select().from(consumerTable);
-    expect(allArticles.length).toBe(2);
+    const [article1, article2] = await Promise.all([
+      db.findByLocator(consumerTable, { id: 'article-001' }),
+      db.findByLocator(consumerTable, { id: 'article-002' }),
+    ]);
+    expect(article1).not.toBeNull();
+    expect(article2).not.toBeNull();
   }, 60000);
 });

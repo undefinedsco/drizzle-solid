@@ -31,6 +31,7 @@ const Users = podTable('ReturningUsers', {
 
 const ArrayDocs = podTable('ReturningArrayDocs', {
   id: string('id').primaryKey().predicate('http://schema.org/identifier'),
+  name: string('name').predicate('http://schema.org/name'),
   tags: string('tags').array().predicate('http://schema.org/keywords'),
 }, {
   type: 'http://schema.org/CreativeWork',
@@ -85,7 +86,7 @@ describe('Drizzle ORM returning() parity', () => {
 
     const rows = await db.update(Users)
       .set({ name: 'Caroline', age: 26 })
-      .where(eq(Users.id, 'ret-upd-1'))
+      .where(eq(Users.name, 'Carol'))
       .returning();
 
     expect(rows).toEqual([
@@ -98,7 +99,7 @@ describe('Drizzle ORM returning() parity', () => {
 
     const rows = await db.update(Users)
       .set({ age: 41 })
-      .where(eq(Users.id, 'ret-upd-2'))
+      .where(eq(Users.name, 'Dan'))
       .returning({ id: Users.id, age: Users.age });
 
     expect(rows).toEqual([{ id: 'ret-upd-2', age: 41 }]);
@@ -108,22 +109,22 @@ describe('Drizzle ORM returning() parity', () => {
     await db.insert(Users).values({ id: 'ret-del-1', name: 'Eve', age: 35 });
 
     const rows = await db.delete(Users)
-      .where(eq(Users.id, 'ret-del-1'))
+      .where(eq(Users.name, 'Eve'))
       .returning();
 
     expect(rows).toEqual([
       expect.objectContaining({ id: 'ret-del-1', name: 'Eve', age: 35 }),
     ]);
 
-    const remaining = await db.select().from(Users).where(eq(Users.id, 'ret-del-1'));
-    expect(remaining).toEqual([]);
+    const remaining = await db.findByLocator(Users, { id: 'ret-del-1' });
+    expect(remaining).toBeNull();
   });
 
   test('delete returning partial fields', async () => {
     await db.insert(Users).values({ id: 'ret-del-2', name: 'Frank', age: 29 });
 
     const rows = await db.delete(Users)
-      .where(eq(Users.id, 'ret-del-2'))
+      .where(eq(Users.name, 'Frank'))
       .returning({ id: Users.id, name: Users.name });
 
     expect(rows).toEqual([{ id: 'ret-del-2', name: 'Frank' }]);
@@ -131,18 +132,18 @@ describe('Drizzle ORM returning() parity', () => {
 
   test('insert with array values works', async () => {
     const rows = await db.insert(ArrayDocs)
-      .values({ id: 'ret-array-ins-1', tags: ['alpha', 'beta'] })
+      .values({ id: 'ret-array-ins-1', name: 'Array Insert', tags: ['alpha', 'beta'] })
       .returning({ id: ArrayDocs.id, tags: ArrayDocs.tags });
 
     expect(rows).toEqual([{ id: 'ret-array-ins-1', tags: ['alpha', 'beta'] }]);
   });
 
   test('update with array values works', async () => {
-    await db.insert(ArrayDocs).values({ id: 'ret-array-upd-1', tags: ['draft'] });
+    await db.insert(ArrayDocs).values({ id: 'ret-array-upd-1', name: 'Array Update', tags: ['draft'] });
 
     const rows = await db.update(ArrayDocs)
       .set({ tags: ['published', 'featured'] })
-      .where(eq(ArrayDocs.id, 'ret-array-upd-1'))
+      .where(eq(ArrayDocs.name, 'Array Update'))
       .returning({ id: ArrayDocs.id, tags: ArrayDocs.tags });
 
     expect(rows).toEqual([{ id: 'ret-array-upd-1', tags: ['published', 'featured'] }]);

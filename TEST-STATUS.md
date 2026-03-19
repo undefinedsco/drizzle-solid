@@ -1,5 +1,9 @@
 # 测试状态报告 - SPARQL Graph 重构
 
+> 历史状态说明：本文件记录一次阶段性测试结果，不是当前测试规范。
+>
+> 当前唯一正式测试口径见 `docs/guides/testing.md`。如本文件与维护中的测试、README 或指南冲突，以 `docs/guides/testing.md` 为准。
+
 ## 📅 测试日期：2025-12-11
 
 ---
@@ -243,9 +247,10 @@ npx vitest run tests/integration/css/document-mode-crud.test.ts
 
 ## 📚 相关文档
 
+- [当前测试规范](./docs/guides/testing.md) - 当前测试分层、examples、parity 与回归要求
 - [CHANGELOG-DRAFT.md](./CHANGELOG-DRAFT.md) - 完整变更日志
 - [测试覆盖矩阵](./docs/guides/sparql-mode-design.md#5-测试覆盖矩阵) - SPARQL 模式设计文档中的测试矩阵
-- [TESTING_STRATEGY.md](./TESTING_STRATEGY.md) - 测试策略
+- [TESTING_STRATEGY.md](./TESTING_STRATEGY.md) - 历史测试策略快照
 
 ---
 

@@ -1,7 +1,7 @@
 import { entityKind, SQL } from 'drizzle-orm';
 import { PodTable, InferUpdateData, HookContext } from '../schema';
 import { PodAsyncSession, PodOperation } from '../pod-session';
-import { QueryCondition } from '../query-conditions';
+import { QueryCondition, type PublicQueryCondition, type PublicWhereObject } from '../query-conditions';
 import { UpdateQueryPlan, type SelectFieldMap } from './types';
 import {
   buildConditionTreeFromObject,
@@ -10,6 +10,7 @@ import {
   projectReturningRows,
   resolveRowSubject,
 } from './helpers';
+import { assertPublicWhereCondition, assertPublicWhereObject } from '../query-where-policy';
 
 export class UpdateQueryBuilder<TTable extends PodTable<any> = PodTable<any>> {
   static readonly [entityKind] = 'UpdateQueryBuilder';
@@ -39,23 +40,18 @@ export class UpdateQueryBuilder<TTable extends PodTable<any> = PodTable<any>> {
     return this;
   }
 
-  where(conditions: Record<string, any> | SQL | QueryCondition) {
+  where(conditions: PublicWhereObject | SQL | PublicQueryCondition) {
     if (conditions instanceof SQL) {
       if (!this.sql) {
         this.sql = conditions;
       }
     } else if (this.isQueryCondition(conditions)) {
+      assertPublicWhereCondition('update', conditions);
       this.conditionTree = conditions;
       const simple = this.convertQueryConditionToSimple(conditions);
       this.whereConditions = Object.keys(simple).length > 0 ? simple : undefined;
     } else {
-      if (conditions && typeof conditions === 'object' && '@id' in conditions) {
-        throw new Error(
-          `Using '@id' in where() is not supported. ` +
-          `Use db.updateByIri(table, iri, data) for IRI-based updates, ` +
-          `or use { id: 'value' } for id-based updates.`
-        );
-      }
+      assertPublicWhereObject('update', conditions);
       this.whereConditions = conditions;
       this.conditionTree = undefined;
     }
@@ -170,6 +166,10 @@ export class UpdateQueryBuilder<TTable extends PodTable<any> = PodTable<any>> {
   }
 
   private async fetchMatchedRows(where: QueryCondition): Promise<Record<string, any>[]> {
+    const iriCondition = this.whereConditions?.['@id'];
+    if (!this.conditionTree && typeof iriCondition === 'string') {
+      return await this.session.select().from(this.table).whereByIri(iriCondition) as Record<string, any>[];
+    }
     return await this.session.select().from(this.table).where(where) as Record<string, any>[];
   }
 

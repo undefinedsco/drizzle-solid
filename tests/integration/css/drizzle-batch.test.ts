@@ -51,7 +51,7 @@ describe('Drizzle ORM BATCH Tests', () => {
     expect(results[1]).toHaveLength(1);
 
     const rows = await db.select().from(BatchTable)
-      .where(inArray(BatchTable.id, ['insert-1', 'insert-2']));
+      .where(inArray(BatchTable.name, ['Alpha', 'Beta']));
 
     expect(rows).toHaveLength(2);
     expect(rows.map((row) => row.id).sort()).toEqual(['insert-1', 'insert-2']);
@@ -64,16 +64,16 @@ describe('Drizzle ORM BATCH Tests', () => {
     ]);
 
     const results = await db.batch([
-      db.update(BatchTable).set({ status: 'done' }).where(eq(BatchTable.id, 'update-1')),
-      db.update(BatchTable).set({ status: 'done' }).where(eq(BatchTable.id, 'update-2')),
+      db.updateByLocator(BatchTable, { id: 'update-1' }, { status: 'done' }),
+      db.updateByLocator(BatchTable, { id: 'update-2' }, { status: 'done' }),
     ] as const);
 
     expect(results).toHaveLength(2);
-    expect(results[0]).toHaveLength(1);
-    expect(results[1]).toHaveLength(1);
+    expect(results[0]).toMatchObject({ id: 'update-1', status: 'done' });
+    expect(results[1]).toMatchObject({ id: 'update-2', status: 'done' });
 
     const rows = await db.select().from(BatchTable)
-      .where(inArray(BatchTable.id, ['update-1', 'update-2']));
+      .where(inArray(BatchTable.name, ['Update One', 'Update Two']));
 
     expect(rows).toHaveLength(2);
     expect(rows.every((row) => row.status === 'done')).toBe(true);
@@ -86,16 +86,15 @@ describe('Drizzle ORM BATCH Tests', () => {
     ]);
 
     const results = await db.batch([
-      db.delete(BatchTable).where(eq(BatchTable.id, 'delete-1')),
-      db.delete(BatchTable).where(eq(BatchTable.id, 'delete-2')),
+      db.deleteByLocator(BatchTable, { id: 'delete-1' }),
+      db.deleteByLocator(BatchTable, { id: 'delete-2' }),
     ] as const);
 
     expect(results).toHaveLength(2);
-    expect(results[0]).toHaveLength(1);
-    expect(results[1]).toHaveLength(1);
+    expect(results).toEqual([true, true]);
 
     const rows = await db.select().from(BatchTable)
-      .where(inArray(BatchTable.id, ['delete-1', 'delete-2']));
+      .where(inArray(BatchTable.name, ['Delete One', 'Delete Two']));
 
     expect(rows).toHaveLength(0);
   });
@@ -109,13 +108,13 @@ describe('Drizzle ORM BATCH Tests', () => {
 
     const results = await db.batch([
       db.insert(BatchTable).values({ id: 'mixed-new', name: 'New Item', status: 'new' }),
-      db.update(BatchTable).set({ status: 'updated' }).where(eq(BatchTable.id, 'mixed-existing')),
-      db.select().from(BatchTable).where(inArray(BatchTable.id, ['mixed-existing', 'mixed-new'])),
+      db.updateByLocator(BatchTable, { id: 'mixed-existing' }, { status: 'updated' }),
+      db.select().from(BatchTable).where(inArray(BatchTable.name, ['Existing', 'New Item'])),
     ] as const);
 
     expect(results).toHaveLength(3);
     expect(results[0]).toHaveLength(1);
-    expect(results[1]).toHaveLength(1);
+    expect(results[1]).toMatchObject({ id: 'mixed-existing', status: 'updated' });
     expect(results[2]).toHaveLength(2);
 
     const finalRows = results[2];
@@ -129,7 +128,7 @@ describe('Drizzle ORM BATCH Tests', () => {
         .returning({ id: BatchTable.id, status: BatchTable.status }),
       db.insert(BatchTable).values({ id: 'batch-return-2', name: 'Return Two', status: 'queued' }),
       db.select().from(BatchTable)
-        .where(inArray(BatchTable.id, ['batch-return-1', 'batch-return-2'])),
+        .where(inArray(BatchTable.name, ['Return One', 'Return Two'])),
     ] as const);
 
     expect(results).toHaveLength(3);
@@ -145,9 +144,9 @@ describe('Drizzle ORM BATCH Tests', () => {
     ]);
 
     const results = await db.batch([
-      db.delete(BatchTable).where(eq(BatchTable.id, 'batch-delete-return-1'))
+      db.delete(BatchTable).where(eq(BatchTable.name, 'Delete Return One'))
         .returning({ id: BatchTable.id, name: BatchTable.name }),
-      db.delete(BatchTable).where(eq(BatchTable.id, 'batch-delete-return-2'))
+      db.delete(BatchTable).where(eq(BatchTable.name, 'Delete Return Two'))
         .returning({ id: BatchTable.id, status: BatchTable.status }),
     ] as const);
 
@@ -157,7 +156,7 @@ describe('Drizzle ORM BATCH Tests', () => {
     ]);
 
     const rows = await db.select().from(BatchTable)
-      .where(inArray(BatchTable.id, ['batch-delete-return-1', 'batch-delete-return-2']));
+      .where(inArray(BatchTable.name, ['Delete Return One', 'Delete Return Two']));
 
     expect(rows).toHaveLength(0);
   });
@@ -172,10 +171,10 @@ describe('Drizzle ORM BATCH Tests', () => {
 
     const results = await db.batch([
       db.query.batchItems.findMany({
-        where: { id: ['batch-query-1', 'batch-query-2'] },
+        where: { name: ['Batch Query One', 'Batch Query Two'] },
         orderBy: { column: BatchTable.name, direction: 'asc' },
       }),
-      db.query.batchItems.findFirst({ where: { id: 'batch-query-2' } }),
+      db.query.batchItems.findFirst({ where: { name: 'Batch Query Two' } }),
     ] as const);
 
     expect(results[0].map((row) => row.id)).toEqual(['batch-query-1', 'batch-query-2']);
@@ -185,8 +184,8 @@ describe('Drizzle ORM BATCH Tests', () => {
   test('Batch should support insert + findMany + findFirst in one sequence', async () => {
     const results = await db.batch([
       db.insert(BatchTable).values({ id: 'batch-query-3', name: 'Batch Query Three', status: 'new' }),
-      db.query.batchItems.findMany({ where: { id: ['batch-query-3'] } }),
-      db.query.batchItems.findFirst({ where: { id: 'batch-query-3' } }),
+      db.query.batchItems.findMany({ where: { name: ['Batch Query Three'] } }),
+      db.query.batchItems.findFirst({ where: { name: 'Batch Query Three' } }),
     ] as const);
 
     expect(results[0]).toHaveLength(1);

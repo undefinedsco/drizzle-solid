@@ -1,6 +1,6 @@
 import { entityKind, SQL } from 'drizzle-orm';
 import { PodTable, PodColumnBase, InferTableData } from '../schema';
-import { QueryCondition, inArray } from '../query-conditions';
+import { QueryCondition, type PublicQueryCondition, type PublicWhereObject, and, eq, inArray } from '../query-conditions';
 import { AggregateExpression, isAggregateExpression } from '../aggregates';
 import { PodOperation } from '../pod-dialect';
 import { SelectQueryPlan } from '../select-plan';
@@ -11,6 +11,7 @@ import { createLiteralCondition, buildConditionTreeFromObject, inferSPARQLQueryT
 import { UriResolverImpl, UriContext } from '../uri';
 import { isOrderByExpression, type OrderByExpression } from '../order-by';
 import { SelectionAliasExpression } from '../expressions';
+import { assertPublicWhereCondition, assertPublicWhereObject, conditionTargetsReservedIdentifier } from '../query-where-policy';
 
 export class SelectQueryBuilder<TTable extends PodTable<any> = PodTable<any>> {
   static readonly [entityKind] = 'SelectQueryBuilder';
@@ -63,23 +64,17 @@ export class SelectQueryBuilder<TTable extends PodTable<any> = PodTable<any>> {
   /**
    * Add WHERE conditions to the query
    * 
-   * Note: Using '@id' directly in conditions is deprecated.
-   * Use db.findByIri(table, iri) for IRI-based lookups instead.
+   * Public where() is collection-oriented.
+   * Exact-target reads must use findByLocator()/findByIri().
    */
-  where(conditions: Record<string, any> | SQL | QueryCondition) {
+  where(conditions: PublicWhereObject | SQL | PublicQueryCondition) {
     if (conditions instanceof SQL) {
       this.sql = conditions;
     } else if (this.isQueryCondition(conditions)) {
+      assertPublicWhereCondition('select', conditions);
       this.processQueryCondition(conditions);
     } else {
-      // Check for @id usage and warn/reject
-      if (conditions && typeof conditions === 'object' && '@id' in conditions) {
-        throw new Error(
-          `Using '@id' in where() is not supported. ` +
-          `Use db.findByIri(table, iri) for IRI-based lookups, ` +
-          `or use { id: 'value' } for id-based lookups.`
-        );
-      }
+      assertPublicWhereObject('select', conditions);
       this.processWhereObject(conditions);
     }
     return this;
@@ -401,6 +396,11 @@ export class SelectQueryBuilder<TTable extends PodTable<any> = PodTable<any>> {
     }
   }
 
+  private applyInternalQueryCondition(condition: QueryCondition): this {
+    this.processQueryCondition(condition);
+    return this;
+  }
+
   private normalizeWhereConditions(): QueryCondition | undefined {
     if (this.conditionTree) {
       return this.conditionTree;
@@ -584,9 +584,12 @@ export class SelectQueryBuilder<TTable extends PodTable<any> = PodTable<any>> {
             limit: undefined,
             offset: undefined,
             orderBy: undefined,
+            ...(hasJoins ? { joins: undefined, joinFilters: undefined } : {}),
             ...(useAggregateFallback ? { groupBy: undefined, having: undefined } : {}),
           }
-        : plan;
+        : (hasJoins
+          ? { ...plan, joins: undefined, joinFilters: undefined }
+          : plan);
 
       const operation: PodOperation = {
         type: 'select',
@@ -626,6 +629,7 @@ export class SelectQueryBuilder<TTable extends PodTable<any> = PodTable<any>> {
 
         if (hasJoins) {
           intermediateRows = this.normalizeBaseRows(intermediateRows);
+          intermediateRows = this.mergeRowsBySubject(intermediateRows);
           intermediateRows = await this.applyJoinFallback(intermediateRows);
           intermediateRows = this.applyJoinFilters(intermediateRows);
         }
@@ -1126,11 +1130,23 @@ export class SelectQueryBuilder<TTable extends PodTable<any> = PodTable<any>> {
     return rows.map((row) => this.attachSubjectMetadata(row));
   }
 
+  private extractSubjectValue(row: Record<string, any>): string | undefined {
+    const candidate = row.subject ?? row['@id'] ?? row.uri;
+
+    if (typeof candidate === 'object' && candidate && 'value' in candidate) {
+      const value = (candidate as { value?: unknown }).value;
+      return typeof value === 'string' && value.length > 0 ? value : undefined;
+    }
+
+    if (typeof candidate === 'string' && candidate.length > 0) {
+      return candidate;
+    }
+
+    return undefined;
+  }
+
   private attachSubjectMetadata(row: Record<string, any>): Record<string, any> {
-    const subjectValue =
-      typeof row.subject === 'object' && row.subject && 'value' in row.subject
-        ? (row.subject as any).value
-        : row.subject;
+    const subjectValue = this.extractSubjectValue(row);
     if (typeof subjectValue === 'string' && subjectValue.length > 0) {
       if (row['@id'] === undefined) {
         row['@id'] = subjectValue;
@@ -1165,7 +1181,7 @@ export class SelectQueryBuilder<TTable extends PodTable<any> = PodTable<any>> {
         result[`${alias}.${key}`] = value;
       }
 
-      const subjectValue = row.subject as string | undefined;
+      const subjectValue = this.extractSubjectValue(row);
       if (subjectValue) {
         result.subject = subjectValue;
         result['@id'] = subjectValue;
@@ -1498,7 +1514,16 @@ export class SelectQueryBuilder<TTable extends PodTable<any> = PodTable<any>> {
         return;
       }
       if (!merged.has(key)) {
-        merged.set(key, { ...row });
+        const normalizedRow: Record<string, any> = { ...row };
+        Object.entries(normalizedRow).forEach(([col, value]) => {
+          if (value === undefined) return;
+          const colDef = this.getColumnDefinitionForRowKey(col);
+          const isArrayType = colDef?.options?.isArray || (colDef as any)?.dataType === 'array';
+          if (isArrayType && !Array.isArray(value)) {
+            normalizedRow[col] = [value];
+          }
+        });
+        merged.set(key, normalizedRow);
         order.push(key);
         return;
       }
@@ -1533,7 +1558,7 @@ export class SelectQueryBuilder<TTable extends PodTable<any> = PodTable<any>> {
           }
         });
 
-        const colDef = this.selectedTable?.columns[col];
+        const colDef = this.getColumnDefinitionForRowKey(col);
         const isArrayType = colDef?.options?.isArray || (colDef as any)?.dataType === 'array';
 
         if (!isArrayType && combined.length > 1) {
@@ -1551,6 +1576,27 @@ export class SelectQueryBuilder<TTable extends PodTable<any> = PodTable<any>> {
     });
     const result = order.map((key) => merged.get(key)!);
     return result;
+  }
+
+  private getColumnDefinitionForRowKey(key: string): PodColumnBase | undefined {
+    if (!key) {
+      return undefined;
+    }
+
+    if (!key.includes('.')) {
+      return this.selectedTable?.columns[key];
+    }
+
+    const [alias, columnName] = key.split('.', 2);
+    if (!alias || !columnName) {
+      return undefined;
+    }
+
+    if (alias === this.primaryAlias) {
+      return this.selectedTable?.columns[columnName];
+    }
+
+    return this.aliasToTable.get(alias)?.columns?.[columnName];
   }
 
   private inferSourceFromChild(childIri: string, table: PodTable<any>): string {
@@ -1632,16 +1678,194 @@ export class SelectQueryBuilder<TTable extends PodTable<any> = PodTable<any>> {
     }
 
     const valuesArray = Array.from(uniqueValues.values());
-
+    const buildJoinQuery = () => this.session.select().from(join.table);
     const joinColumnInstance = join.table.getColumn(joinRef.column);
-    let joinQuery = this.session.select().from(join.table);
+    const exactJoinConditions = this.buildExactJoinLookupConditions(join, baseRows);
 
-    if (joinColumnInstance && joinRef.column !== 'id') {
-      joinQuery = joinQuery.where(inArray(joinColumnInstance, valuesArray));
+    if (exactJoinConditions && exactJoinConditions.length > 0) {
+      const exactJoinRows: Record<string, any>[] = [];
+      for (const joinCondition of exactJoinConditions) {
+        const joinQuery = buildJoinQuery();
+        const conditionedJoinQuery = conditionTargetsReservedIdentifier(joinCondition)
+          ? joinQuery.applyInternalQueryCondition(joinCondition)
+          : joinQuery.where(joinCondition);
+        const joinRows = await conditionedJoinQuery as Record<string, any>[];
+        exactJoinRows.push(...joinRows);
+      }
+
+      return this.mergeRowsBySubject(this.normalizeJoinRows(join, exactJoinRows));
     }
 
-    const joinRows = await joinQuery as Record<string, any>[];
+    const joinLookupCondition = this.buildJoinLookupCondition(joinColumnInstance, valuesArray);
+
+    if (joinLookupCondition) {
+      const joinQuery = buildJoinQuery();
+      const filteredJoinQuery = conditionTargetsReservedIdentifier(joinLookupCondition)
+        ? joinQuery.applyInternalQueryCondition(joinLookupCondition)
+        : joinQuery.where(joinLookupCondition);
+      const joinRows = await filteredJoinQuery as Record<string, any>[];
+      return this.normalizeJoinRows(join, joinRows);
+    }
+
+    const joinRows = await buildJoinQuery() as Record<string, any>[];
     return this.normalizeJoinRows(join, joinRows);
+  }
+
+  private buildExactJoinLookupConditions(
+    join: {
+      alias: string;
+      table: PodTable<any>;
+      resolvedConditions?: ResolvedJoinCondition[];
+    },
+    baseRows: Record<string, any>[],
+  ): QueryCondition[] | undefined {
+    const conditions = join.resolvedConditions ?? [];
+    if (conditions.length === 0) {
+      return undefined;
+    }
+
+    const [primaryCondition] = conditions;
+    const primaryJoinRef = primaryCondition.left.alias === join.alias ? primaryCondition.left : primaryCondition.right;
+    const primaryBaseRef = primaryJoinRef === primaryCondition.left ? primaryCondition.right : primaryCondition.left;
+    const requiredLocatorVars = this.getRequiredSubjectTemplateVariables(join.table);
+    const joinUsesTemplateScopedId = primaryJoinRef.column === 'id' && requiredLocatorVars.length > 0;
+
+    if (!joinUsesTemplateScopedId && conditions.length === 1) {
+      return undefined;
+    }
+
+    const locatorConditionMap = new Map<string, ResolvedJoinCondition>();
+    for (const condition of conditions) {
+      const joinRef = condition.left.alias === join.alias ? condition.left : condition.right;
+      locatorConditionMap.set(joinRef.column, condition);
+    }
+
+    const exactConditions: QueryCondition[] = [];
+    const seen = new Set<string>();
+
+    for (const baseRow of baseRows) {
+      const primaryValue = this.getRowValueForColumn(baseRow, primaryBaseRef);
+      if (primaryValue === undefined || primaryValue === null) {
+        continue;
+      }
+
+      const primaryIsAbsoluteIri = typeof primaryValue === 'string' && this.isAbsoluteIri(primaryValue);
+      const clauses: QueryCondition[] = [];
+      const dedupeParts: string[] = [];
+      let skipRow = false;
+
+      for (const condition of conditions) {
+        const joinRef = condition.left.alias === join.alias ? condition.left : condition.right;
+        const baseRef = joinRef === condition.left ? condition.right : condition.left;
+        const baseValue = this.getRowValueForColumn(baseRow, baseRef);
+
+        if (baseValue === undefined || baseValue === null) {
+          if (joinUsesTemplateScopedId && !primaryIsAbsoluteIri && requiredLocatorVars.includes(joinRef.column)) {
+            throw new Error(this.buildMissingJoinLocatorError(join, requiredLocatorVars.filter((variable) => {
+              const variableCondition = locatorConditionMap.get(variable);
+              if (!variableCondition) {
+                return true;
+              }
+              const variableJoinRef = variableCondition.left.alias === join.alias ? variableCondition.left : variableCondition.right;
+              const variableBaseRef = variableJoinRef === variableCondition.left ? variableCondition.right : variableCondition.left;
+              const variableValue = this.getRowValueForColumn(baseRow, variableBaseRef);
+              return variableValue === undefined || variableValue === null;
+            })));
+          }
+
+          skipRow = true;
+          break;
+        }
+
+        const joinColumn = join.table.getColumn(joinRef.column);
+        if (!joinColumn) {
+          skipRow = true;
+          break;
+        }
+
+        clauses.push(eq(joinColumn, baseValue));
+        dedupeParts.push(`${joinRef.column}:${this.serializeValueForKey(baseValue)}`);
+      }
+
+      if (skipRow) {
+        continue;
+      }
+
+      if (joinUsesTemplateScopedId && !primaryIsAbsoluteIri) {
+        const missingLocatorVars = requiredLocatorVars.filter((variable) => {
+          const variableCondition = locatorConditionMap.get(variable);
+          if (!variableCondition) {
+            return true;
+          }
+
+          const variableJoinRef = variableCondition.left.alias === join.alias ? variableCondition.left : variableCondition.right;
+          const variableBaseRef = variableJoinRef === variableCondition.left ? variableCondition.right : variableCondition.left;
+          const variableValue = this.getRowValueForColumn(baseRow, variableBaseRef);
+          return variableValue === undefined || variableValue === null;
+        });
+
+        if (missingLocatorVars.length > 0) {
+          throw new Error(this.buildMissingJoinLocatorError(join, missingLocatorVars));
+        }
+      }
+
+      if (clauses.length === 0) {
+        continue;
+      }
+
+      const dedupeKey = dedupeParts.join('|');
+
+      if (seen.has(dedupeKey)) {
+        continue;
+      }
+
+      seen.add(dedupeKey);
+      exactConditions.push(clauses.length === 1 ? clauses[0] : and(...clauses));
+    }
+
+    return exactConditions.length > 0 ? exactConditions : undefined;
+  }
+
+  private buildJoinLookupCondition(
+    joinColumnInstance: PodColumnBase | undefined,
+    valuesArray: any[],
+  ): QueryCondition | undefined {
+    if (!joinColumnInstance || valuesArray.length === 0) {
+      return undefined;
+    }
+
+    if (valuesArray.length === 1) {
+      return eq(joinColumnInstance, valuesArray[0]);
+    }
+
+    return inArray(joinColumnInstance, valuesArray);
+  }
+
+  private getRequiredSubjectTemplateVariables(table: PodTable<any>): string[] {
+    const template = table.getSubjectTemplate?.() ?? table.config?.subjectTemplate ?? '';
+    return Array.from(template.matchAll(/\{([^}]+)\}/g))
+      .map((match) => match[1])
+      .filter((variable) => variable !== 'id' && variable !== 'index');
+  }
+
+  private isAbsoluteIri(value: string): boolean {
+    return /^[a-zA-Z][\w+.-]*:\/\//.test(value);
+  }
+
+  private buildMissingJoinLocatorError(
+    join: { table: PodTable<any> },
+    missingVariables: string[],
+  ): string {
+    const template = join.table.getSubjectTemplate?.() ?? join.table.config?.subjectTemplate ?? '{id}';
+    const uniqueMissingVariables = Array.from(new Set(missingVariables));
+    const exampleVariable = uniqueMissingVariables[0] ?? '...';
+
+    return (
+      `Cannot join table "${join.table.config.name ?? 'unknown'}" by id with subjectTemplate "${template}" ` +
+      `because locator variable(s) [${uniqueMissingVariables.join(', ')}] are missing. ` +
+      `Add join conditions for all required template variables (for example eq(base.${exampleVariable}, join.${exampleVariable})) ` +
+      `or join via full IRI values.`
+    );
   }
 
   private normalizeJoinRows(
@@ -1657,7 +1881,7 @@ export class SelectQueryBuilder<TTable extends PodTable<any> = PodTable<any>> {
         normalized[`${join.alias}.${key}`] = value;
       }
 
-      const subjectValue = row.subject as string | undefined;
+      const subjectValue = this.extractSubjectValue(row);
       if (subjectValue) {
         normalized.subject = subjectValue;
         normalized['@id'] = subjectValue;
@@ -1725,7 +1949,8 @@ export class SelectQueryBuilder<TTable extends PodTable<any> = PodTable<any>> {
     for (const baseRow of baseRows) {
       const baseValue = this.getRowValueForColumn(baseRow, baseRef);
       const key = this.serializeValueForKey(baseValue);
-      const matches = baseValue !== undefined && baseValue !== null ? joinValueMap.get(key) ?? [] : [];
+      const primaryMatches = baseValue !== undefined && baseValue !== null ? joinValueMap.get(key) ?? [] : [];
+      const matches = primaryMatches.filter((joinRow) => this.joinRowMatchesAllConditions(baseRow, joinRow, join.alias, conditions));
 
       if (matches.length === 0) {
         if (join.type === 'innerJoin') {
@@ -1741,6 +1966,24 @@ export class SelectQueryBuilder<TTable extends PodTable<any> = PodTable<any>> {
     }
 
     return merged;
+  }
+
+  private joinRowMatchesAllConditions(
+    baseRow: Record<string, any>,
+    joinRow: Record<string, any>,
+    joinAlias: string,
+    conditions: ResolvedJoinCondition[],
+  ): boolean {
+    return conditions.every((condition) => {
+      const joinRef = condition.left.alias === joinAlias ? condition.left : condition.right;
+      const baseRef = joinRef === condition.left ? condition.right : condition.left;
+      const baseValue = this.getRowValueForColumn(baseRow, baseRef);
+      const joinValue = this.getRowValueForColumn(joinRow, joinRef);
+      if (baseValue === undefined || baseValue === null || joinValue === undefined || joinValue === null) {
+        return false;
+      }
+      return this.serializeValueForKey(baseValue) === this.serializeValueForKey(joinValue);
+    });
   }
 
   private createEmptyJoinRow(join: { alias: string; table: PodTable<any> }): Record<string, any> {

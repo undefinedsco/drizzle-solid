@@ -45,6 +45,7 @@ describe('SelectQueryBuilder alias joins', () => {
     const builder: any = {
       from: () => builder,
       where: () => builder,
+      applyInternalQueryCondition: () => builder,
       then: (resolve: (value: Record<string, any>[]) => unknown) => resolve(rows),
     };
     return builder;

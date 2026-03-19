@@ -6,7 +6,7 @@
 
 - Resource / Document / Entity / IRI
 - Link 而不是 SQL foreign-key 心智
-- list/filter 读取 与 exact-target mutation 的区分
+- list/filter 读取 与 exact-target path 的区分
 - SPARQL 而不是 raw SQL 的 escape hatch
 
 仓库文档与 examples 默认先展示 semantic-first surface（`pod()` / `collection()` / `entity()`），再补充 Drizzle-shaped surface。
@@ -123,11 +123,15 @@ const profileTable = db.createTable(profileSchema, {
 - `db.query.<table>`
 - `findMany`
 - `findFirst`
-- `findById`
+- `findByLocator`
 - `findByIri`
 - `count`
 
 这部分能力是 **读导向 facade**，不应该被理解成“所有 SQL 语义都成立”。
+
+注意：
+- `findByLocator` / `findByIri` 是 exact-target 入口
+- `findMany` / `findFirst` / `count` 是否可用，取决于后端是否具备 collection 查询能力
 
 ## Semantic-first surface
 
@@ -198,13 +202,22 @@ await client.sparql(`SELECT ?s WHERE { ?s ?p ?o } LIMIT 10`);
 
 ## 语义边界
 
-### 读和写的目标解析不同
+### collection 路径与 exact-target 路径不同
 
 - list/filter 读取可以保持 collection-oriented
-- 写入应该优先 exact-target semantics
-- 信息不足时不会静默退化成 scan + mutate
+- exact-target 路径应该优先保持 exact-target semantics
+- 信息不足时不会静默退化成 scan-style execution
 
-如果 `subjectTemplate` 需要多个变量才能唯一定位 subject，就不要把 mutation 建立在模糊 `where(...)` 之上；优先显式使用 IRI。
+这不仅适用于 mutation，也适用于其他 exact-target 路径。
+
+如果 `subjectTemplate` 需要多个变量才能唯一定位 subject，就不要把 mutation 或 exact-target join 建立在模糊条件之上；优先显式使用 IRI 或补齐完整 locator。
+
+另外，公共 `where()` 不再接受 `id` / `@id` 作为 exact-target 条件。精确目标读取请使用 `findByLocator()` 或 `findByIri()`。
+
+对于 **plain LDP document mode**（没有 SPARQL endpoint / index）：
+- 只保证 exact-target read/write
+- 不保证 `findMany` / `findFirst` / `count` 这类 collection 查询
+- 这类调用会直接报错，而不是隐式做 scan / recursion
 
 ## 什么时候该用哪个入口
 

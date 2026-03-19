@@ -786,6 +786,7 @@ export class PodDialect {
   /**
    * 尝试自动发现 SPARQL endpoint
    * 按约定：${base}/-/sparql
+   * 使用 OPTIONS 做能力探测，因为 xpod sidecar 不接受 HEAD。
    */
   private async tryDiscoverSparqlEndpoint(table: PodTable, base: string): Promise<void> {
     // 如果表已经配置了 sparqlEndpoint，跳过
@@ -797,7 +798,7 @@ export class PodDialect {
     const potentialEndpoint = `${base.replace(/\/$/, '')}/-/sparql`;
     
     try {
-      const response = await this.runtime.getFetch()(potentialEndpoint, { method: 'HEAD' });
+      const response = await this.runtime.getFetch()(potentialEndpoint, { method: 'OPTIONS' });
       if (response.ok) {
         console.log(`[AutoDiscover] ✓ Found SPARQL endpoint: ${potentialEndpoint}`);
         table.setSparqlEndpoint(potentialEndpoint);
@@ -1105,7 +1106,6 @@ export class PodDialect {
   // 添加数据源进行联邦查询（高级用法）
   // 注意：正常情况下不需要手动添加数据源，表定义中的 containerPath 会自动使用
   addSource(source: string): void {
-    console.warn('⚠️  addSource 是高级用法，通常不需要手动管理数据源。表定义中的 containerPath 会自动使用。');
     this.sparqlExecutor.addSource(source);
   }
 

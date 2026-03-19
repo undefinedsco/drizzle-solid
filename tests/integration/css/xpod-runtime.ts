@@ -1,5 +1,4 @@
 import fs from 'node:fs';
-import net from 'node:net';
 import path from 'node:path';
 
 type RuntimeModule = {
@@ -45,9 +44,30 @@ const DEFAULT_SEED_ACCOUNTS: SeedAccount[] = [
   { email: 'bob@dev.local', password: 'bob123456', podName: 'bob' },
 ];
 
-let sharedRuntimePromise: Promise<RuntimeHandle> | null = null;
 const seededPodPromises = new Map<string, Promise<SeededPod>>();
 let cachedSeedAccounts: SeedAccount[] | null = null;
+
+type SharedRuntimeStore = {
+  runtimePromise: Promise<RuntimeHandle> | null;
+  stopPromise: Promise<void> | null;
+};
+
+const SHARED_RUNTIME_STORE_KEY = Symbol.for('drizzle-solid.tests.shared-xpod-runtime');
+
+function getSharedRuntimeStore(): SharedRuntimeStore {
+  const globalState = globalThis as typeof globalThis & {
+    [SHARED_RUNTIME_STORE_KEY]?: SharedRuntimeStore;
+  };
+
+  if (!globalState[SHARED_RUNTIME_STORE_KEY]) {
+    globalState[SHARED_RUNTIME_STORE_KEY] = {
+      runtimePromise: null,
+      stopPromise: null,
+    };
+  }
+
+  return globalState[SHARED_RUNTIME_STORE_KEY]!;
+}
 
 function ensureTrailingSlash(url: string): string {
   return url.endsWith('/') ? url : `${url}/`;
@@ -212,88 +232,110 @@ function resolveExplicitRuntimePort(name: 'gateway' | 'css' | 'api'): number | u
   return parsed;
 }
 
-async function allocateLoopbackPort(explicitPort?: number): Promise<number> {
-  if (explicitPort) {
-    return explicitPort;
-  }
-
-  return await new Promise<number>((resolve, reject) => {
-    const server = net.createServer();
-    server.unref();
-    server.once('error', reject);
-    server.listen({ host: '127.0.0.1', port: 0, exclusive: true }, () => {
-      const address = server.address();
-      if (!address || typeof address === 'string') {
-        server.close();
-        reject(new Error('Failed to allocate loopback port for xpod runtime'));
-        return;
-      }
-
-      const { port } = address;
-      server.close((error) => {
-        if (error) {
-          reject(error);
-          return;
-        }
-
-        resolve(port);
-      });
-    });
-  });
-}
-
-async function allocateRuntimePorts(): Promise<{ gatewayPort: number; cssPort: number; apiPort: number }> {
-  const gatewayPort = await allocateLoopbackPort(resolveExplicitRuntimePort('gateway'));
-  const cssPort = await allocateLoopbackPort(resolveExplicitRuntimePort('css'));
-  const apiPort = await allocateLoopbackPort(resolveExplicitRuntimePort('api'));
+function resolveExplicitRuntimePorts(): Partial<Record<'gatewayPort' | 'cssPort' | 'apiPort', number>> {
+  const gatewayPort = resolveExplicitRuntimePort('gateway');
+  const cssPort = resolveExplicitRuntimePort('css');
+  const apiPort = resolveExplicitRuntimePort('api');
 
   return {
-    gatewayPort,
-    cssPort,
-    apiPort,
+    ...(gatewayPort !== undefined ? { gatewayPort } : {}),
+    ...(cssPort !== undefined ? { cssPort } : {}),
+    ...(apiPort !== undefined ? { apiPort } : {}),
   };
 }
 
+function isAddressInUseError(error: unknown): boolean {
+  const message = error instanceof Error ? `${error.name}: ${error.message}` : String(error);
+  return message.includes('EADDRINUSE') || message.includes('address already in use');
+}
+
+async function delay(ms: number): Promise<void> {
+  await new Promise((resolve) => setTimeout(resolve, ms));
+}
 
 export async function startNoAuthXpodRuntime(): Promise<RuntimeHandle> {
   const seedConfigPath = resolveSeedConfigPath();
-  const runtimePorts = await allocateRuntimePorts();
+  const runtimePorts = resolveExplicitRuntimePorts();
+  const hasExplicitRuntimePorts = Object.keys(runtimePorts).length > 0;
+  const runtimeLogLevel = process.env.XPOD_RUNTIME_LOG_LEVEL ?? 'error';
+  const previousCssLoggingLevel = process.env.CSS_LOGGING_LEVEL;
   const options = {
     mode: 'local',
     open: true,
     transport: 'socket',
     bindHost: '127.0.0.1',
     baseUrl: DEFAULT_INPROCESS_BASE_URL,
-    logLevel: 'warn',
+    logLevel: runtimeLogLevel,
     ...runtimePorts,
     env: seedConfigPath ? { CSS_SEED_CONFIG: seedConfigPath } : undefined,
   };
 
-  if (getRuntimeSourcePreference() === 'local') {
-    const runtimeModule = await loadLocalRuntimeModule();
-    return await runtimeModule.startXpodRuntime(options);
-  }
+  process.env.CSS_LOGGING_LEVEL = runtimeLogLevel;
 
   try {
-    const runtimeModule = await loadPublishedRuntimeModule();
-    return await runtimeModule.startXpodRuntime(options);
-  } catch (packageError) {
-    throw new Error(
-      `Unable to start xpod runtime from npm package. ` +
-      `package error: ${String(packageError)}. ` +
-      `Use XPOD_RUNTIME_SOURCE=local only for explicit local debugging.`
-    );
+    if (getRuntimeSourcePreference() === 'local') {
+      const runtimeModule = await loadLocalRuntimeModule();
+      for (let attempt = 1; attempt <= 3; attempt += 1) {
+        try {
+          return await runtimeModule.startXpodRuntime(options);
+        } catch (error) {
+          if (hasExplicitRuntimePorts || !isAddressInUseError(error) || attempt === 3) {
+            throw error;
+          }
+          await delay(attempt * 100);
+        }
+      }
+    }
+
+    try {
+      const runtimeModule = await loadPublishedRuntimeModule();
+      for (let attempt = 1; attempt <= 3; attempt += 1) {
+        try {
+          return await runtimeModule.startXpodRuntime(options);
+        } catch (error) {
+          if (hasExplicitRuntimePorts || !isAddressInUseError(error) || attempt === 3) {
+            throw error;
+          }
+          await delay(attempt * 100);
+        }
+      }
+    } catch (packageError) {
+      throw new Error(
+        `Unable to start xpod runtime from npm package. ` +
+        `package error: ${String(packageError)}. ` +
+        `Use XPOD_RUNTIME_SOURCE=local only for explicit local debugging.`
+      );
+    }
+  } finally {
+    if (previousCssLoggingLevel === undefined) {
+      delete process.env.CSS_LOGGING_LEVEL;
+    } else {
+      process.env.CSS_LOGGING_LEVEL = previousCssLoggingLevel;
+    }
   }
+
+  throw new Error('Unable to start in-process xpod runtime after retry attempts.');
 }
 
 export async function getSharedNoAuthXpodRuntime(): Promise<RuntimeHandle> {
-  if (!sharedRuntimePromise) {
-    sharedRuntimePromise = startNoAuthXpodRuntime().catch((error) => {
-      sharedRuntimePromise = null;
+  const store = getSharedRuntimeStore();
+
+  if (store.stopPromise) {
+    await store.stopPromise;
+  }
+
+  if (!store.runtimePromise) {
+    const runtimePromise = startNoAuthXpodRuntime().catch((error) => {
+      if (store.runtimePromise === runtimePromise) {
+        store.runtimePromise = null;
+      }
       throw error;
     });
+
+    store.runtimePromise = runtimePromise;
   }
-  return await sharedRuntimePromise;
+
+  return await store.runtimePromise;
 }
 
 async function stopRuntimeWithTimeout(runtime: RuntimeHandle | null, timeoutMs = 15000): Promise<void> {
@@ -321,14 +363,25 @@ async function stopRuntimeWithTimeout(runtime: RuntimeHandle | null, timeoutMs =
 }
 
 export async function stopSharedNoAuthXpodRuntime(): Promise<void> {
-  if (!sharedRuntimePromise) {
+  const store = getSharedRuntimeStore();
+
+  if (!store.runtimePromise) {
     return;
   }
 
-  const runtime = await sharedRuntimePromise.catch(() => null);
-  sharedRuntimePromise = null;
-  seededPodPromises.clear();
-  await stopRuntimeWithTimeout(runtime);
+  if (!store.stopPromise) {
+    const runtimePromise = store.runtimePromise;
+    store.stopPromise = (async () => {
+      const runtime = await runtimePromise.catch(() => null);
+      store.runtimePromise = null;
+      seededPodPromises.clear();
+      await stopRuntimeWithTimeout(runtime);
+    })().finally(() => {
+      store.stopPromise = null;
+    });
+  }
+
+  await store.stopPromise;
 }
 
 async function parseJson(response: Response): Promise<any> {

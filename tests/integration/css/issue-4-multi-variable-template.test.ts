@@ -1,5 +1,5 @@
 import { describe, it, expect, beforeAll } from 'vitest';
-import { drizzle, podTable, string, eq } from '../../../src';
+import { drizzle, podTable, string } from '../../../src';
 import { createTestSession, ensureContainer } from './helpers';
 
 const SCHEMA = {
@@ -40,15 +40,12 @@ describe('Issue #4: multi-variable template queries', () => {
     });
 
     const fullUri = `${containerUrl}messages/chat-1/messages.ttl#msg-123`;
-    const rows = await db.select()
-      .from(Message)
-      .where(eq(Message.id, fullUri));
+    const row = await db.findByIri(Message, fullUri);
 
-    expect(rows).toHaveLength(1);
-    expect(rows[0]?.id).toBe('msg-123');
-    expect(rows[0]?.chatId).toBe('chat-1');
-    expect(rows[0]?.content).toBe('hello issue 4');
-    expect(rows[0]?.['@id']).toBe(fullUri);
+    expect(row?.id).toBe('msg-123');
+    expect(row?.chatId).toBe('chat-1');
+    expect(row?.content).toBe('hello issue 4');
+    expect(row?.['@id']).toBe(fullUri);
   });
 
   it('should fail clearly when only short id is provided', async () => {
@@ -69,9 +66,7 @@ describe('Issue #4: multi-variable template queries', () => {
     const db = drizzle(session, { schema: { Message } });
 
     await expect(async () => {
-      await db.select()
-        .from(Message)
-        .where(eq(Message.id, 'msg-123'));
-    }).rejects.toThrow(/missing required variable.*chatId/i);
+      await db.findByLocator(Message, { id: 'msg-123' });
+    }).rejects.toThrow(/Missing \[chatId\]/i);
   });
 });

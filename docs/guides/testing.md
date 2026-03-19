@@ -2,6 +2,26 @@
 
 This document is the canonical testing reference for `drizzle-solid` and is the source we should keep aligned when publishing repository docs externally, including Context7 snapshots.
 
+## Scope and precedence
+
+Use this file as the current testing contract.
+
+The following files are kept for background, planning history, or progress tracking only, and must not override this guide:
+
+- `ACTION-PLAN.md`
+- `TESTING_STRATEGY.md`
+- `COMPLETE-REPORT.md`
+- `EXECUTION-SUMMARY.md`
+- `docs/TEST-STRATEGY.md`
+- `docs/TEST-DIMENSIONS.md`
+- `docs/TEST-DIMENSIONS-COMPLETE.md`
+- `docs/TEST-COMPLETENESS.md`
+- `docs/DRIZZLE-ORM-MAPPING.md`
+- `docs/TEST-ANALYSIS.md`
+- `FINAL-SUMMARY.md`
+
+If a historical note conflicts with maintained tests, public docs, or current support scope, follow this guide.
+
 ## Goals
 
 The test system answers five different questions:
@@ -58,6 +78,47 @@ This command defaults to the xpod in-process runtime when remote Solid credentia
 
 The in-process mode still manages real CSS/xpod services and socket transport under the hood; it is not a mock runtime.
 
+### Integration log policy
+
+Integration runs should be quiet by default.
+
+Rules:
+
+- Treat test output as signal, not tracing
+- Real integration runs default to suppressing `console.*` chatter in `vitest.setup.ts`; keep Vitest failure output, not trace spam
+- The in-process xpod runtime should default to `logLevel=error`; set `XPOD_RUNTIME_LOG_LEVEL` only when you intentionally need CSS/xpod internals
+- Keep failure output visible; only mute repeatable non-actionable lines
+- Set `DRIZZLE_SOLID_TEST_VERBOSE=true` when debugging runtime startup, dependency patching, or low-level xpod/SPARQL flows
+
+### In-process runtime invariants
+
+The in-process xpod runtime is part of the real integration environment, so treat its lifecycle as test infrastructure, not as per-file fixture state.
+
+Rules:
+
+- Do not stop the shared in-process runtime from `setupFiles` `afterAll`; in Vitest that hook is file-scoped, not suite-global
+- If global teardown is needed, use Vitest `globalSetup` / `teardown`, not per-file hooks pretending to be global cleanup
+- Keep runtime startup and shutdown centralized in `tests/integration/css/xpod-runtime.ts`
+- If a suite needs a Pod session, ask the shared helper for it; do not create competing runtime managers in test files
+
+### In-process port policy
+
+Port allocation for xpod must be owned by the runtime unless a developer explicitly pins ports for debugging.
+
+Rules:
+
+- Do not pre-allocate random loopback ports in the test helper and then hand them to xpod later
+- The probe-then-bind pattern is racy and can still produce transient `EADDRINUSE` failures under fast restart or concurrent teardown
+- By default, let `@undefineds.co/xpod/runtime` choose its own ports
+- Only pass `XPOD_RUNTIME_GATEWAY_PORT`, `XPOD_RUNTIME_CSS_PORT`, or `XPOD_RUNTIME_API_PORT` through when those env vars are explicitly set
+- If startup still hits a transient `EADDRINUSE` while ports are not pinned, retry startup in the helper; do not change test semantics to work around infrastructure races
+
+Reasoning:
+
+- Runtime-owned port binding keeps the choose-and-bind decision atomic
+- Explicit pinned ports remain available for local debugging
+- The retry path is a guardrail for short-lived socket release races, not a substitute for correct port ownership
+
 ### Parity tests
 
 Parity work is tracked from upstream Drizzle tests, but the generated output is not the long-term source of truth.
@@ -66,6 +127,9 @@ Parity work is tracked from upstream Drizzle tests, but the generated output is 
 - Summary: `tests/fixtures/drizzle-parity/summary.md`
 - Generator: `yarn parity:generate`
 - Main landing zone today: `tests/integration/css/drizzle-*.test.ts`
+- `queue.json` is behavior-level: repeated dialect variants and wrapper suites such as `common` are collapsed into one planning item
+- Generated boards / `generated-parity` suites only list remaining non-skip items, not already-implemented coverage
+- If the upstream `drizzle-orm` checkout is absent locally, the generator falls back to the committed `all-tests.json` manifest
 
 Parity status meanings:
 
@@ -80,6 +144,20 @@ Rules:
 - Keep hand-written integration suites as the maintained asset
 - Treat generated skeletons as disposable scaffolding
 - Only promote a parity case when it represents a real user-visible behavior we want to support
+
+How to read the numbers:
+
+- `Unique parity cases` = the deduplicated upstream candidate pool, not the promised support surface
+- `skip` = reviewed and intentionally excluded from the current Solid support surface
+- `active` = `direct + adapted + investigate`; this is the implementation-tracked scope
+- `implemented` is measured against `active`, not against all unique candidates
+
+So if the summary says `886 unique`, `832 skip`, `54 active`, `54 implemented`, the correct reading is:
+
+- candidate pool: `886`
+- current target surface: `54`
+- implemented within current target surface: `54 / 54`
+- intentionally out of current scope: `832`
 
 ### Example verification
 
@@ -119,6 +197,31 @@ Examples:
 
 - `tests/unit/core/find-by-iri-regression.test.ts`
 - `tests/integration/css/issues/issue-123-returning.test.ts`
+
+## Execution-path coverage
+
+Feature buckets alone are not enough for planner / optimizer bugs.
+
+When a regression depends on how a query is executed rather than only what API was called, add proof for the execution path interaction itself.
+
+Typical hotspots in this repository:
+
+- exact-subject `FILTER`
+- named-node `FILTER IN`
+- wide `OPTIONAL`
+- multi-valued `OPTIONAL`
+- multi-pattern join / hydration interactions
+- exact-target paths unexpectedly widening into collection scans
+
+Recommended proof shape:
+
+1. a unit test for plan or SPARQL generation when that path is observable
+2. an integration test against real CSS / xpod behavior
+3. a named regression test for the exact interaction that previously failed
+
+For execution-mode-shift tests, prefer stateful/mutable builder doubles over immutable stubs so the test can catch bugs caused by reusing a builder after `.where()` / `.limit()` / similar mutating calls.
+
+If the chosen product rule is “do not silently degrade”, the regression should assert the explicit failure path rather than reintroducing a scan fallback in the name of convenience.
 
 ## Ownership Rules
 

@@ -4,6 +4,18 @@
 
 本文档定义了处理用户报告的 Issue 的标准流程和最佳实践。
 
+## Product semantics precedence
+
+这份文档定义的是 **issue 处理流程**，不是仓库级产品语义来源。
+
+规则是：
+
+- issue / PR / 修复过程可以暴露问题
+- 但跨 API 的执行语义、支持边界、建模口径，必须沉淀到 `docs/guides/decisions/`
+- 当前 `exact-target 不退化` 的全局原则，以 `docs/guides/decisions/0001-keep-exact-target-paths-exact.md` 为准
+
+因此，如果某个 issue 最终影响多个 API 路径，不要只在 issue 文档里解释，要补 decision record。
+
 ## Issue 分析流程
 
 ### 1. 理解问题和确认用户样例
@@ -256,8 +268,8 @@ const Message = podTable('Message', {
 });
 
 // 查询失败
-await db.select().from(Message).where(eq(Message.id, 'msg-123'));
-// Error: missing required variable(s) [chatId]
+await db.findByLocator(Message, { id: 'msg-123' });
+// Error: requires a complete locator ... Missing [chatId]
 ```
 
 **根本原因**：
@@ -271,21 +283,14 @@ await db.select().from(Message).where(eq(Message.id, 'msg-123'));
 
 **实现**：
 ```typescript
-// src/core/resource-resolver/document-resolver.ts
-if (idValues.length > 0 && !allVarsPresent) {
-  const idValue = idValues[0];
-  const isFullUri = idValue.includes('://') || idValue.startsWith('http');
+// 知道完整 IRI：走 findByIri()
+await db.findByIri(Message, fullUri);
 
-  if (isFullUri) {
-    return [this.getResourceUrlForSubject(idValue)];
-  }
+// 知道全部模板变量：走 findByLocator()
+await db.findByLocator(Message, { chatId: 'chat-1', id: 'msg-123' });
 
-  throw new Error(
-    `Cannot resolve subjectTemplate '${template}': ` +
-    `missing required variable(s) [${missing.join(', ')}]. ` +
-    `Add eq(table.${missing[0]}, value) to your where clause.`
-  );
-}
+// 模板变量不全：抛出明确错误
+await db.findByLocator(Message, { id: 'msg-123' });
 ```
 
 ### 模式 2: FILTER on Optional Fields
@@ -469,9 +474,10 @@ const Message = podTable('Message', {
 });
 
 // 查询代码
-const messages = await db.select()
-  .from(Message)
-  .where(eq(Message.id, 'http://.../chat-1/messages.ttl#msg-123'));
+const message = await db.findByIri(
+  Message,
+  'http://.../chat-1/messages.ttl#msg-123',
+);
 
 // 期望：返回 1 条记录
 // 实际：抛出错误 "missing required variable(s) [chatId]"
@@ -488,7 +494,7 @@ const messages = await db.select()
 假设用户这样写：
 ```typescript
 // 只提供短 id，没有提供 chatId
-await db.select().from(Message).where(eq(Message.id, 'msg-123'));
+await db.findByLocator(Message, { id: 'msg-123' });
 ```
 
 这种情况下：
@@ -529,22 +535,18 @@ describe('Issue #4: Multi-variable template queries', () => {
 
     // 用户的查询代码（完整 URI）
     const fullUri = `${containerUrl}messages/chat-1/messages.ttl#msg-123`;
-    const messages = await db.select()
-      .from(Message)
-      .where(eq(Message.id, fullUri));
+    const message = await db.findByIri(Message, fullUri);
 
     // 用户期望的结果
-    expect(messages.length).toBe(1);
-    expect(messages[0].content).toBe('Test Message');
+    expect(message).not.toBeNull();
+    expect(message?.content).toBe('Test Message');
   });
 
   it('should throw clear error with short id (edge case)', async () => {
     // 测试边界情况：短 id 缺少变量
     await expect(async () => {
-      await db.select()
-        .from(Message)
-        .where(eq(Message.id, 'msg-123')); // 短 id，缺少 chatId
-    }).rejects.toThrow(/missing required variable.*chatId/);
+      await db.findByLocator(Message, { id: 'msg-123' }); // 短 id，缺少 chatId
+    }).rejects.toThrow(/requires a complete locator.*chatId/);
   });
 });
 ```
@@ -630,9 +632,7 @@ drizzle-solid 支持多变量模板如 `{chatId}/messages.ttl#{id}`，
 
 \`\`\`typescript
 const fullUri = 'http://pod.example/messages/chat-1/messages.ttl#msg-123';
-const messages = await db.select()
-  .from(Message)
-  .where(eq(Message.id, fullUri));
+const message = await db.findByIri(Message, fullUri);
 \`\`\`
 
 系统会直接定位到该资源，无需扫描容器。
@@ -642,14 +642,10 @@ const messages = await db.select()
 如果只有短 id，需要提供所有模板变量：
 
 \`\`\`typescript
-const messages = await db.select()
-  .from(Message)
-  .where(
-    and(
-      eq(Message.id, 'msg-123'),
-      eq(Message.chatId, 'chat-1')
-    )
-  );
+const message = await db.findByLocator(Message, {
+  chatId: 'chat-1',
+  id: 'msg-123',
+});
 \`\`\`
 
 系统会解析完整路径并查询。
@@ -658,13 +654,10 @@ const messages = await db.select()
 
 \`\`\`typescript
 // ❌ 错误：缺少 chatId 变量
-await db.select()
-  .from(Message)
-  .where(eq(Message.id, 'msg-123'));
+await db.findByLocator(Message, { id: 'msg-123' });
 
-// Error: Cannot resolve subjectTemplate '{chatId}/messages.ttl#{id}':
-// missing required variable(s) [chatId].
-// Add eq(table.chatId, value) to your where clause.
+// Error: findByLocator requires a complete locator ...
+// Missing [chatId].
 \`\`\`
 
 ## 为什么这样设计？

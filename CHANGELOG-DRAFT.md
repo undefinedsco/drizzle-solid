@@ -392,7 +392,7 @@ npm test
 - [CSS Notifications](./docs/guides/css-notifications.md) - 实时通知支持（79KB）
 
 ### 开发指南
-- [测试策略](./TESTING_STRATEGY.md) - 测试方法和覆盖
+- [测试指南](./docs/guides/testing.md) - 当前测试方法、分层和验证要求
 - [快速开始](./docs/quick-start-local.md) - 本地开发入门
 - [文档索引](./docs/README.md) - 完整文档导航
 

@@ -1,9 +1,9 @@
 {
-  "generatedAt": "2026-03-07T15:40:53.044Z",
+  "generatedAt": "2026-03-17T15:19:40.513Z",
   "sourceRoot": "/tmp/drizzle-orm/integration-tests/tests",
   "totalFiles": 94,
   "totalTests": 2499,
-  "totalUniqueCases": 895,
+  "totalUniqueCases": 886,
   "totalsByStatus": {
     "direct": 81,
     "adapted": 74,

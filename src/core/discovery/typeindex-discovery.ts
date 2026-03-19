@@ -24,7 +24,6 @@ export class TypeIndexDiscovery implements DataDiscovery {
   async register(table: PodTable, _options?: RegisterOptions): Promise<void> {
     const skipTypeIndex = !table.shouldRegisterTypeIndex?.();
     if (skipTypeIndex) {
-      console.log(`Table ${table.config.name} has autoRegister disabled, skipping TypeIndex registration`);
       return;
     }
 
@@ -78,7 +77,6 @@ export class TypeIndexDiscovery implements DataDiscovery {
 
       // 注册/更新
       await this.manager.registerType(entry);
-      console.log(`Table ${table.config.name} registered to TypeIndex with path: ${instanceContainer}`);
     } catch (error: unknown) {
       this.handleRegistrationError(error, entry, visibility);
     }

@@ -8,6 +8,12 @@ import { BinaryExpression, LogicalExpression, UnaryExpression, SPARQLExpression 
 
 // 导出新的类型
 export type QueryCondition = BinaryExpression | LogicalExpression | UnaryExpression;
+export type PublicQueryCondition = QueryCondition;
+export type PublicWhereObject = Omit<Record<string, unknown>, 'id' | '@id'> & {
+  id?: never;
+  '@id'?: never;
+};
+export type PublicWhereInput = PublicWhereObject | PublicQueryCondition;
 
 // 定义一个宽松的列类型，接受任何 PodColumnBase 变体
 type AnyColumn = PodColumnBase;

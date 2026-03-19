@@ -107,4 +107,24 @@ const table = new PodTable('profile', {
       expect.objectContaining({ type: 'SELECT' })
     );
   });
+
+  it('uses OPTIONS when probing a conventional SPARQL sidecar endpoint', async () => {
+    const dialect = createDialect(fetchMock);
+    const discoverTable = new PodTable('items', {
+      id: new PodStringColumn('id', { primaryKey: true, predicate: '@id' })
+    }, {
+      containerPath: '/items/',
+      base: '/items/',
+      type: 'http://schema.org/Thing'
+    });
+
+    fetchMock.mockResolvedValueOnce({ ok: true, status: 204 } as Response);
+
+    await (dialect as any).tryDiscoverSparqlEndpoint(discoverTable, 'https://pod.example/ganbb/items/');
+
+    expect(fetchMock).toHaveBeenCalledWith('https://pod.example/ganbb/items/-/sparql', {
+      method: 'OPTIONS'
+    });
+    expect(discoverTable.getSparqlEndpoint()).toBe('https://pod.example/ganbb/items/-/sparql');
+  });
 });

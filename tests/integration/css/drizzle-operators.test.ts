@@ -154,8 +154,8 @@ describe('Drizzle ORM OPERATORS Tests', () => {
   test('or operator - fragment mode', async () => {
     const results = await db.select().from(TestTable)
       .where(or(
-        eq(TestTable.id, 'test-1'),
-        eq(TestTable.id, 'test-5')
+        eq(TestTable.name, 'Item One'),
+        eq(TestTable.name, 'Another')
       ));
 
     expect(results).toBeDefined();
@@ -173,7 +173,7 @@ describe('Drizzle ORM OPERATORS Tests', () => {
 
   test('inArray operator - fragment mode', async () => {
     const results = await db.select().from(TestTable)
-      .where(inArray(TestTable.id, ['test-1', 'test-2', 'test-3']));
+      .where(inArray(TestTable.name, ['Item One', 'Item Two', 'Item Three']));
 
     expect(results).toBeDefined();
     expect(results.length).toBe(3);
@@ -181,7 +181,7 @@ describe('Drizzle ORM OPERATORS Tests', () => {
 
   test('notInArray operator - fragment mode', async () => {
     const results = await db.select().from(TestTable)
-      .where(notInArray(TestTable.id, ['test-1', 'test-2']));
+      .where(notInArray(TestTable.name, ['Item One', 'Item Two']));
 
     expect(results).toBeDefined();
     expect(results.length).toBeGreaterThan(0);
@@ -271,7 +271,7 @@ describe('Drizzle ORM OPERATORS Tests', () => {
 
   test('inArray with single value', async () => {
     const results = await db.select().from(TestTable)
-      .where(inArray(TestTable.id, ['test-3']));
+      .where(inArray(TestTable.name, ['Item Three']));
 
     expect(results).toBeDefined();
     expect(results.length).toBe(1);
@@ -280,7 +280,7 @@ describe('Drizzle ORM OPERATORS Tests', () => {
 
   test('empty result set', async () => {
     const results = await db.select().from(TestTable)
-      .where(eq(TestTable.id, 'non-existent-id'));
+      .where(eq(TestTable.name, 'non-existent-item'));
 
     expect(results).toBeDefined();
     expect(results.length).toBe(0);
@@ -322,7 +322,7 @@ describe('Drizzle ORM OPERATORS Tests', () => {
 
   test('inArray with empty array', async () => {
     const results = await db.select().from(TestTable)
-      .where(inArray(TestTable.id, []));
+      .where(inArray(TestTable.name, []));
 
     expect(results).toBeDefined();
     expect(results.length).toBe(0);
@@ -330,7 +330,7 @@ describe('Drizzle ORM OPERATORS Tests', () => {
 
   test('notInArray with empty array', async () => {
     const results = await db.select().from(TestTable)
-      .where(notInArray(TestTable.id, []));
+      .where(notInArray(TestTable.name, []));
 
     expect(results).toBeDefined();
     expect(results.length).toBe(5);
@@ -343,15 +343,11 @@ describe('Drizzle ORM OPERATORS Tests', () => {
       token: 'A',
     });
 
-    await db.update(CharTable)
-      .set({ token: 'B' })
-      .where(eq(CharTable.id, 'char-update-1'));
+    await db.updateByLocator(CharTable, { id: 'char-update-1' }, { token: 'B' });
 
-    const results = await db.select().from(CharTable)
-      .where(eq(CharTable.id, 'char-update-1'));
-
-    expect(results).toHaveLength(1);
-    expect(results[0]?.token).toBe('B');
+    const record = await db.findByLocator(CharTable, { id: 'char-update-1' });
+    expect(record).not.toBeNull();
+    expect(record?.token).toBe('B');
   });
 
   test('char delete', async () => {
@@ -363,9 +359,7 @@ describe('Drizzle ORM OPERATORS Tests', () => {
     await db.delete(CharTable)
       .where(eq(CharTable.token, 'Z'));
 
-    const results = await db.select().from(CharTable)
-      .where(eq(CharTable.id, 'char-delete-1'));
-
-    expect(results).toHaveLength(0);
+    const record = await db.findByLocator(CharTable, { id: 'char-delete-1' });
+    expect(record).toBeNull();
   });
 });

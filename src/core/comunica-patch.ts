@@ -61,7 +61,6 @@ const patchActionObserverHttp = (requireModule: NodeRequire | null, moduleName: 
         return originalOnRun.call(this, actor, _action, _output);
       };
 
-      console.log(`[Patch] Successfully patched ActionObserverHttp.onRun in ${moduleName}`);
       return true;
     }
     return false;

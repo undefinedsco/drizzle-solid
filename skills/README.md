@@ -12,6 +12,11 @@ These skills are meant to complement:
 
 They are the canonical public skill sources for this repository. Future Context7 Skills publishing should derive from this directory, not from ad-hoc chat prompts.
 
+Testing-specific rule:
+
+- `docs/guides/testing.md` is the canonical testing policy
+- historical test strategy/report files in the repo root or `docs/` are background inputs only; they do not override `docs/guides/testing.md`
+
 ## Included skills
 
 - `solid-modeling` — model Solid/RDF concepts, classes, predicates, links, and ownership boundaries
@@ -36,6 +41,12 @@ Stable cross-skill modeling rule:
 - use `subClassOf` for class hierarchy
 - keep one authoritative, most-specific instance `rdf:type` by default
 - do not duplicate the same class-membership meaning into parent `rdf:type` materialization plus a parallel string `kind/type` field unless the semantics are genuinely different
+
+Stable cross-skill execution rule:
+
+- if a path is semantically exact-target, it must stay exact or fail explicitly
+- do not recommend silently widening exact-target paths into scan-style execution
+- for multi-variable `subjectTemplate`, exact-target joins must carry the full locator or a full IRI; this is an application of the rule above
 
 ## Feedback loop
 

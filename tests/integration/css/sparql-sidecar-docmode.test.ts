@@ -11,7 +11,6 @@ import { describe, it, expect, beforeAll } from 'vitest';
 import { createTestSession, ensureContainer } from './helpers';
 import { drizzle } from '../../../src/driver';
 import { podTable, string, timestamp, id, uri, object } from '../../../src/core/schema';
-import { eq } from '../../../src/core/query-conditions';
 
 describe('SPARQL Sidecar with Document Mode', () => {
   let session: any;
@@ -219,11 +218,11 @@ describe('SPARQL Sidecar with Document Mode', () => {
       updatedAt: now,
     }).execute();
 
-    const rows = await db.select().from(chatTable).where(eq(chatTable.id, chatId)).execute();
+    const row = await db.findByLocator(chatTable, { id: chatId });
 
-    expect(rows).toHaveLength(1);
-    expect(Array.isArray(rows[0]?.participants)).toBe(true);
-    expect(rows[0]?.participants).toHaveLength(2);
-    expect(rows[0]?.participants).toEqual(expect.arrayContaining([webId, assistantUri]));
+    expect(row).not.toBeNull();
+    expect(Array.isArray(row?.participants)).toBe(true);
+    expect(row?.participants).toHaveLength(2);
+    expect(row?.participants).toEqual(expect.arrayContaining([webId, assistantUri]));
   }, 60000);
 });

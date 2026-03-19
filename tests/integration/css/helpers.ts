@@ -5,14 +5,21 @@ import { buildTestPodUrl, createNoAuthPodSession, getSharedNoAuthXpodRuntime, is
 
 type FetchLike = typeof fetch;
 
-let envBootstrapped = false;
 let sharedSessionPromise: Promise<Session> | null = null;
+const HELPERS_ENV_STATE_KEY = Symbol.for('drizzle-solid.tests.helpers-env-state');
 
 function bootstrapEnv(): void {
-  if (envBootstrapped) return;
-  loadEnv({ override: false });
-  loadEnv({ path: '.env.local', override: true });
-  envBootstrapped = true;
+  const globalState = globalThis as typeof globalThis & {
+    [HELPERS_ENV_STATE_KEY]?: boolean;
+  };
+
+  if (globalState[HELPERS_ENV_STATE_KEY]) {
+    return;
+  }
+
+  loadEnv({ override: false, quiet: true });
+  loadEnv({ path: '.env.local', override: true, quiet: true });
+  globalState[HELPERS_ENV_STATE_KEY] = true;
 }
 
 export function getSessionPodBase(session: Pick<Session, 'info'> | { info?: { webId?: string } }): string {

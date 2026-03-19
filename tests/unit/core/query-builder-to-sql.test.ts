@@ -4,7 +4,7 @@ import { SelectQueryBuilder } from '@src/core/query-builders/select-query-builde
 import { InsertQueryBuilder } from '@src/core/query-builders/insert-query-builder';
 import { UpdateQueryBuilder } from '@src/core/query-builders/update-query-builder';
 import { DeleteQueryBuilder } from '@src/core/query-builders/delete-query-builder';
-import { podTable, string, int, eq, gt, and, count, sum } from '@src/index';
+import { podTable, string, int, eq, gt, count, sum } from '@src/index';
 
 const Users = podTable('Users', {
   id: string('id').primaryKey().predicate('https://schema.org/identifier'),
@@ -56,7 +56,7 @@ describe('QueryBuilder toSPARQL()', () => {
   it('select toSPARQL should keep exact subject lookup as FILTER equality', () => {
     const query = new SelectQueryBuilder(session)
       .from(DocumentUsers)
-      .where(eq(DocumentUsers.id, 'alice'))
+      .whereByIri('https://pod.example/users/alice/index.ttl#this')
       .toSPARQL();
 
     expect(query.query).toContain('FILTER(?subject =');
@@ -67,7 +67,8 @@ describe('QueryBuilder toSPARQL()', () => {
   it('select toSPARQL should keep non-subject filters alongside exact subject FILTER', () => {
     const query = new SelectQueryBuilder(session)
       .from(DocumentUsers)
-      .where(and(eq(DocumentUsers.id, 'alice'), eq(DocumentUsers.name, 'Alice')))
+      .whereByIri('https://pod.example/users/alice/index.ttl#this')
+      .where({ name: 'Alice' })
       .toSPARQL();
 
     expect(query.query).toContain('?subject = <https://pod.example/users/alice/index.ttl#this>');
@@ -171,7 +172,7 @@ describe('QueryBuilder toSPARQL()', () => {
   it('update toSPARQL should build SPARQL update', () => {
     const query = new UpdateQueryBuilder(session, Users)
       .set({ age: 21 })
-      .where(eq(Users.id, 'user-1'))
+      .whereByIri('https://pod.example/users.ttl#user-1')
       .toSPARQL();
 
     expect(query.type).toBe('UPDATE');
@@ -182,11 +183,19 @@ describe('QueryBuilder toSPARQL()', () => {
 
   it('delete toSPARQL should build SPARQL delete', () => {
     const query = new DeleteQueryBuilder(session, Users)
-      .where(eq(Users.id, 'user-1'))
+      .whereByIri('https://pod.example/users.ttl#user-1')
       .toSPARQL();
 
     expect(query.type).toBe('DELETE');
     expect(query.query).toContain('DELETE');
     expect(query.query).toContain('user-1');
+  });
+
+  it('public where() should reject identifier filters', () => {
+    expect(() =>
+      new SelectQueryBuilder(session)
+        .from(DocumentUsers)
+        .where(eq(DocumentUsers.id, 'alice'))
+    ).toThrow("Using 'id' or '@id' in where() is not supported");
   });
 });

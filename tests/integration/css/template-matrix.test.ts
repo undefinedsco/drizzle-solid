@@ -9,8 +9,6 @@ import {
   podTable,
   string,
   datetime,
-  eq,
-  and,
 } from '../../../src/index';
 import type { SolidDatabase } from '../../../src/driver';
 import type { Session } from '@inrupt/solid-client-authn-node';
@@ -60,8 +58,8 @@ describe('CSS integration: Template Matrix (P0 - Core Functionality)', () => {
         await db.insert(table).values(record);
 
         await expect(async () => {
-          await db.select().from(table).where(eq(table.columns.id, record.id));
-        }).rejects.toThrow(/missing required variable/);
+          await db.findByLocator(table, { id: record.id });
+        }).rejects.toThrow(/requires a complete locator/);
       });
     }
   }
@@ -120,16 +118,13 @@ async function fetchRecord(
   }
 
   if (template.variables.includes('chatId')) {
-    const rows = await db.select().from(table)
-      .where(and(
-        eq(table.columns.chatId, record.chatId),
-        eq(table.columns.id, record.id),
-      ));
-    return rows[0] ?? null;
+    return db.findByLocator(table, {
+      chatId: record.chatId,
+      id: record.id,
+    });
   }
 
-  const rows = await db.select().from(table).where(eq(table.columns.id, record.id));
-  return rows[0] ?? null;
+  return db.findByLocator(table, { id: record.id });
 }
 
 function buildFullUri(template: TemplateConfig, record: Record<string, any>) {

@@ -56,11 +56,11 @@ describe('Exact subject lookup regression', () => {
     expect(query).not.toContain('VALUES ?subject');
 
     const start = Date.now();
-    const results = await db.select().from(testTable).where(eq(testTable.id, id));
+    const result = await db.findByLocator(testTable, { id });
     const duration = Date.now() - start;
 
-    expect(results).toHaveLength(1);
-    expect(results[0].name).toBe('Test Item');
+    expect(result).not.toBeNull();
+    expect(result?.name).toBe('Test Item');
     expect(duration).toBeLessThan(3000);
   }, 30_000);
 
@@ -120,11 +120,69 @@ describe('Exact subject lookup regression', () => {
     expect(query).not.toContain('VALUES ?subject');
 
     const start = Date.now();
-    const results = await db.select().from(contactTable).where(eq(contactTable.id, id));
+    const result = await db.findByLocator(contactTable, { id });
     const duration = Date.now() - start;
 
-    expect(results).toHaveLength(1);
-    expect(results[0].name).toBe('Test Contact');
+    expect(result).not.toBeNull();
+    expect(result?.name).toBe('Test Contact');
+    expect(duration).toBeLessThan(3000);
+  }, 30_000);
+
+  it('keeps exact-subject lookup stable with multi-valued OPTIONAL columns', async () => {
+    const containerPath = `data/exact-lookup-array-${Date.now()}/`;
+    const baseContainer = `${podBase}${containerPath}`;
+    const sparqlEndpoint = `${baseContainer}-/sparql`;
+    await ensureContainer(session, containerPath);
+
+    const bookmarkTable = podTable('bookmark', {
+      id: string('id').primaryKey(),
+      name: string('name').predicate('http://schema.org/name').notNull(),
+      tags: string('tags').array().predicate('http://schema.org/keywords'),
+      links: uri('links').array().predicate('http://schema.org/sameAs'),
+      summary: string('summary').predicate('http://schema.org/description'),
+      category: string('category').predicate('http://schema.org/category'),
+      note: string('note').predicate('https://example.org/note'),
+      externalId: string('externalId').predicate('https://example.org/externalId'),
+    }, {
+      type: 'http://schema.org/CreativeWork',
+      base: baseContainer,
+      subjectTemplate: '{id}.ttl',
+      sparqlEndpoint,
+    });
+
+    const db = drizzle(session);
+    const id = `bookmark-${Date.now()}`;
+    await db.insert(bookmarkTable).values({
+      id,
+      name: 'Execution Path Bookmark',
+      tags: ['solid', 'rdf'],
+      links: ['https://example.org/a', 'https://example.org/b'],
+      summary: 'Execution path regression check',
+      category: 'testing',
+    });
+
+    const converter = new ASTToSPARQLConverter(podBase);
+    const query = converter.convertSimpleSelect(
+      { table: bookmarkTable, where: eq(bookmarkTable.id, id) as any },
+      undefined,
+      undefined,
+      false,
+    ).query;
+
+    expect(query).toContain('FILTER(?subject =');
+    expect(query).not.toContain('VALUES ?subject');
+
+    const start = Date.now();
+    const result = await db.findByLocator(bookmarkTable, { id });
+    const duration = Date.now() - start;
+
+    expect(result).not.toBeNull();
+    expect(result?.name).toBe('Execution Path Bookmark');
+    expect(result?.tags).toEqual(expect.arrayContaining(['solid', 'rdf']));
+    expect(result?.links).toEqual(expect.arrayContaining([
+      'https://example.org/a',
+      'https://example.org/b',
+    ]));
     expect(duration).toBeLessThan(3000);
   }, 30_000);
 
@@ -162,7 +220,8 @@ describe('Exact subject lookup regression', () => {
     expect(query).toContain('VALUES ?subject');
     expect(query).not.toContain('FILTER(?subject IN');
 
-    const results = await db.select().from(testTable).where(inArray(testTable.id, ids));
+    const results = (await Promise.all(ids.map(async (id) => await db.findByLocator(testTable, { id }))))
+      .filter((row): row is NonNullable<typeof row> => row != null);
     expect(results).toHaveLength(2);
   }, 30_000);
 });

@@ -78,7 +78,7 @@ const secretSchema = solidSchema({
   expiresAt: datetime('expiresAt').predicate(VAULT.expiresAt),
 }, {
   type: VAULT.Secret,
-  subjectTemplate: '{id}.ttl',
+  subjectTemplate: '#{id}',
 });
 
 console.log('基类 Secret Schema:');
@@ -136,9 +136,9 @@ async function run(providedSession?: Session) {
 
   console.log('Connected to Pod:', podBase);
 
-  const apiKeys = client.bind(apiKeySchema, { base: `${podBase}data/vault/api-keys/` });
-  const passwords = client.bind(passwordSchema, { base: `${podBase}data/vault/passwords/` });
-  const oauthTokens = client.bind(oauthTokenSchema, { base: `${podBase}data/vault/oauth-tokens/` });
+  const apiKeys = client.bind(apiKeySchema, { base: `${podBase}data/vault/api-keys.ttl` });
+  const passwords = client.bind(passwordSchema, { base: `${podBase}data/vault/passwords.ttl` });
+  const oauthTokens = client.bind(oauthTokenSchema, { base: `${podBase}data/vault/oauth-tokens.ttl` });
 
   console.log('\n绑定的表:');
   console.log('  - apiKeys base:', apiKeys.config.base);

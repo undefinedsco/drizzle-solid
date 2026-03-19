@@ -57,8 +57,8 @@ async function run(providedSession?: Session) {
     content: string('content').predicate('http://schema.org/text'),
     createdAt: datetime('createdAt').predicate('http://schema.org/dateCreated')
   }, {
-    base: `${podBase}data/posts/`,
-    subjectTemplate: '{id}.ttl',
+    base: `${podBase}data/posts.ttl`,
+    subjectTemplate: '#{id}',
     type: 'http://schema.org/CreativeWork'
   });
 

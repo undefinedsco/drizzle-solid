@@ -137,11 +137,9 @@ describe('Scenario: Chat Application', () => {
     });
 
     it('should update chat title', async () => {
-      const { eq } = await import('../../../../src/index');
-
-      await db.update(chatTable)
-        .set({ title: 'My Updated Chat Room' })
-        .where(eq(chatTable.id, 'my-chat-room'));
+      await db.updateByLocator(chatTable, { id: 'my-chat-room' }, {
+        title: 'My Updated Chat Room',
+      });
 
       const updated = await db.select().from(chatTable);
       const chat = updated.find((c: any) => c.id === 'my-chat-room');
@@ -261,12 +259,9 @@ describe('Scenario: Chat Application', () => {
 
   describe('Delete operations', () => {
     it('should require explicit @id for deleting a date-partitioned message', async () => {
-      const { eq } = await import('../../../../src/index');
-
       await expect(
-        db.delete(messageTable)
-          .where(eq(messageTable.id, 'msg-003'))
-      ).rejects.toThrow('Use an explicit @id');
+        db.deleteByLocator(messageTable, { id: 'msg-003' })
+      ).rejects.toThrow(/requires a complete locator/);
     });
 
     it('should delete a message by IRI', async () => {
@@ -284,10 +279,7 @@ describe('Scenario: Chat Application', () => {
     });
 
     it('should delete a chat', async () => {
-      const { eq } = await import('../../../../src/index');
-
-      await db.delete(chatTable)
-        .where(eq(chatTable.id, 'work-chat'));
+      await db.deleteByLocator(chatTable, { id: 'work-chat' });
 
       const remaining = await db.select().from(chatTable);
       const deleted = remaining.find((c: any) => c.id === 'work-chat');

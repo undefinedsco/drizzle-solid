@@ -2,7 +2,6 @@ import { describe, it, expect, beforeAll } from 'vitest';
 import { createTestSession, ensureContainer } from './helpers';
 import { drizzle } from '../../../src/driver';
 import { podTable, string } from '../../../src/core/schema';
-import { eq } from '../../../src/core/query-conditions';
 
 async function waitForValue<T>(
   read: () => Promise<T>,
@@ -105,7 +104,11 @@ describe('SPARQL Endpoint Mode Integration', () => {
     console.log('item-2 successfully queried via LDP GET.');
 
     // 7. 尝试 UPDATE (item-2)
-    await sparqlDb.update(sparqlTable).set({ name: 'Updated SPARQL Item 2' }).where(eq(sparqlTable.id, newItemId));
+    await sparqlDb.updateByIri(
+      sparqlTable,
+      sparqlTable.resolveUri(newItemId),
+      { name: 'Updated SPARQL Item 2' },
+    );
     
     // 验证 UPDATE 是否生效
     const updatedName = await waitForValue(
@@ -120,7 +123,7 @@ describe('SPARQL Endpoint Mode Integration', () => {
     console.log('item-2 successfully updated (via LDP) and verified via LDP GET.');
 
     // 8. 尝试 DELETE (item-2)
-    await sparqlDb.delete(sparqlTable).where(eq(sparqlTable.id, newItemId));
+    await sparqlDb.deleteByIri(sparqlTable, sparqlTable.resolveUri(newItemId));
     
     // 验证 DELETE 是否生效
     let selectResultsAfterDelete = await sparqlDb.select().from(sparqlTable);
@@ -172,14 +175,11 @@ describe('SPARQL Endpoint Mode Integration', () => {
     const content = await session.fetch(aliceResource).then(r => r.text());
     expect(content).toContain('Alice LDP'); 
     
-    // 3. SPARQL SELECT (查到 Alice)
-    const users = await sparqlDb.select().from(userTable);
-    console.log('DEBUG: Document Mode SELECT results (initial):', users);
-    
-    const aliceFound = users.find((u: any) => u.id === aliceId);
-    expect(aliceFound).toBeDefined();
-    expect(aliceFound.name).toBe('Alice LDP');
-    console.log('Document Mode: SPARQL endpoint SUCCESSFULLY saw LDP-written Alice.');
+    // 3. Exact-target read (document mode now requires exact target)
+    const aliceFound = await sparqlDb.findByLocator(userTable, { id: aliceId });
+    expect(aliceFound).not.toBeNull();
+    expect(aliceFound?.name).toBe('Alice LDP');
+    console.log('Document Mode: exact-target read SUCCESSFULLY saw LDP-written Alice.');
     
     // 4. INSERT (Bob)
     // Note: Even with sparqlEndpoint, INSERT uses LDP for Notifications compatibility
@@ -187,25 +187,18 @@ describe('SPARQL Endpoint Mode Integration', () => {
     await sparqlDb.insert(userTable).values({ id: bobId, name: 'Bob SPARQL' });
     console.log('Bob inserted in Document Mode (via LDP).');
 
-    // 5. 再次查询，验证 Alice 和 Bob 都在
-    const usersAfterBob = await sparqlDb.select().from(userTable);
-    console.log('Container discovery after Bob insert (may omit Bob):', usersAfterBob);
-
-    // Container discovery may not list newly inserted documents; attempt an explicit graph query for the container graph
     const bobResource = `${baseContainer}${bobId}.ttl`;
     const usersResource = `${baseContainer}users.ttl`;
-    const userTableWithGraph = podTable('users', { ...userTable.columns }, {
-      ...userTable.config,
-      graph: baseContainer
-    });
-    const usersFromBobGraph = await sparqlDb.select().from(userTableWithGraph);
-    console.log('Explicit graph query results:', usersFromBobGraph);
+    const bobFound = await sparqlDb.findByLocator(userTable, { id: bobId });
+    expect(bobFound).not.toBeNull();
+    expect(bobFound?.name).toBe('Bob SPARQL');
     
     // 验证 LDP GET users.ttl / bob.ttl 的可访问性（记录实际行为）
     const usersRes = await session.fetch(usersResource);
     console.log('users.ttl status', usersRes.status);
     const bobRes = await session.fetch(bobResource);
     console.log('bob.ttl status', bobRes.status);
+    expect(bobRes.ok).toBe(true);
     
     // 终止后续更新/删除操作：服务器未对文档模式进行容器聚合，暂以读可见性验证为主
     return;

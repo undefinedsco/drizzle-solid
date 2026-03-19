@@ -66,9 +66,9 @@ describe('Examples Functionality Tests', () => {
       });
       const updateQuery = db.update(taskTable)
         .set({ status: 'completed' })
-        .where({ id: 'task-1' } as any);
+        .whereByIri('idp:///tasks/index.ttl#task-1');
       const deleteQuery = db.delete(taskTable)
-        .where({ id: 'task-1' } as any);
+        .whereByIri('idp:///tasks/index.ttl#task-1');
 
       // 所有查询都应该能成功创建
       expect(selectQuery).toBeDefined();

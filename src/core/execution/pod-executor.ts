@@ -137,7 +137,6 @@ export class PodExecutor {
     }
 
     const results = await strategy.executeSelect(plan, containerUrl, resourceUrl);
-    console.log(`SELECT operation completed, ${results.length} records affected`);
     return results;
   }
 
@@ -193,7 +192,6 @@ export class PodExecutor {
     }
 
     const results = await strategy.executeInsert(insertPlan, containerUrl, resourceUrl);
-    console.log(`INSERT operation completed, ${results.length} records affected`);
     return results;
   }
 
@@ -322,7 +320,6 @@ export class PodExecutor {
     }
 
     const results = await strategy.executeDelete(deletePlan, containerUrl, resourceUrl);
-    console.log(`DELETE operation completed, ${results.length} records affected`);
     return results;
   }
 }

@@ -196,7 +196,10 @@ export {
   exists,
   notExists,
   conditions,
-  type QueryCondition
+  type QueryCondition,
+  type PublicQueryCondition,
+  type PublicWhereInput,
+  type PublicWhereObject,
 } from './core/query-conditions';
 
 // 排序表达式

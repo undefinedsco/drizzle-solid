@@ -93,11 +93,32 @@ export class ExpressionBuilder {
     }
   }
 
+  private getMissingLocatorVariables(table: PodTable): string[] {
+    const template = table.config?.subjectTemplate ?? '';
+    if (!template) {
+      return [];
+    }
+
+    const reserved = new Set(['id', 'index', 'yyyy', 'MM', 'dd', 'timestamp', 'date']);
+    return Array.from(template.matchAll(/\{([^}]+)\}/g))
+      .map((match) => match[1])
+      .filter((name) => !reserved.has(name));
+  }
+
+  private buildMissingLocatorError(table: PodTable): Error {
+    const template = table.config?.subjectTemplate ?? '';
+    const missing = this.getMissingLocatorVariables(table);
+    return new Error(
+      `Cannot resolve subjectTemplate '${template}': ` +
+      `missing required variable(s) [${missing.join(', ')}] in query condition. ` +
+      `Add eq(table.${missing[0]}, value) to your where clause.`
+    );
+  }
+
   /**
    * Format a subject comparison value, resolving UUID/relative IDs to full URIs.
-   * Returns either a formatted URI like `<http://...>` or a SPARQL expression for partial matching.
    */
-  private formatSubjectValue(value: any, table: PodTable, isVirtualId: boolean): string | { partial: true; id: string } {
+  private formatSubjectValue(value: any, table: PodTable, isVirtualId: boolean): string {
     const raw = String(value ?? '');
     if (raw.startsWith('<') && raw.endsWith('>')) {
       const inner = raw.slice(1, -1);
@@ -108,9 +129,11 @@ export class ExpressionBuilder {
       try {
         const uri = this.uriResolver.resolveSubject(table, { id: normalizedInner });
         return `<${uri}>`;
-      } catch {
-        // Cannot resolve full URI, return partial match indicator
-        return { partial: true, id: normalizedInner };
+      } catch (error) {
+        if (this.getMissingLocatorVariables(table).length > 0) {
+          throw this.buildMissingLocatorError(table);
+        }
+        throw error;
       }
     }
     if (this.uriResolver.isAbsoluteUri(raw)) return `<${raw}>`;
@@ -119,34 +142,12 @@ export class ExpressionBuilder {
     try {
       const uri = this.uriResolver.resolveSubject(table, { id: normalizedId });
       return `<${uri}>`;
-    } catch {
-      // Cannot resolve full URI, return partial match indicator
-      return { partial: true, id: normalizedId };
+    } catch (error) {
+      if (this.getMissingLocatorVariables(table).length > 0) {
+        throw this.buildMissingLocatorError(table);
+      }
+      throw error;
     }
-  }
-
-  /**
-   * Build a STRENDS suffix from the template by substituting {id} and
-   * extracting the meaningful tail. Purely template-driven — no mode branching.
-   *
-   * Examples:
-   *   "#{id}"                       + id=alice       → "#alice"
-   *   "{id}.ttl#it"                 + id=alice       → "/alice.ttl#it"
-   *   "{chatId}/index.ttl#{id}"     + id=thread_abc  → "/index.ttl#thread_abc"
-   */
-  private buildSuffixFromTemplate(id: string, table: PodTable): string {
-    const template = table.config?.subjectTemplate || '{id}.ttl';
-    const replaced = template.replace(/\{id\}/g, id);
-
-    // No unresolved variables → use the full replaced string
-    if (!replaced.includes('{')) {
-      return replaced.startsWith('#') ? replaced : '/' + replaced;
-    }
-
-    // Still has unresolved variables → take the tail after the last one
-    const lastBrace = replaced.lastIndexOf('}');
-    const tail = replaced.substring(lastBrace + 1); // e.g. "/index.ttl#thread_abc"
-    return tail;
   }
 
   /**
@@ -207,6 +208,11 @@ export class ExpressionBuilder {
     }
 
     if (condition.type === 'logical_expr' && condition.operator === 'AND' && Array.isArray(condition.expressions)) {
+      const exactConstraint = this.extractExactSubjectConstraintFromLogical(condition as LogicalExpression, table);
+      if (exactConstraint) {
+        return exactConstraint;
+      }
+
       let values: string[] | null = null;
       const remaining: any[] = [];
 
@@ -282,6 +288,78 @@ export class ExpressionBuilder {
     return values.length > 1 ? { values } : null;
   }
 
+  private extractExactSubjectConstraintFromLogical(
+    condition: LogicalExpression,
+    table: PodTable
+  ): { values: string[]; remainingCondition?: QueryCondition | any } | null {
+    const template = table.config?.subjectTemplate ?? '';
+    if (!template.includes('{')) {
+      return null;
+    }
+
+    const locatorVars = Array.from(template.matchAll(/\{([^}]+)\}/g))
+      .map((match) => match[1])
+      .filter((name) => name !== 'index' && name !== 'yyyy' && name !== 'MM' && name !== 'dd' && name !== 'timestamp' && name !== 'date');
+
+    if (locatorVars.length === 0) {
+      return null;
+    }
+
+    const locatorValues = new Map<string, unknown>();
+    const remaining: QueryCondition[] = [];
+
+    for (const expression of condition.expressions as QueryCondition[]) {
+      const binaryExpression = expression as BinaryExpression;
+      if (binaryExpression.type !== 'binary_expr' || binaryExpression.operator !== '=') {
+        remaining.push(expression);
+        continue;
+      }
+
+      const columnName = this.resolveColumnName(binaryExpression.left);
+      if (!columnName || !locatorVars.includes(columnName) && columnName !== 'id' && columnName !== '@id' && columnName !== 'subject') {
+        remaining.push(expression);
+        continue;
+      }
+
+      locatorValues.set(columnName, binaryExpression.right);
+    }
+
+    if (!locatorValues.has('id') && !locatorValues.has('@id') && !locatorValues.has('subject')) {
+      return null;
+    }
+
+    const locatorRecord: Record<string, unknown> = {};
+    for (const variable of locatorVars) {
+      if (!locatorValues.has(variable)) {
+        return null;
+      }
+      locatorRecord[variable] = locatorValues.get(variable);
+    }
+
+    if (locatorValues.has('@id')) {
+      locatorRecord['@id'] = locatorValues.get('@id');
+    } else if (locatorValues.has('subject')) {
+      locatorRecord['@id'] = locatorValues.get('subject');
+    } else {
+      locatorRecord.id = locatorValues.get('id');
+    }
+
+    const subject = this.uriResolver.resolveSubject(table, locatorRecord);
+
+    if (remaining.length === 0) {
+      return { values: [subject] };
+    }
+
+    if (remaining.length === 1) {
+      return { values: [subject], remainingCondition: remaining[0] };
+    }
+
+    return {
+      values: [subject],
+      remainingCondition: new LogicalExpression('AND', remaining),
+    };
+  }
+
   private buildUnaryExpression(condition: UnaryExpression, table: PodTable): string {
     const op = condition.operator;
     
@@ -346,26 +424,7 @@ export class ExpressionBuilder {
       if (!Array.isArray(value) || value.length === 0) return condition.operator === 'IN' ? 'false' : 'true';
 
       if (isSubject) {
-        // Check if any values need partial matching
-        const results = value.map((v: any) => this.formatSubjectValue(v, table, isVirtualId));
-        const hasPartial = results.some((r: any) => typeof r === 'object' && r.partial);
-
-        if (hasPartial) {
-          // Use STRENDS for partial matching — suffix derived from template
-          const conditions = results.map((r: any) => {
-            if (typeof r === 'object' && r.partial) {
-              const escapedId = r.id.replace(/"/g, '\\"');
-              const suffix = this.buildSuffixFromTemplate(escapedId, table);
-              return `STRENDS(STR(${variable}), "${suffix}")`;
-            }
-            return `(${variable} = ${r})`;
-          });
-          const expr = `(${conditions.join(' || ')})`;
-          return condition.operator === 'NOT IN' ? `!(${expr})` : expr;
-        }
-
-        // All values resolved to full URIs
-        const formattedValues = results.join(', ');
+        const formattedValues = value.map((v: any) => this.formatSubjectValue(v, table, isVirtualId)).join(', ');
         const expr = `${variable} IN(${formattedValues})`;
         return condition.operator === 'NOT IN' ? `!(${expr})` : expr;
       }
@@ -416,23 +475,10 @@ export class ExpressionBuilder {
     }
 
     // Basic operators (=, !=, <, >, <=, >=)
-    let formattedValue: string | string[] | { partial: true; id: string };
+    let formattedValue: string | string[];
 
     if (isSubject) {
         formattedValue = this.formatSubjectValue(value, table, isVirtualId);
-
-        // Handle partial match (when full URI cannot be resolved)
-        if (typeof formattedValue === 'object' && formattedValue.partial) {
-          const escapedId = formattedValue.id.replace(/"/g, '\\"');
-          const suffix = this.buildSuffixFromTemplate(escapedId, table);
-          if (condition.operator === '=') {
-            return `STRENDS(STR(${variable}), "${suffix}")`;
-          } else if (condition.operator === '!=') {
-            return `!STRENDS(STR(${variable}), "${suffix}")`;
-          }
-          // For other operators, fall through with escaped ID
-          formattedValue = `"${escapedId}"`;
-        }
     } else if (isLink) {
         // Resolve link URI
         formattedValue = this.formatLinkValue(value, column, table);

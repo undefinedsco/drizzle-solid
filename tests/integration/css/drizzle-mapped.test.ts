@@ -9,8 +9,6 @@ import {
   podTable,
   string,
   datetime,
-  eq,
-  and,
 } from '../../../src/index';
 import type { SolidDatabase } from '../../../src/driver';
 import type { Session } from '@inrupt/solid-client-authn-node';
@@ -78,21 +76,17 @@ describe('Drizzle ORM Mapped Tests', () => {
   test('Template: #{id}', async () => {
     await db.insert(FragmentTable).values({ id: 'fragment-1', name: 'Fragment Item' });
 
-    const results = await db.select().from(FragmentTable)
-      .where(eq(FragmentTable.id, 'fragment-1'));
-
-    expect(results).toHaveLength(1);
-    expect(results[0].name).toBe('Fragment Item');
+    const record = await db.findByLocator(FragmentTable, { id: 'fragment-1' });
+    expect(record).not.toBeNull();
+    expect(record?.name).toBe('Fragment Item');
   });
 
   test('Template: {id}.ttl', async () => {
     await db.insert(DocumentTable).values({ id: 'document-1', name: 'Document Item' });
 
-    const results = await db.select().from(DocumentTable)
-      .where(eq(DocumentTable.id, 'document-1'));
-
-    expect(results).toHaveLength(1);
-    expect(results[0].name).toBe('Document Item');
+    const record = await db.findByLocator(DocumentTable, { id: 'document-1' });
+    expect(record).not.toBeNull();
+    expect(record?.name).toBe('Document Item');
   });
 
   test('Template: {chatId}/{id}.ttl', async () => {
@@ -102,14 +96,12 @@ describe('Drizzle ORM Mapped Tests', () => {
       name: 'Thread Message',
     });
 
-    const results = await db.select().from(MultiVarTable)
-      .where(and(
-        eq(MultiVarTable.chatId, 'chat-1'),
-        eq(MultiVarTable.id, 'message-1'),
-      ));
-
-    expect(results).toHaveLength(1);
-    expect(results[0].name).toBe('Thread Message');
+    const record = await db.findByLocator(MultiVarTable, {
+      chatId: 'chat-1',
+      id: 'message-1',
+    });
+    expect(record).not.toBeNull();
+    expect(record?.name).toBe('Thread Message');
   });
 
   test('Template: {chatId}/{yyyy}/{MM}/{dd}/{id}.ttl', async () => {

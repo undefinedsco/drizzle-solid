@@ -71,6 +71,7 @@ const DefaultsTable = podTable('DefaultTypeParity', {
 
 const ArrayTypesTable = podTable('ArrayTypeParity', {
   id: string('id').primaryKey().predicate('http://schema.org/identifier'),
+  label: string('label').predicate('http://schema.org/name'),
   tags: string('tags').array().predicate('http://schema.org/keywords'),
   links: uri('links').array().predicate('http://schema.org/sameAs'),
 }, {
@@ -122,12 +123,8 @@ describe('Drizzle ORM TYPE parity tests', () => {
 
     await db.insert(ScalarTypesTable).values(input);
 
-    const rows = await db.select().from(ScalarTypesTable)
-      .where(eq(ScalarTypesTable.id, input.id));
-
-    expect(rows).toHaveLength(1);
-
-    const row = rows[0]!;
+    const row = await db.findByLocator(ScalarTypesTable, { id: input.id });
+    expect(row).not.toBeNull();
     expect(row.id).toBe(input.id);
     expect(row.textValue).toBe(input.textValue);
     expect(row.varcharValue).toBe(input.varcharValue);
@@ -154,11 +151,9 @@ describe('Drizzle ORM TYPE parity tests', () => {
       id: 'default-fn-1',
     });
 
-    const rows = await db.select().from(DefaultsTable)
-      .where(eq(DefaultsTable.id, 'default-fn-1'));
-
-    expect(rows).toHaveLength(1);
-    expect(rows[0]?.slug).toMatch(/^slug-/);
+    const row = await db.findByLocator(DefaultsTable, { id: 'default-fn-1' });
+    expect(row).not.toBeNull();
+    expect(row?.slug).toMatch(/^slug-/);
   });
 
   test('default values should be applied on insert', async () => {
@@ -166,12 +161,8 @@ describe('Drizzle ORM TYPE parity tests', () => {
       id: 'default-1',
     });
 
-    const rows = await db.select().from(DefaultsTable)
-      .where(eq(DefaultsTable.id, 'default-1'));
-
-    expect(rows).toHaveLength(1);
-
-    const row = rows[0]!;
+    const row = await db.findByLocator(DefaultsTable, { id: 'default-1' });
+    expect(row).not.toBeNull();
     expect(row.label).toBe('auto-label');
     expect(row.status).toBe('draft');
     expect(row.enabled).toBe(false);
@@ -190,12 +181,8 @@ describe('Drizzle ORM TYPE parity tests', () => {
       createdAt: customDate,
     });
 
-    const rows = await db.select().from(DefaultsTable)
-      .where(eq(DefaultsTable.id, 'default-2'));
-
-    expect(rows).toHaveLength(1);
-
-    const row = rows[0]!;
+    const row = await db.findByLocator(DefaultsTable, { id: 'default-2' });
+    expect(row).not.toBeNull();
     expect(row.label).toBe('manual-label');
     expect(row.status).toBe('published');
     expect(row.enabled).toBe(true);
@@ -209,11 +196,9 @@ describe('Drizzle ORM TYPE parity tests', () => {
       bigCount: 9_007_199_254_740_991,
     });
 
-    const rows = await db.select().from(ScalarTypesTable)
-      .where(eq(ScalarTypesTable.id, 'bigint-select-1'));
-
-    expect(rows).toHaveLength(1);
-    expect(rows[0]?.bigCount).toBe(9_007_199_254_740_991);
+    const row = await db.findByLocator(ScalarTypesTable, { id: 'bigint-select-1' });
+    expect(row).not.toBeNull();
+    expect(row?.bigCount).toBe(9_007_199_254_740_991);
   });
 
   test('string values with spaces should roundtrip exactly', async () => {
@@ -225,12 +210,10 @@ describe('Drizzle ORM TYPE parity tests', () => {
       metadata: { note: 'keeps spaces' },
     });
 
-    const rows = await db.select().from(ScalarTypesTable)
-      .where(eq(ScalarTypesTable.id, 'spaces-1'));
-
-    expect(rows).toHaveLength(1);
-    expect(rows[0]?.textValue).toBe('value with  double  spaces');
-    expect(rows[0]?.varcharValue).toBe('display name with spaces');
+    const row = await db.findByLocator(ScalarTypesTable, { id: 'spaces-1' });
+    expect(row).not.toBeNull();
+    expect(row?.textValue).toBe('value with  double  spaces');
+    expect(row?.varcharValue).toBe('display name with spaces');
   });
 
   test('timestamp values should normalize timezone offsets', async () => {
@@ -241,12 +224,10 @@ describe('Drizzle ORM TYPE parity tests', () => {
       publishedAt: zonedDate,
     });
 
-    const rows = await db.select().from(ScalarTypesTable)
-      .where(eq(ScalarTypesTable.id, 'timezone-1'));
-
-    expect(rows).toHaveLength(1);
-    expect(rows[0]?.publishedAt).toBeInstanceOf(Date);
-    expect(rows[0]?.publishedAt?.toISOString()).toBe(zonedDate.toISOString());
+    const row = await db.findByLocator(ScalarTypesTable, { id: 'timezone-1' });
+    expect(row).not.toBeNull();
+    expect(row?.publishedAt).toBeInstanceOf(Date);
+    expect(row?.publishedAt?.toISOString()).toBe(zonedDate.toISOString());
   });
 
   test('char field should support update and delete workflows', async () => {
@@ -255,23 +236,17 @@ describe('Drizzle ORM TYPE parity tests', () => {
       charValue: 'A',
     });
 
-    await db.update(ScalarTypesTable)
-      .set({ charValue: 'B' })
-      .where(eq(ScalarTypesTable.id, 'char-flow-1'));
+    await db.updateByLocator(ScalarTypesTable, { id: 'char-flow-1' }, { charValue: 'B' });
 
-    const updatedRows = await db.select().from(ScalarTypesTable)
-      .where(eq(ScalarTypesTable.id, 'char-flow-1'));
-
-    expect(updatedRows).toHaveLength(1);
-    expect(updatedRows[0]?.charValue).toBe('B');
+    const updatedRow = await db.findByLocator(ScalarTypesTable, { id: 'char-flow-1' });
+    expect(updatedRow).not.toBeNull();
+    expect(updatedRow?.charValue).toBe('B');
 
     await db.delete(ScalarTypesTable)
       .where(eq(ScalarTypesTable.charValue, 'B'));
 
-    const remainingRows = await db.select().from(ScalarTypesTable)
-      .where(eq(ScalarTypesTable.id, 'char-flow-1'));
-
-    expect(remainingRows).toHaveLength(0);
+    const remainingRow = await db.findByLocator(ScalarTypesTable, { id: 'char-flow-1' });
+    expect(remainingRow).toBeNull();
   });
 
   test('boolean filters should preserve eq semantics', async () => {
@@ -306,7 +281,7 @@ describe('Drizzle ORM TYPE parity tests', () => {
     });
 
     const rows = await db.select().from(ScalarTypesTable)
-      .where(inArray(ScalarTypesTable.id, []));
+      .where(inArray(ScalarTypesTable.textValue, []));
 
     expect(rows).toHaveLength(0);
   });
@@ -319,8 +294,8 @@ describe('Drizzle ORM TYPE parity tests', () => {
 
     const rows = await db.select().from(ScalarTypesTable)
       .where(and(
-        notInArray(ScalarTypesTable.id, []),
-        inArray(ScalarTypesTable.id, ['empty-not-in-array-1', 'empty-not-in-array-2'])
+        notInArray(ScalarTypesTable.textValue, []),
+        inArray(ScalarTypesTable.textValue, ['Keep 1', 'Keep 2'])
       ));
 
     expect(rows).toHaveLength(2);
@@ -330,6 +305,7 @@ describe('Drizzle ORM TYPE parity tests', () => {
   test('array mapping and parsing should roundtrip string and uri arrays', async () => {
     const input = {
       id: 'array-1',
+      label: 'array-label-1',
       tags: ['alpha', 'beta', 'gamma'],
       links: [
         'https://example.org/resources/a',
@@ -340,7 +316,7 @@ describe('Drizzle ORM TYPE parity tests', () => {
     await db.insert(ArrayTypesTable).values(input);
 
     const rows = await db.select().from(ArrayTypesTable)
-      .where(eq(ArrayTypesTable.id, input.id));
+      .where(eq(ArrayTypesTable.label, input.label));
 
     expect(rows).toHaveLength(1);
 
@@ -361,12 +337,8 @@ describe('Drizzle ORM TYPE parity tests', () => {
       ],
     });
 
-    const rows = await db.select().from(DocumentModelsTable)
-      .where(eq(DocumentModelsTable.id, 'provider-1'));
-
-    expect(rows).toHaveLength(1);
-
-    const row = rows[0]!;
+    const row = await db.findByLocator(DocumentModelsTable, { id: 'provider-1' });
+    expect(row).not.toBeNull();
     expect(row.enabled).toBe(true);
     expect(Array.isArray(row.models)).toBe(true);
     expect(row.models).toHaveLength(2);

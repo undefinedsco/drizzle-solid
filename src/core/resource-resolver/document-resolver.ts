@@ -14,7 +14,6 @@
 import type { PodTable } from '../schema';
 import type { QueryCondition } from '../query-conditions';
 import { BaseResourceResolver } from './base-resolver';
-import { UriResolverImpl } from '../uri/resolver';
 import { getGlobalDebugLogger } from '../utils/debug-logger';
 
 /**
@@ -24,7 +23,22 @@ const DEFAULT_TEMPLATE = '{id}.ttl#it';
 
 export class DocumentResourceResolver extends BaseResourceResolver {
   readonly mode = 'document' as const;
-  private uriResolver = new UriResolverImpl();
+
+  private buildUnsupportedCollectionReadError(table: PodTable): Error {
+    return new Error(
+      `Document-mode collection queries over plain LDP are not supported for table "${table.config.name}". ` +
+      `Configure a global query capability (SPARQL endpoint or index), ` +
+      `or use findByLocator()/findByIri() for exact-target reads.`
+    );
+  }
+
+  private buildUnsupportedCollectionMutationError(table: PodTable): Error {
+    return new Error(
+      `Document-mode collection mutations over plain LDP are not supported for table "${table.config.name}". ` +
+      `Use updateByLocator()/updateByIri() or deleteByLocator()/deleteByIri() ` +
+      `for exact-target mutations.`
+    );
+  }
 
   /**
    * 获取默认模板
@@ -133,38 +147,11 @@ export class DocumentResourceResolver extends BaseResourceResolver {
       );
     }
 
-    // 3. No id — try to narrow scan range with available variables
-    if (requiredVars.length > 0 && Object.keys(templateValues).length > 0) {
-      let partialPath = template;
-      for (const [key, val] of Object.entries(templateValues)) {
-        const column = (table as any).columns?.[key];
-        const normalizedVal = this.uriResolver.normalizeValue(val, column);
-        partialPath = partialPath.replace(new RegExp(`\\{${key}\\}`, 'g'), normalizedVal);
-      }
-
-      const baseUrl = this.getContainerUrl(table);
-      const firstBrace = partialPath.indexOf('{');
-      if (firstBrace !== -1 && listContainer) {
-        const lastSlashBeforeBrace = partialPath.lastIndexOf('/', firstBrace);
-        if (lastSlashBeforeBrace !== -1) {
-          const relativeContainer = partialPath.substring(0, lastSlashBeforeBrace + 1);
-          const specificContainer = new URL(relativeContainer, baseUrl).toString();
-          debug.log('Narrowing scan to sub-container:', specificContainer);
-          debug.groupEnd();
-          const resources = await listContainer(specificContainer);
-          return resources.filter(url => url.endsWith('.ttl') && !url.endsWith('/'));
-        }
-      }
-    }
-
-    // 4. Fallback: scan base container
-    debug.log('Fallback: scanning base container');
+    debug.error('Document-mode LDP collection query is unsupported without an exact target');
     debug.groupEnd();
-    if (!listContainer) {
-      return [];
-    }
-    const allResources = await listContainer();
-    return allResources.filter(url => url.endsWith('.ttl') && !url.endsWith('/'));
+    void containerUrl;
+    void listContainer;
+    throw this.buildUnsupportedCollectionReadError(table);
   }
 
   async resolveSubjectsForMutation(
@@ -209,21 +196,8 @@ export class DocumentResourceResolver extends BaseResourceResolver {
       );
     }
 
-    // 3. No id — scan container and find matching subjects
-    const subjects: string[] = [];
-    const containerFiles = await listContainer();
-
-    for (const fileUrl of containerFiles) {
-      if (fileUrl.endsWith('.ttl') && !fileUrl.endsWith('/')) {
-        try {
-          const foundSubjects = await findSubjects(fileUrl);
-          subjects.push(...foundSubjects);
-        } catch {
-          // Skip files that can't be queried
-        }
-      }
-    }
-
-    return subjects;
+    void findSubjects;
+    void listContainer;
+    throw this.buildUnsupportedCollectionMutationError(table);
   }
 }

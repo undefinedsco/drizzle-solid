@@ -1,6 +1,6 @@
 import { beforeAll, describe, expect, test, vi } from 'vitest';
 import { Parser } from 'n3';
-import { drizzle, podTable, string, int, eq } from '../../../src';
+import { drizzle, podTable, string, int } from '../../../src';
 import { createTestSession, ensureContainer } from './helpers';
 
 const SCHEMA = {
@@ -29,16 +29,11 @@ describe('CSS investigation: LDP update regressions', () => {
       countValue: 20,
     });
 
-    await db.update(Counter)
-      .set({ countValue: 99 })
-      .where(eq(Counter.id, 'counter-1'));
+    await db.updateByLocator(Counter, { id: 'counter-1' }, { countValue: 99 });
 
-    const rows = await db.select()
-      .from(Counter)
-      .where(eq(Counter.id, 'counter-1'));
-
-    expect(rows).toHaveLength(1);
-    expect(rows[0]?.countValue).toBe(99);
+    const row = await db.findByLocator(Counter, { id: 'counter-1' });
+    expect(row).not.toBeNull();
+    expect(row?.countValue).toBe(99);
 
     const objects = await fetchPredicateObjects(
       session.fetch,
@@ -62,9 +57,7 @@ describe('CSS investigation: LDP update regressions', () => {
     const nextValues = [2, 3, 4, 5, 6];
     const settled = await Promise.allSettled(
       nextValues.map((countValue) =>
-        db.update(Counter)
-          .set({ countValue })
-          .where(eq(Counter.id, 'counter-1')),
+        db.updateByLocator(Counter, { id: 'counter-1' }, { countValue }),
       ),
     );
 

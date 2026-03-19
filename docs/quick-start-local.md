@@ -2,7 +2,7 @@
 
 本指南演示如何在本地使用 Community Solid Server（CSS）运行 Drizzle Solid 示例与集成测试。
 
-> **💡 关于 xpod**：本项目的集成测试和示例使用 **xpod**（扩展的 CSS），它在保持 LDP 协议兼容的同时，提供完整的 SPARQL 1.1 支持。如果你使用原生 CSS，drizzle-solid 仍然可以正常工作（通过 LDP 模式），但部分高级查询功能需要 xpod。
+> **💡 关于 xpod**：本项目的集成测试和示例使用 **xpod**（扩展的 CSS），它在保持 LDP 协议兼容的同时，提供完整的 SPARQL 1.1 支持。如果你使用原生 CSS，drizzle-solid 仍然可以正常工作（通过 LDP 模式），但 plain-LDP document mode 只保证 exact-target 访问；集合查询需要 xpod / SPARQL endpoint / index 这类全局查询能力。
 >
 > **了解更多**：[xpod 特性文档](./xpod-features.md) | [xpod 仓库](https://github.com/undefinedsco/xpod)
 

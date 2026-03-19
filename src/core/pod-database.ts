@@ -9,7 +9,7 @@ import {
   DeleteQueryBuilder
 } from './pod-session';
 import { PodTable, SolidSchema, isSolidSchema, type InferTableData, type ColumnBuilderDataType, PodColumnBase, type RelationDefinition, type InstantiateTableOptions } from './schema';
-import { QueryCondition } from './query-conditions';
+import { type PublicQueryCondition, type PublicWhereObject } from './query-conditions';
 import { inArray } from './query-conditions';
 import {
   NotificationsClient,
@@ -43,8 +43,13 @@ type QueryOrderBy = {
   column: PodColumnBase | string | OrderByExpression;
   direction?: 'asc' | 'desc';
 };
+type QueryExactOptions = {
+  columns?: SelectFieldMap;
+  with?: Record<string, boolean | { table?: GenericPodTable }>;
+};
+type EntityLocator = Record<string, unknown>;
 type QueryFindManyOptions = {
-  where?: Record<string, unknown> | QueryCondition;
+  where?: PublicWhereObject | PublicQueryCondition;
   columns?: SelectFieldMap;
   limit?: number;
   offset?: number;
@@ -54,9 +59,9 @@ type QueryFindManyOptions = {
 type QueryTableHelper<TTable extends GenericPodTable = GenericPodTable> = {
   findMany<T = InferTableData<TTable>>(options?: QueryFindManyOptions): Promise<T[]>;
   findFirst<T = InferTableData<TTable>>(options?: QueryFindManyOptions): Promise<T | null>;
-  findById<T = InferTableData<TTable>>(id: string, options?: QueryFindManyOptions): Promise<T | null>;
-  findByIRI<T = InferTableData<TTable>>(iri: string, options?: QueryFindManyOptions): Promise<T | null>;
-  count(options?: { where?: Record<string, unknown> | QueryCondition }): Promise<number>;
+  findByLocator<T = InferTableData<TTable>>(locator: EntityLocator, options?: QueryExactOptions): Promise<T | null>;
+  findByIri<T = InferTableData<TTable>>(iri: string, options?: QueryExactOptions): Promise<T | null>;
+  count(options?: { where?: PublicWhereObject | PublicQueryCondition }): Promise<number>;
 };
 type QueryProxy<TSchema extends Record<string, unknown>> = {
   [K in keyof TSchema as TSchema[K] extends GenericPodTable ? K : never]:
@@ -226,7 +231,7 @@ export class PodDatabase<TSchema extends Record<string, unknown> = Record<string
   // Find first matching row (LIMIT 1)
   async findFirst<TTable extends PodTable>(
     table: TTable,
-    where?: Record<string, unknown>
+    where?: PublicWhereObject
   ): Promise<InferTableData<TTable> | null> {
     const builder = this.select<TTable>().from(table).limit(1);
     if (where && Object.keys(where).length > 0) {
@@ -234,6 +239,59 @@ export class PodDatabase<TSchema extends Record<string, unknown> = Record<string
     }
     const rows = await builder;
     return rows.length > 0 ? rows[0] : null;
+  }
+
+  private getLocatorTemplate(table: PodTable): string {
+    return table.getSubjectTemplate?.() ?? table.config?.subjectTemplate ?? '{id}';
+  }
+
+  private getRequiredLocatorKeys(table: PodTable): string[] {
+    const template = this.getLocatorTemplate(table);
+    const keys = Array.from(template.matchAll(/\{([^}]+)\}/g))
+      .map((match) => match[1])
+      .filter((key) => key !== 'index');
+    return Array.from(new Set(keys));
+  }
+
+  private resolveLocatorSubject<TTable extends PodTable>(
+    table: TTable,
+    locator: EntityLocator,
+    methodName: 'findByLocator' | 'updateByLocator' | 'deleteByLocator',
+  ): string {
+    if (!isRecord(locator) || Array.isArray(locator)) {
+      throw new Error(`${methodName} requires a locator object`);
+    }
+
+    if ('@id' in locator) {
+      throw new Error(`${methodName} does not accept '@id'. Use ${methodName.replace('Locator', 'Iri')}(table, iri) instead.`);
+    }
+
+    const idValue = locator.id;
+    if (typeof idValue === 'string' && (idValue.startsWith('http://') || idValue.startsWith('https://'))) {
+      throw new Error(`${methodName} does not accept a full IRI in locator.id. Use ${methodName.replace('Locator', 'Iri')}(table, iri) instead.`);
+    }
+
+    const requiredKeys = this.getRequiredLocatorKeys(table);
+    const missingKeys = requiredKeys.filter((key) => locator[key] === undefined || locator[key] === null);
+    if (missingKeys.length > 0) {
+      const template = this.getLocatorTemplate(table);
+      throw new Error(
+        `${methodName} requires a complete locator for subjectTemplate '${template}'. ` +
+        `Missing [${missingKeys.join(', ')}]. ` +
+        `Use ${methodName.replace('Locator', 'Iri')}(table, iri) when you already have a full IRI.`
+      );
+    }
+
+    const resolver = this.dialect.getResolver(table);
+    return resolver.resolveSubject(table, locator);
+  }
+
+  async findByLocator<TTable extends PodTable>(
+    table: TTable,
+    locator: EntityLocator,
+  ): Promise<InferTableData<TTable> | null> {
+    const iri = this.resolveLocatorSubject(table, locator, 'findByLocator');
+    return await this.findByIri(table, iri);
   }
 
   /**
@@ -263,16 +321,11 @@ export class PodDatabase<TSchema extends Record<string, unknown> = Record<string
       throw new Error('findByIri requires a valid IRI string');
     }
 
-    // 解析文档 URL（去掉 fragment）
-    const { documentUrl } = this.parseIri(iri);
-    
-    // 用 schema.table(documentUrl) 创建指向目标位置的表
-    const targetTable = table.$schema.table('target', { base: documentUrl });
-    
-    // 使用 whereByIri 内部方法
+    // 保持原始表上下文，让 subjectTemplate/base 反解保持一致。
+    // whereByIri() 已经会把 SELECT 精确定位到目标资源，不需要把表重绑到具体文档。
     const rows = await this.session
       .select()
-      .from(targetTable)
+      .from(table)
       .whereByIri(iri)
       .limit(1);
     
@@ -404,21 +457,25 @@ export class PodDatabase<TSchema extends Record<string, unknown> = Record<string
       throw new Error(`updateByIri requires an absolute IRI, got: ${iri}`);
     }
 
-    // 解析文档 URL
-    const { documentUrl } = this.parseIri(iri);
-    
-    // 用 schema.table(documentUrl) 创建指向目标位置的表
-    const targetTable = table.$schema.table('target', { base: documentUrl });
-    const updateData = data as Parameters<UpdateQueryBuilder<typeof targetTable>['set']>[0];
+    const updateData = data as Parameters<UpdateQueryBuilder<typeof table>['set']>[0];
 
     // 使用 whereByIri 内部方法进行更新
     await this.session
-      .update(targetTable)
+      .update(table)
       .set(updateData)
       .whereByIri(iri);
 
     // 返回更新后的数据
     return await this.findByIri(table, iri);
+  }
+
+  async updateByLocator<TTable extends PodTable>(
+    table: TTable,
+    locator: EntityLocator,
+    data: Partial<Omit<InferTableData<TTable>, '@id' | 'id'>>
+  ): Promise<InferTableData<TTable> | null> {
+    const iri = this.resolveLocatorSubject(table, locator, 'updateByLocator');
+    return await this.updateByIri(table, iri, data);
   }
 
   /**
@@ -454,18 +511,20 @@ export class PodDatabase<TSchema extends Record<string, unknown> = Record<string
       return false;
     }
 
-    // 解析文档 URL
-    const { documentUrl } = this.parseIri(iri);
-    
-    // 用 schema.table(documentUrl) 创建指向目标位置的表
-    const targetTable = table.$schema.table('target', { base: documentUrl });
-
     // 使用 whereByIri 内部方法进行删除
     await this.session
-      .delete(targetTable)
+      .delete(table)
       .whereByIri(iri);
 
     return true;
+  }
+
+  async deleteByLocator<TTable extends PodTable>(
+    table: TTable,
+    locator: EntityLocator,
+  ): Promise<boolean> {
+    const iri = this.resolveLocatorSubject(table, locator, 'deleteByLocator');
+    return await this.deleteByIri(table, iri);
   }
 
   // 事务支持
@@ -1148,32 +1207,48 @@ export class PodDatabase<TSchema extends Record<string, unknown> = Record<string
       const findMany = <T = InferTableData<typeof table>>(options?: QueryFindManyOptions): Promise<T[]> =>
         createLazy(() => executeFindMany<T>(options));
 
+      const applyExactOptions = async <T = InferTableData<typeof table>>(
+        row: QueryRow | null,
+        options?: QueryExactOptions,
+      ): Promise<T | null> => {
+        if (!row) {
+          return null;
+        }
+
+        let rows: QueryRow[] = [row];
+        if (options?.with && Object.keys(options.with).length > 0) {
+          rows = await this.eagerLoadWith(rows, table, options.with, tableMap);
+        }
+        const columns = options?.columns;
+        if (columns) {
+          rows = rows.map((item) => projectColumns(item, columns, options.with));
+        }
+        return (rows[0] ?? null) as T | null;
+      };
+
       const findFirst = <T = InferTableData<typeof table>>(options?: QueryFindManyOptions): Promise<T | null> =>
         createLazy(async () => {
           const rows = await executeFindMany<T>({ ...options, limit: 1 });
           return rows[0] ?? null;
         });
 
-      const findById = <T = InferTableData<typeof table>>(id: string, options?: QueryFindManyOptions): Promise<T | null> =>
-        createLazy(async () => await findFirst<T>({ ...options, where: { ...(options?.where ?? {}), id } }));
-
-      const count = (options?: { where?: Record<string, unknown> | QueryCondition }): Promise<number> =>
+      const count = (options?: { where?: PublicWhereObject | PublicQueryCondition }): Promise<number> =>
         createLazy(async () => {
           const rows = await executeFindMany({ where: options?.where, columns: undefined, limit: undefined, offset: undefined });
           return rows.length;
         });
 
-      const createFindByIRI = () => <T = InferTableData<typeof table>>(iri: string, _options?: QueryFindManyOptions): Promise<T | null> => {
-        void _options;
-        return createLazy(async () => await this.findByIri(table, iri) as T | null);
-      };
+      const createFindByLocator = () => <T = InferTableData<typeof table>>(locator: EntityLocator, options?: QueryExactOptions): Promise<T | null> =>
+        createLazy(async () => await applyExactOptions<T>(await this.findByLocator(table, locator) as QueryRow | null, options));
+
+      const createFindByIri = () => <T = InferTableData<typeof table>>(iri: string, options?: QueryExactOptions): Promise<T | null> =>
+        createLazy(async () => await applyExactOptions<T>(await this.findByIri(table, iri) as QueryRow | null, options));
 
       return {
         findMany,
         findFirst,
-        findById,
-        /** @deprecated Use db.findByIri(table, iri) instead */
-        findByIRI: createFindByIRI(),
+        findByLocator: createFindByLocator(),
+        findByIri: createFindByIri(),
         count
       };
     };

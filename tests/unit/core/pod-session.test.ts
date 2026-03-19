@@ -329,8 +329,7 @@ describe('UpdateQueryBuilder', () => {
   });
 
   it('应该支持 where 方法', () => {
-    const result = builder.where({ id: 1 });
-    expect(result).toBe(builder);
+    expect(() => builder.where({ id: 1 } as any)).toThrow("Using 'id' or '@id' in where() is not supported");
   });
 });
 
@@ -345,8 +344,7 @@ describe('DeleteQueryBuilder', () => {
   });
 
   it('应该支持 where 方法', () => {
-    const result = builder.where({ id: 1 });
-    expect(result).toBe(builder);
+    expect(() => builder.where({ id: 1 } as any)).toThrow("Using 'id' or '@id' in where() is not supported");
   });
 });
 

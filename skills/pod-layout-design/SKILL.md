@@ -41,6 +41,8 @@ Common patterns:
 - `{id}.ttl#it`
 - `{parentId}/messages.ttl#{id}`
 
+If a layout uses multiple template variables, joins that target the right-hand entity by `id` must also carry the other required locator variables, or a full IRI. Do not recommend hidden scan fallback as a substitute for a complete locator.
+
 ### 4. Public vs private vs app-owned data should be explicit
 
 Layout decisions should reflect visibility, ownership, and expected access patterns.
@@ -51,7 +53,8 @@ Layout decisions should reflect visibility, ownership, and expected access patte
 2. Do multiple entities belong in one document or many?
 3. Which variables must be present to reconstruct the IRI?
 4. Will users need exact-target updates frequently?
-5. Does this layout keep the resulting docs understandable?
+5. Will this layout require multi-variable joins, and if so where will the full locator come from?
+6. Does this layout keep the resulting docs understandable?
 
 ## Output expectations
 
