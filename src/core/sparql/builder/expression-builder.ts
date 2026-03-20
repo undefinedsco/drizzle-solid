@@ -93,15 +93,36 @@ export class ExpressionBuilder {
     }
   }
 
-  private getMissingLocatorVariables(table: PodTable): string[] {
+  private parseTemplateVariable(token: string): { field: string; transforms: string[] } {
+    const [field, ...transforms] = token
+      .split('|')
+      .map((part) => part.trim())
+      .filter(Boolean);
+
+    return {
+      field: field || token,
+      transforms,
+    };
+  }
+
+  private getTemplateVariableFields(table: PodTable): string[] {
     const template = table.config?.subjectTemplate ?? '';
     if (!template) {
       return [];
     }
 
-    const reserved = new Set(['id', 'index', 'yyyy', 'MM', 'dd', 'timestamp', 'date']);
-    return Array.from(template.matchAll(/\{([^}]+)\}/g))
-      .map((match) => match[1])
+    return Array.from(
+      new Set(
+        Array.from(template.matchAll(/\{([^}]+)\}/g)).map((match) =>
+          this.parseTemplateVariable(match[1]).field,
+        ),
+      ),
+    );
+  }
+
+  private getMissingLocatorVariables(table: PodTable): string[] {
+    const reserved = new Set(['id', 'index', 'yyyy', 'MM', 'dd', 'HH', 'mm', 'ss', 'timestamp', 'date']);
+    return this.getTemplateVariableFields(table)
       .filter((name) => !reserved.has(name));
   }
 
@@ -297,9 +318,9 @@ export class ExpressionBuilder {
       return null;
     }
 
-    const locatorVars = Array.from(template.matchAll(/\{([^}]+)\}/g))
-      .map((match) => match[1])
-      .filter((name) => name !== 'index' && name !== 'yyyy' && name !== 'MM' && name !== 'dd' && name !== 'timestamp' && name !== 'date');
+    const reserved = new Set(['index', 'yyyy', 'MM', 'dd', 'HH', 'mm', 'ss', 'timestamp', 'date']);
+    const locatorVars = this.getTemplateVariableFields(table)
+      .filter((name) => !reserved.has(name));
 
     if (locatorVars.length === 0) {
       return null;

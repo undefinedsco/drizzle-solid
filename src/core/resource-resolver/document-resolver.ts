@@ -96,8 +96,9 @@ export class DocumentResourceResolver extends BaseResourceResolver {
     const debug = getGlobalDebugLogger();
 
     const template = this.getEffectiveTemplate(table);
-    const variables = Array.from(template.matchAll(/\{([^}]+)\}/g)).map(m => m[1]);
-    const requiredVars = variables.filter(v => v !== 'id' && v !== 'index');
+    const requiredVars = Array.from(
+      new Set(this.getTemplateVariables(template).map((variable) => variable.field)),
+    ).filter((field) => field !== 'id' && field !== 'index');
     const idValues = this.extractIdValues(condition);
 
     // Collect all available template variable values from condition
@@ -161,8 +162,9 @@ export class DocumentResourceResolver extends BaseResourceResolver {
     listContainer: () => Promise<string[]>
   ): Promise<string[]> {
     const template = this.getEffectiveTemplate(table);
-    const variables = Array.from(template.matchAll(/\{([^}]+)\}/g)).map(m => m[1]);
-    const requiredVars = variables.filter(v => v !== 'id' && v !== 'index');
+    const requiredVars = Array.from(
+      new Set(this.getTemplateVariables(template).map((variable) => variable.field)),
+    ).filter((field) => field !== 'id' && field !== 'index');
     const idValues = this.extractIdValues(condition);
 
     // Collect all available template variable values from condition

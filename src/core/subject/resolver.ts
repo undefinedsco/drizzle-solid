@@ -12,6 +12,12 @@ import type { SubjectResolver, ResourceMode, ParsedSubject, TimeContext } from '
  */
 const SINGLETON_FRAGMENTS = new Set(['#me', '#this', '#profile', '#card']);
 
+interface TemplateVariable {
+  raw: string;
+  field: string;
+  transforms: string[];
+}
+
 /**
  * 主体 URI 解析器实现
  */
@@ -59,7 +65,7 @@ export class SubjectResolverImpl implements SubjectResolver {
     }
 
     // 应用模板变量
-    const applied = this.applyTemplate(pattern, record, index);
+    const applied = this.applyTemplate(pattern, record, index, table);
 
     if (applied) {
       if (applied.startsWith('http://') || applied.startsWith('https://')) {
@@ -316,7 +322,8 @@ export class SubjectResolverImpl implements SubjectResolver {
   private applyTemplate(
     template: string,
     record: Record<string, unknown>,
-    index?: number
+    index?: number,
+    table?: PodTable,
   ): string | null {
     if (!template.includes('{')) {
       return template;
@@ -328,7 +335,10 @@ export class SubjectResolverImpl implements SubjectResolver {
     let missingReplacement = false;
 
     // Regex to capture optional preceding '#' and the key inside {}
-    const replaced = template.replace(/(#?)\{([^}]+)\}/g, (match, prefix, key) => {
+    const replaced = template.replace(/(#?)\{([^}]+)\}/g, (match, prefix, token) => {
+      const variable = this.parseTemplateVariable(token);
+      const key = variable.field;
+
       // 时间变量
       if (key in timeContext) {
         return prefix + (timeContext[key as keyof TimeContext] as string);
@@ -352,7 +362,7 @@ export class SubjectResolverImpl implements SubjectResolver {
         return ''; 
       }
 
-      let value = String(rawValue);
+      let value = this.applyTransforms(rawValue, variable, table, key);
       
       // Handle double hash: if prefix is '#' and value starts with '#', strip one '#'
       if (prefix === '#' && value.startsWith('#')) {
@@ -363,6 +373,70 @@ export class SubjectResolverImpl implements SubjectResolver {
     });
 
     return missingReplacement ? null : replaced;
+  }
+
+  private parseTemplateVariable(token: string): TemplateVariable {
+    const [field, ...transforms] = token
+      .split('|')
+      .map((part) => part.trim())
+      .filter(Boolean);
+
+    return {
+      raw: token,
+      field: field || token,
+      transforms,
+    };
+  }
+
+  private slugifyValue(value: string): string {
+    return value
+      .normalize('NFKC')
+      .toLowerCase()
+      .replace(/[^\p{Letter}\p{Number}]+/gu, '-')
+      .replace(/^-+|-+$/g, '');
+  }
+
+  private applyTransforms(
+    value: unknown,
+    variable: TemplateVariable,
+    table?: PodTable,
+    field?: string,
+  ): string {
+    let next = String(value);
+
+    for (const transform of variable.transforms) {
+      if (transform === 'id') {
+        next = this.extractTransformedId(next, table, field);
+        continue;
+      }
+
+      if (transform === 'slug') {
+        next = this.slugifyValue(next);
+      }
+    }
+
+    return next;
+  }
+
+  private extractTransformedId(value: string, table?: PodTable, field?: string): string {
+    if (!(value.startsWith('http://') || value.startsWith('https://'))) {
+      return value;
+    }
+
+    const column = table && field ? (table as any).columns?.[field] : undefined;
+    const linkedTable = column?.getLinkTable?.() ?? column?.options?.linkTable;
+
+    if (linkedTable) {
+      return this.extractId(value, linkedTable);
+    }
+
+    const hashIndex = value.indexOf('#');
+    if (hashIndex !== -1) {
+      return value.slice(hashIndex + 1);
+    }
+
+    const lastSlash = value.lastIndexOf('/');
+    return lastSlash !== -1 ? value.slice(lastSlash + 1).replace(/\.ttl$/i, '') : value;
   }
 
   /**

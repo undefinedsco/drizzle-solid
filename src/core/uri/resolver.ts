@@ -29,6 +29,12 @@ const UUID_REGEX = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12
  */
 const SINGLETON_FRAGMENTS = new Set(['#me', '#this', '#profile', '#card']);
 
+interface TemplateVariable {
+  raw: string;
+  field: string;
+  transforms: string[];
+}
+
 /**
  * URI 解析器实现
  * 
@@ -514,6 +520,51 @@ export class UriResolverImpl implements UriResolver {
     return String(value);
   }
 
+  private parseTemplateVariable(token: string): TemplateVariable {
+    const [field, ...transforms] = token
+      .split('|')
+      .map((part) => part.trim())
+      .filter(Boolean);
+
+    return {
+      raw: token,
+      field: field || token,
+      transforms,
+    };
+  }
+
+  private slugifyValue(value: string): string {
+    return value
+      .normalize('NFKC')
+      .toLowerCase()
+      .replace(/[^\p{Letter}\p{Number}]+/gu, '-')
+      .replace(/^-+|-+$/g, '');
+  }
+
+  private applyTransforms(
+    value: unknown,
+    variable: TemplateVariable,
+    column?: PodColumnBase,
+    context?: UriContext,
+  ): string {
+    let next = this.normalizeValue(value, column, context);
+
+    for (const transform of variable.transforms) {
+      if (transform === 'id') {
+        next = column && this.isLinkColumn(column)
+          ? this.extractLinkId(next, column, context)
+          : next;
+        continue;
+      }
+
+      if (transform === 'slug') {
+        next = this.slugifyValue(next);
+      }
+    }
+
+    return next;
+  }
+
   /**
    * 应用模板变量
    * @param template 模板字符串
@@ -536,7 +587,10 @@ export class UriResolverImpl implements UriResolver {
     const timeContext = this.createTimeContext(record);
     const missingKeys: string[] = [];
 
-    const replaced = template.replace(/(#?)\{([^}]+)\}/g, (match, prefix, key) => {
+    const replaced = template.replace(/(#?)\{([^}]+)\}/g, (match, prefix, token) => {
+      const variable = this.parseTemplateVariable(token);
+      const key = variable.field;
+
       if (key in timeContext) {
         return prefix + (timeContext[key as keyof TimeContext] as string);
       }
@@ -551,7 +605,7 @@ export class UriResolverImpl implements UriResolver {
       }
 
       if (rawValue === undefined || rawValue === null) {
-        missingKeys.push(key);
+        missingKeys.push(token);
         return match; // Keep original placeholder for error message
       }
 
@@ -561,7 +615,7 @@ export class UriResolverImpl implements UriResolver {
         tableNameRegistry: (table as any)[Symbol.for('drizzle:tableNameRegistry')]
       } : undefined;
 
-      const value = this.normalizeValue(rawValue, column, context);
+      const value = this.applyTransforms(rawValue, variable, column, context);
 
       if (prefix === '#' && value.startsWith('#')) {
         return prefix + value.slice(1);

@@ -1843,9 +1843,24 @@ export class SelectQueryBuilder<TTable extends PodTable<any> = PodTable<any>> {
 
   private getRequiredSubjectTemplateVariables(table: PodTable<any>): string[] {
     const template = table.getSubjectTemplate?.() ?? table.config?.subjectTemplate ?? '';
-    return Array.from(template.matchAll(/\{([^}]+)\}/g))
-      .map((match) => match[1])
-      .filter((variable) => variable !== 'id' && variable !== 'index');
+    return Array.from(
+      new Set(
+        Array.from(template.matchAll(/\{([^}]+)\}/g))
+          .map((match) => match[1].split('|')[0]?.trim() || match[1])
+          .filter(Boolean),
+      ),
+    ).filter((variable) =>
+      variable !== 'id' &&
+      variable !== 'index' &&
+      variable !== 'yyyy' &&
+      variable !== 'MM' &&
+      variable !== 'dd' &&
+      variable !== 'HH' &&
+      variable !== 'mm' &&
+      variable !== 'ss' &&
+      variable !== 'timestamp' &&
+      variable !== 'date',
+    );
   }
 
   private isAbsoluteIri(value: string): boolean {

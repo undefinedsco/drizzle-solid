@@ -3,7 +3,7 @@
  */
 
 import { SubjectResolverImpl } from '../../../../src/core/subject';
-import { podTable, string, id } from '../../../../src/core/schema';
+import { podTable, string, id, uri } from '../../../../src/core/schema';
 
 // 测试用命名空间
 const ns = { prefix: 'schema', uri: 'https://schema.org/' };
@@ -154,6 +154,50 @@ describe('SubjectResolver', () => {
       const uri = resolver.resolve(table, { id: '123', slug: 'alice-smith' });
 
       expect(uri).toBe('https://pod.example/data/users/alice-smith.ttl');
+    });
+
+    it('should handle |slug transform in subjectTemplate', () => {
+      const table = podTable('entries', {
+        id: id(),
+        title: string('title').predicate('https://schema.org/headline'),
+      }, {
+        base: '/data/entries/',
+        subjectTemplate: '{title|slug}.ttl',
+        type: 'https://schema.org/CreativeWork',
+        namespace: ns,
+      });
+
+      const subject = resolver.resolve(table, { id: '123', title: 'Hello LinX / 世界' });
+
+      expect(subject).toBe('https://pod.example/data/entries/hello-linx-世界.ttl');
+    });
+
+    it('should handle |id transform in subjectTemplate', () => {
+      const chatTable = podTable('chats', {
+        id: id(),
+      }, {
+        base: '/data/chats/',
+        subjectTemplate: '{id}/index.ttl#this',
+        type: 'https://schema.org/Conversation',
+        namespace: ns,
+      });
+
+      const table = podTable('threads', {
+        id: id(),
+        chat: uri('chat').predicate('https://schema.org/isPartOf').link(chatTable),
+      }, {
+        base: '/data/threads/',
+        subjectTemplate: '{chat|id}/index.ttl#{id}',
+        type: 'https://schema.org/Comment',
+        namespace: ns,
+      });
+
+      const subject = resolver.resolve(table, {
+        id: 'thread-1',
+        chat: 'https://pod.example/data/chats/chat-1/index.ttl#this',
+      });
+
+      expect(subject).toBe('https://pod.example/data/threads/chat-1/index.ttl#thread-1');
     });
 
     it('should handle time variables', () => {

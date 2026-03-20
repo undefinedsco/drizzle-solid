@@ -35,6 +35,16 @@ const Messages = podTable('Messages', {
   subjectTemplate: '{chatId}/messages.ttl#{id}',
 });
 
+const TransformedMessages = podTable('TransformedMessages', {
+  id: string('id').primaryKey().predicate('https://schema.org/identifier'),
+  chat: string('chat').predicate('https://schema.org/isPartOf'),
+  body: string('body').predicate('https://schema.org/text'),
+}, {
+  base: 'https://pod.example/messages/',
+  type: 'https://schema.org/Message',
+  subjectTemplate: '{chat|id}/messages.ttl#{id}',
+});
+
 const MessageRefs = podTable('MessageRefs', {
   id: string('id').primaryKey().predicate('https://schema.org/identifier'),
   chatId: string('chatId').predicate('https://schema.org/isPartOf'),
@@ -42,6 +52,17 @@ const MessageRefs = podTable('MessageRefs', {
   title: string('title').predicate('https://schema.org/headline'),
 }, {
   base: 'https://pod.example/message-refs.ttl',
+  type: 'https://schema.org/CreativeWork',
+  subjectTemplate: '#{id}',
+});
+
+const TransformedMessageRefs = podTable('TransformedMessageRefs', {
+  id: string('id').primaryKey().predicate('https://schema.org/identifier'),
+  chat: string('chat').predicate('https://schema.org/isPartOf'),
+  messageId: string('messageId').predicate('https://schema.org/mentions'),
+  title: string('title').predicate('https://schema.org/headline'),
+}, {
+  base: 'https://pod.example/transformed-message-refs.ttl',
   type: 'https://schema.org/CreativeWork',
   subjectTemplate: '#{id}',
 });
@@ -271,6 +292,85 @@ describe('join execution-path coverage', () => {
     expect(rows).toEqual([
       { refTitle: 'Ref 1', messageBody: 'Hello from chat 1' },
       { refTitle: 'Ref 2', messageBody: 'Hello from chat 2' },
+    ]);
+  });
+
+  it('uses transformed locator field names when joining template-scoped ids', async () => {
+    const whereCalls: unknown[] = [];
+    const messageRows = [
+      {
+        subject: 'https://pod.example/messages/chat-1/messages.ttl#msg-1',
+        id: 'msg-1',
+        chat: 'chat-1',
+        body: 'Hello from transformed chat 1',
+      },
+      {
+        subject: 'https://pod.example/messages/chat-2/messages.ttl#msg-2',
+        id: 'msg-2',
+        chat: 'chat-2',
+        body: 'Hello from transformed chat 2',
+      },
+    ];
+
+    const evaluateWhere = (condition: any, row: Record<string, any>): boolean => {
+      if (condition?.type === 'logical_expr' && condition.operator === 'AND') {
+        return condition.expressions.every((expression: any) => evaluateWhere(expression, row));
+      }
+      if (condition?.type === 'binary_expr' && condition.operator === '=') {
+        const leftName = condition.left?.name;
+        return leftName ? row[leftName] === condition.right : false;
+      }
+      return false;
+    };
+
+    const exactSession: any = {
+      ...session,
+      execute: vi.fn().mockResolvedValue([
+        { subject: 'https://pod.example/transformed-message-refs.ttl#ref-1', id: 'ref-1', chat: 'chat-1', messageId: 'msg-1', title: 'Ref 1' },
+        { subject: 'https://pod.example/transformed-message-refs.ttl#ref-2', id: 'ref-2', chat: 'chat-2', messageId: 'msg-2', title: 'Ref 2' },
+      ]),
+      select: () => {
+        let whereCondition: unknown;
+
+        const builder: any = {
+          from: () => builder,
+          where: (condition: unknown) => {
+            whereCondition = condition;
+            whereCalls.push(condition);
+            return builder;
+          },
+          applyInternalQueryCondition: (condition: unknown) => {
+            whereCondition = condition;
+            whereCalls.push(condition);
+            return builder;
+          },
+          then: (resolve: (value: Record<string, any>[]) => unknown) =>
+            resolve(messageRows.filter((row) => evaluateWhere(whereCondition, row))),
+        };
+
+        return builder;
+      },
+    };
+
+    const rows = await new SelectQueryBuilder(exactSession, {
+      refTitle: TransformedMessageRefs.title,
+      messageBody: TransformedMessages.body,
+    })
+      .from(TransformedMessageRefs)
+      .leftJoin(TransformedMessages, and(
+        eq(TransformedMessageRefs.messageId, TransformedMessages.id),
+        eq(TransformedMessageRefs.chat, TransformedMessages.chat),
+      ))
+      .orderBy(asc(TransformedMessageRefs.title));
+
+    expect(whereCalls).toHaveLength(2);
+    expect(whereCalls[0]).toMatchObject({
+      type: 'logical_expr',
+      operator: 'AND',
+    });
+    expect(rows).toEqual([
+      { refTitle: 'Ref 1', messageBody: 'Hello from transformed chat 1' },
+      { refTitle: 'Ref 2', messageBody: 'Hello from transformed chat 2' },
     ]);
   });
 });

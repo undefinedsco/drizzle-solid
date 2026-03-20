@@ -12,6 +12,12 @@ import type { PodTable } from '../schema';
 import type { QueryCondition } from '../query-conditions';
 import type { ResourceResolver } from './types';
 
+interface TemplateVariable {
+  raw: string;
+  field: string;
+  transforms: string[];
+}
+
 export abstract class BaseResourceResolver implements ResourceResolver {
   abstract readonly mode: 'fragment' | 'document';
 
@@ -101,16 +107,7 @@ export abstract class BaseResourceResolver implements ResourceResolver {
 
     // 应用模板生成相对路径
     const template = this.getEffectiveTemplate(table);
-    let relativePath = this.applyTemplate(id, template);
-
-    // Handle multi-variable templates: replace other {var} placeholders from record
-    const variables = Array.from(template.matchAll(/\{([^}]+)\}/g)).map(m => m[1]);
-    for (const varName of variables) {
-      if (varName !== 'id' && varName !== 'index' && varName in record) {
-        const value = String(record[varName]);
-        relativePath = relativePath.replace(new RegExp(`\\{${varName}\\}`, 'g'), value);
-      }
-    }
+    const relativePath = this.applyTemplate({ ...record, id }, template, table, index);
 
     return baseUrl + relativePath;
   }
@@ -155,12 +152,45 @@ export abstract class BaseResourceResolver implements ResourceResolver {
   /**
    * 应用模板生成相对路径
    * 
-   * @param id 简单 id (如 "alice")
+   * @param record 记录数据
    * @param template 模板 (如 "{id}.ttl#it")
    * @returns 相对路径 (如 "alice.ttl#it")
    */
-  protected applyTemplate(id: string, template: string): string {
-    return template.replace(/\{id\}/g, id);
+  protected applyTemplate(
+    record: Record<string, any>,
+    template: string,
+    table?: PodTable,
+    index?: number,
+  ): string {
+    if (!template.includes('{')) {
+      return template;
+    }
+
+    const timeContext = this.createTimeContext(record);
+
+    return template.replace(/\{([^}]+)\}/g, (_match, token) => {
+      const variable = this.parseTemplateVariable(token);
+      const field = variable.field;
+
+      if (field === 'index' && index !== undefined) {
+        return String(index + 1);
+      }
+
+      if (field in timeContext) {
+        return timeContext[field as keyof typeof timeContext];
+      }
+
+      let rawValue = record[field];
+      if (field === 'id' && (rawValue === undefined || rawValue === null)) {
+        rawValue = record['@id'] ?? record.uri;
+      }
+
+      if (rawValue === undefined || rawValue === null) {
+        return `{${token}}`;
+      }
+
+      return this.applyTemplateTransforms(rawValue, variable, table, field);
+    });
   }
 
   /**
@@ -173,14 +203,38 @@ export abstract class BaseResourceResolver implements ResourceResolver {
   protected extractVarsFromTemplate(
     relativePath: string, template: string
   ): Record<string, string> | null {
+    let groupIndex = 0;
+    const groupToField = new Map<string, string>();
+
     let regexStr = template
       .replace(/[.+?^$[\]\\()]/g, '\\$&')
-      .replace(/\{([^}]+)\}/g, '(?<$1>.+?)');
+      .replace(/\{([^}]+)\}/g, (_match, token) => {
+        const variable = this.parseTemplateVariable(token);
+        const groupName = `var${groupIndex++}`;
+        groupToField.set(groupName, variable.field);
+        return `(?<${groupName}>.+?)`;
+      });
     regexStr = `^${regexStr}$`;
 
     try {
       const match = relativePath.match(new RegExp(regexStr));
-      return match?.groups ? { ...match.groups } : null;
+      if (!match?.groups) {
+        return null;
+      }
+
+      const values: Record<string, string> = {};
+      for (const [groupName, value] of Object.entries(match.groups)) {
+        const field = groupToField.get(groupName);
+        if (!field || value === undefined) {
+          continue;
+        }
+        if (field in values && values[field] !== value) {
+          return null;
+        }
+        values[field] = value;
+      }
+
+      return values;
     } catch {
       return null;
     }
@@ -232,13 +286,16 @@ export abstract class BaseResourceResolver implements ResourceResolver {
   extractTemplateValues(condition: QueryCondition | Record<string, any> | undefined, columns: string[]): Record<string, string> {
     if (!condition || columns.length === 0) return {};
 
+    const normalizedColumns = Array.from(
+      new Set(columns.map((column) => this.parseTemplateVariable(column).field)),
+    );
     const values: Record<string, string> = {};
 
     // Handle simple object: { col: 'value' }
     if (typeof condition === 'object' && !('type' in condition)) {
       for (const [rawKey, rawValue] of Object.entries(condition)) {
         const key = this.normalizeConditionColumnName(rawKey);
-        if (!columns.includes(key)) {
+        if (!normalizedColumns.includes(key)) {
           continue;
         }
         if (rawValue != null && !Array.isArray(rawValue)) {
@@ -249,7 +306,7 @@ export abstract class BaseResourceResolver implements ResourceResolver {
     }
 
     // Handle QueryCondition structure
-    for (const col of columns) {
+    for (const col of normalizedColumns) {
       const found = this.collectColumnValue(condition, col);
       if (found !== undefined) {
         values[col] = found;
@@ -325,6 +382,119 @@ export abstract class BaseResourceResolver implements ResourceResolver {
     }
 
     return rawName.includes('.') ? rawName.split('.').pop() ?? rawName : rawName;
+  }
+
+  protected parseTemplateVariable(token: string): TemplateVariable {
+    const [field, ...transforms] = token
+      .split('|')
+      .map((part) => part.trim())
+      .filter(Boolean);
+
+    return {
+      raw: token,
+      field: field || token,
+      transforms,
+    };
+  }
+
+  protected getTemplateVariables(template: string): TemplateVariable[] {
+    return Array.from(template.matchAll(/\{([^}]+)\}/g)).map((match) =>
+      this.parseTemplateVariable(match[1]),
+    );
+  }
+
+  protected createTimeContext(record: Record<string, any>) {
+    let date: Date;
+
+    const createdAt = record.createdAt ?? record.created_at ?? record.dateCreated;
+    if (createdAt instanceof Date) {
+      date = createdAt;
+    } else if (typeof createdAt === 'string' || typeof createdAt === 'number') {
+      date = new Date(createdAt);
+    } else {
+      date = new Date();
+    }
+
+    return {
+      yyyy: date.getUTCFullYear().toString(),
+      MM: String(date.getUTCMonth() + 1).padStart(2, '0'),
+      dd: String(date.getUTCDate()).padStart(2, '0'),
+      HH: String(date.getUTCHours()).padStart(2, '0'),
+      mm: String(date.getUTCMinutes()).padStart(2, '0'),
+      ss: String(date.getUTCSeconds()).padStart(2, '0'),
+    };
+  }
+
+  protected applyTemplateTransforms(
+    value: unknown,
+    variable: TemplateVariable,
+    table?: PodTable,
+    field?: string,
+  ): string {
+    let next = this.normalizeTemplateValue(value, table, field);
+
+    for (const transform of variable.transforms) {
+      if (transform === 'id') {
+        next = this.extractTemplateId(next, table, field);
+        continue;
+      }
+
+      if (transform === 'slug') {
+        next = this.slugifyValue(next);
+      }
+    }
+
+    return next;
+  }
+
+  protected normalizeTemplateValue(value: unknown, table?: PodTable, field?: string): string {
+    const stringValue = String(value);
+
+    if (!table || !field || !this.isAbsoluteUri(stringValue)) {
+      return stringValue;
+    }
+
+    const column = (table as any).columns?.[field];
+    if (!this.isLinkColumn(column)) {
+      return stringValue;
+    }
+
+    return this.extractTemplateId(stringValue, table, field);
+  }
+
+  protected extractTemplateId(value: string, table?: PodTable, field?: string): string {
+    if (!this.isAbsoluteUri(value)) {
+      return value;
+    }
+
+    const column = table && field ? (table as any).columns?.[field] : undefined;
+    const linkedTable = column?.getLinkTable?.() ?? column?.options?.linkTable;
+
+    if (linkedTable) {
+      return this.parseId(linkedTable, value);
+    }
+
+    const fallback = this.extractIdFallback(value);
+    return fallback.startsWith('#') ? fallback.slice(1) : fallback.replace(/\.ttl$/i, '');
+  }
+
+  protected isLinkColumn(column: any): boolean {
+    return !!(
+      column?.getLinkTable?.() ||
+      column?.options?.linkTable ||
+      column?.getLinkTableName?.() ||
+      column?.options?.linkTableName ||
+      column?.getLinkTarget?.() ||
+      column?.options?.linkTarget
+    );
+  }
+
+  protected slugifyValue(value: string): string {
+    return value
+      .normalize('NFKC')
+      .toLowerCase()
+      .replace(/[^\p{Letter}\p{Number}]+/gu, '-')
+      .replace(/^-+|-+$/g, '');
   }
 
   /**
