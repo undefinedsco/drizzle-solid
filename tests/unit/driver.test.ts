@@ -47,4 +47,29 @@ describe('Driver Tests', () => {
     expect(db).toBeDefined();
     expect(testTable).toBeDefined();
   });
+
+  test('should preserve schema registry on the database instance', () => {
+    const testTable = podTable('schema_test', {
+      id: string('id').primaryKey().predicate('https://schema.org/identifier'),
+    }, {
+      base: 'idp:///schema-test/index.ttl',
+      type: 'https://schema.org/Thing',
+      namespace: { prefix: 'schema', uri: 'https://schema.org/' },
+    });
+
+    const schema = { testTable };
+    const db = drizzle(mockSession, { schema });
+
+    expect(db.getSchema()).toBe(schema);
+    expect((db.getDialect() as any).config).toMatchObject({
+      disableInteropDiscovery: undefined,
+    });
+  });
+
+  test('should accept legacy logger option as debug alias', () => {
+    const db = drizzle(mockSession, { logger: true, schema: {} });
+
+    expect(db).toBeDefined();
+    expect((db.getDialect() as any).config.debug).toBe(true);
+  });
 });

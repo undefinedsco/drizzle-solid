@@ -10,6 +10,17 @@ export type SolidDatabase<TSchema extends Record<string, unknown> = Record<strin
 
 // 扩展 DrizzleConfig 以支持 Solid 特定选项
 export interface SolidDrizzleConfig<TSchema extends Record<string, unknown> = Record<string, never>> extends DrizzleConfig<TSchema> {
+  /**
+   * Schema registry used for URI/link resolution and typed query access.
+   * Drizzle's upstream `DrizzleConfig` typing does not currently expose this field
+   * on the imported utility type, so we declare it explicitly here.
+   */
+  schema?: TSchema;
+  /**
+   * Backward-compatible alias for legacy drizzle-solid callers.
+   * Prefer `debug`, but keep `logger` accepted to avoid needless breakage.
+   */
+  logger?: boolean;
   /** Notifications 配置 */
   notifications?: {
     /** 通道偏好顺序，默认 ['streaming-http', 'websocket'] */
@@ -55,7 +66,7 @@ export function drizzle<TSchema extends Record<string, unknown> = Record<string,
     createQueryEngine: config?.sparql?.createQueryEngine,
     disableInteropDiscovery: config?.disableInteropDiscovery,
     storageTTL: config?.storageTTL,
-    debug: config?.debug,
+    debug: config?.debug ?? config?.logger,
   };
   const dialect = new PodDialect(dialectConfig);
 
