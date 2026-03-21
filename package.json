@@ -18,7 +18,7 @@
     "LICENSE"
   ],
   "scripts": {
-    "build": "tsc && tsc -p tsconfig.esm.json",
+    "build": "tsc && tsc -p tsconfig.esm.json && node scripts/fix-esm-imports.cjs",
     "parity:generate": "ts-node scripts/generate-drizzle-parity.ts",
     "test": "yarn build && vitest --run",
     "test:integration": "SOLID_ENABLE_REAL_TESTS=true SOLID_SERIAL_TESTS=true vitest --run tests/integration/css",
