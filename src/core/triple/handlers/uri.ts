@@ -35,6 +35,8 @@ export class UriHandler implements ColumnHandler {
       baseUri: context.baseUri,
       tableRegistry: context.tableRegistry,
       tableNameRegistry: context.tableNameRegistry,
+      record: context.record,
+      currentTable: context.currentTable,
     };
   }
 

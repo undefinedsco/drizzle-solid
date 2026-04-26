@@ -210,23 +210,26 @@ export class UriResolverImpl implements UriResolver {
    * @param context 解析上下文（包含 tableRegistry 等）
    */
   resolveLink(value: string, column: PodColumnBase, context?: UriContext): string {
+    const rawValue = String(value ?? '');
+    const record = context?.record && typeof context.record === 'object' ? context.record : undefined;
+
     // 1. 已经是绝对 URI，直接返回
-    if (this.isAbsoluteUri(value)) {
-      return value;
+    if (this.isAbsoluteUri(rawValue)) {
+      return rawValue;
     }
 
     // 2. 相对路径（以 / 或 # 开头），用 baseUri 补全
-    if (value.startsWith('/') || value.startsWith('#')) {
+    if (rawValue.startsWith('/') || rawValue.startsWith('#')) {
       const base = context?.baseUri || this.podUrl;
       if (base) {
         try {
-          return new URL(value, base).toString();
+          return new URL(rawValue, base).toString();
         } catch {
           // URL 解析失败，继续尝试其他方式
         }
       }
       throw new Error(
-        `Cannot resolve relative URI "${value}": no baseUri configured`
+        `Cannot resolve relative URI "${rawValue}": no baseUri configured`
       );
     }
 
@@ -235,10 +238,10 @@ export class UriResolverImpl implements UriResolver {
     if (linkTable) {
       const uriInfo = this.getTableUriInfo(linkTable);
       if (uriInfo) {
-        return this.buildFullUri(value, uriInfo.baseUrl, uriInfo.subjectTemplate);
+        return this.buildFullUri(rawValue, uriInfo.baseUrl, uriInfo.subjectTemplate, linkTable, context, record);
       }
       throw new Error(
-        `Cannot resolve URI "${value}": linked table "${linkTable.config?.name}" has no base configured.`
+        `Cannot resolve URI "${rawValue}": linked table "${linkTable.config?.name}" has no base configured.`
       );
     }
 
@@ -250,7 +253,7 @@ export class UriResolverImpl implements UriResolver {
         if (targetTable) {
           const uriInfo = this.getTableUriInfo(targetTable);
           if (uriInfo) {
-            return this.buildFullUri(value, uriInfo.baseUrl, uriInfo.subjectTemplate);
+            return this.buildFullUri(rawValue, uriInfo.baseUrl, uriInfo.subjectTemplate, targetTable, context, record);
           }
         }
       }
@@ -258,7 +261,7 @@ export class UriResolverImpl implements UriResolver {
         ? Array.from(context.tableNameRegistry.keys()).join(', ')
         : '(no tables registered)';
       throw new Error(
-        `Cannot resolve URI "${value}": table "${linkTableName}" not found in schema. ` +
+        `Cannot resolve URI "${rawValue}": table "${linkTableName}" not found in schema. ` +
         `Available tables: ${availableTables}`
       );
     }
@@ -269,7 +272,7 @@ export class UriResolverImpl implements UriResolver {
       if (!context?.tableRegistry) {
         // 有 linkTarget 但没有 tableRegistry，无法解析
         throw new Error(
-          `Cannot resolve URI "${value}" (links to ${linkTarget}): ` +
+          `Cannot resolve URI "${rawValue}" (links to ${linkTarget}): ` +
           `tableRegistry not configured. Ensure the schema is properly registered.`
         );
       }
@@ -290,13 +293,13 @@ export class UriResolverImpl implements UriResolver {
         const targetTable = targetTables[0];
         const uriInfo = this.getTableUriInfo(targetTable);
         if (uriInfo) {
-          return this.buildFullUri(value, uriInfo.baseUrl, uriInfo.subjectTemplate);
+          return this.buildFullUri(rawValue, uriInfo.baseUrl, uriInfo.subjectTemplate, targetTable, context, record);
         }
       }
       
       // linkTarget 指定了但在 registry 中找不到对应的表
       throw new Error(
-        `Cannot resolve URI "${value}": class "${linkTarget}" not found in tableRegistry. ` +
+        `Cannot resolve URI "${rawValue}": class "${linkTarget}" not found in tableRegistry. ` +
         `Available classes: ${Array.from(context.tableRegistry.keys()).join(', ') || '(none)'}`
       );
     }
@@ -305,12 +308,12 @@ export class UriResolverImpl implements UriResolver {
     const base = context?.baseUri || this.podUrl;
     if (base && this.isAbsoluteUri(base)) {
       const baseUrl = base.endsWith('/') ? base : `${base}/`;
-      return this.buildFullUri(value, baseUrl);
+      return this.buildFullUri(rawValue, baseUrl);
     }
 
     // 7. 无法解析，给出友好的错误信息
     throw new Error(
-      `Cannot resolve URI "${value}". ` +
+      `Cannot resolve URI "${rawValue}". ` +
       `Either provide a full URI (https://...), or configure baseUri.`
     );
   }
@@ -416,28 +419,122 @@ export class UriResolverImpl implements UriResolver {
   /**
    * 构建完整 URI
    */
-  private buildFullUri(value: string, baseUrl: string, subjectTemplate: string = '{id}.ttl'): string {
-    // 如果不是 UUID/ID 格式，直接拼接
-    if (!UUID_REGEX.test(value) && value.includes('/')) {
-      return `${baseUrl}${value}`;
+  private buildFullUri(
+    value: string,
+    baseUrl: string,
+    subjectTemplate: string = '{id}.ttl',
+    targetTable?: PodTable,
+    context?: UriContext,
+    record?: Record<string, unknown>,
+  ): string {
+    const rawValue = String(value ?? '');
+
+    // 如果不是 UUID/ID 格式，直接拼接相对路径。模板路径变量只适用于短 id。
+    if (!UUID_REGEX.test(rawValue) && rawValue.includes('/') && !rawValue.includes('{')) {
+      const resolved = `${baseUrl}${rawValue}`;
+      this.assertNoUnresolvedTemplate(resolved, subjectTemplate, targetTable);
+      return resolved;
     }
 
-    // 用 value 替换模板中的 {id}
-    let result = subjectTemplate.replace(/\{id\}/g, value);
+    const templateRecord = this.buildTemplateRecord(rawValue, subjectTemplate, targetTable, context, record);
+    const result = this.applyTemplate(subjectTemplate, templateRecord, undefined, targetTable, true, context);
+    if (result === null) {
+      throw new Error(
+        `[UriResolver] Failed to resolve URI template "${subjectTemplate}" for table ` +
+        `"${targetTable?.config?.name ?? 'unknown'}"`
+      );
+    }
 
     if (this.isAbsoluteUri(result)) {
+      this.assertNoUnresolvedTemplate(result, subjectTemplate, targetTable);
       return result;
     }
 
     // 如果模板以 # 开头，是 fragment 模式
     if (result.startsWith('#')) {
       const cleanBase = baseUrl.endsWith('/') ? baseUrl.slice(0, -1) : baseUrl;
-      return `${cleanBase}${result}`;
+      const resolved = `${cleanBase}${result}`;
+      this.assertNoUnresolvedTemplate(resolved, subjectTemplate, targetTable);
+      return resolved;
     }
 
     // Document 模式，直接拼接
     const cleanBase = baseUrl.endsWith('/') ? baseUrl : `${baseUrl}/`;
-    return `${cleanBase}${result}`;
+    const resolved = `${cleanBase}${result}`;
+    this.assertNoUnresolvedTemplate(resolved, subjectTemplate, targetTable);
+    return resolved;
+  }
+
+  private buildTemplateRecord(
+    id: string,
+    template: string,
+    targetTable?: PodTable,
+    context?: UriContext,
+    record?: Record<string, unknown>,
+  ): Record<string, unknown> {
+    const templateRecord: Record<string, unknown> = { ...(record ?? {}) };
+    templateRecord.id = id;
+
+    for (const match of template.matchAll(/\{([^}]+)\}/g)) {
+      const variable = this.parseTemplateVariable(match[1]);
+      const key = variable.field;
+
+      if (key === 'id' || key === 'index' || key in templateRecord) {
+        continue;
+      }
+
+      const resolved = this.resolveTemplateVariable(key, targetTable, context, record);
+      if (resolved !== undefined && resolved !== null && resolved !== '') {
+        templateRecord[key] = resolved;
+      }
+    }
+
+    return templateRecord;
+  }
+
+  private resolveTemplateVariable(
+    variable: string,
+    targetTable?: PodTable,
+    context?: UriContext,
+    record?: Record<string, unknown>,
+  ): unknown {
+    if (!record || typeof record !== 'object') {
+      return undefined;
+    }
+
+    if (variable in record) {
+      const column = targetTable?.columns?.[variable];
+      return this.normalizeValue(record[variable], column, context);
+    }
+
+    const directIdKey = `${variable}Id`;
+    if (directIdKey in record) {
+      return String(record[directIdKey]);
+    }
+
+    const targetColumn = targetTable?.columns?.[variable];
+    const targetLinkedTable = targetColumn ? this.findTargetTable(targetColumn, context) : undefined;
+    if (targetLinkedTable) {
+      for (const [recordKey, recordValue] of Object.entries(record)) {
+        const recordColumn = context?.currentTable?.columns?.[recordKey];
+        const linkedTable = recordColumn ? this.findTargetTable(recordColumn, context) : undefined;
+        if (linkedTable === targetLinkedTable) {
+          return this.normalizeValue(recordValue, targetColumn, context);
+        }
+      }
+    }
+
+    return undefined;
+  }
+
+  private assertNoUnresolvedTemplate(value: string, template: string, table?: PodTable): void {
+    if (/\{[^}]+\}/.test(value)) {
+      const tableName = table?.config?.name || 'unknown';
+      throw new Error(
+        `[UriResolver] Unresolved URI template variable while resolving table "${tableName}" ` +
+        `with template "${template}": ${value}`
+      );
+    }
   }
 
   /**
@@ -578,7 +675,8 @@ export class UriResolverImpl implements UriResolver {
     record: Record<string, unknown>,
     index?: number,
     table?: PodTable,
-    strict: boolean = true
+    strict: boolean = true,
+    uriContext?: UriContext,
   ): string | null {
     if (!template.includes('{')) {
       return template;
@@ -610,10 +708,10 @@ export class UriResolverImpl implements UriResolver {
       }
 
       const column = (table as any)?.columns?.[key];
-      const context = table ? {
+      const context = uriContext ?? (table ? {
         tableRegistry: (table as any)[Symbol.for('drizzle:tableRegistry')],
         tableNameRegistry: (table as any)[Symbol.for('drizzle:tableNameRegistry')]
-      } : undefined;
+      } : undefined);
 
       const value = this.applyTransforms(rawValue, variable, column, context);
 

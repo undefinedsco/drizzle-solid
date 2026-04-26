@@ -6,6 +6,8 @@ import type { UriContext, UriResolver } from '../../uri';
 import { UriResolverImpl } from '../../uri';
 import type { TableRegistryContext } from '../../ast-to-sparql';
 
+type FormattedLinkValue = string | { partial: true; id: string };
+
 export class ExpressionBuilder {
   private tableContext?: TableRegistryContext;
   private uriResolver: UriResolver;
@@ -62,7 +64,7 @@ export class ExpressionBuilder {
    * Format a value for a link column, resolving URI if needed
    * Uses uriResolver for consistent URI resolution
    */
-  private formatLinkValue(value: any, column: PodColumnBase | any, table: PodTable): string {
+  private formatLinkValue(value: any, column: PodColumnBase | any, table: PodTable): FormattedLinkValue {
     const str = String(value);
     if (str.startsWith('<') && str.endsWith('>')) {
       const inner = str.slice(1, -1);
@@ -76,6 +78,9 @@ export class ExpressionBuilder {
       } catch (error) {
         const tableName = table.config?.name ?? 'unknown';
         const columnName = column?.name ?? 'unknown';
+        if (this.isPartialTemplateError(error)) {
+          return { partial: true, id: inner };
+        }
         throw new Error(`[ExpressionBuilder] Failed to resolve URI for ${tableName}.${columnName}: ${error}`);
       }
     }
@@ -89,8 +94,45 @@ export class ExpressionBuilder {
     } catch (e) {
       const tableName = table.config?.name ?? 'unknown';
       const columnName = column?.name ?? 'unknown';
+      if (this.isPartialTemplateError(e)) {
+        return { partial: true, id: str };
+      }
       throw new Error(`[ExpressionBuilder] Failed to resolve URI for ${tableName}.${columnName}: ${e}`);
     }
+  }
+
+  private isPartialTemplateError(error: unknown): boolean {
+    const message = String(error);
+    return message.includes('Missing required fields for template') ||
+      message.includes('Unresolved URI template variable');
+  }
+
+  private isPartialLinkValue(value: unknown): value is { partial: true; id: string } {
+    return typeof value === 'object' &&
+      value !== null &&
+      !Array.isArray(value) &&
+      (value as { partial?: unknown }).partial === true &&
+      typeof (value as { id?: unknown }).id === 'string';
+  }
+
+  private formatPartialLinkCondition(
+    variable: string,
+    value: FormattedLinkValue,
+    operator: string,
+  ): string | undefined {
+    if (!this.isPartialLinkValue(value)) {
+      return undefined;
+    }
+
+    const escapedId = value.id.replace(/\\/g, '\\\\').replace(/"/g, '\\"');
+    if (operator === '=') {
+      return `STRENDS(STR(${variable}), "#${escapedId}")`;
+    }
+    if (operator === '!=') {
+      return `!STRENDS(STR(${variable}), "#${escapedId}")`;
+    }
+
+    return undefined;
   }
 
   private parseTemplateVariable(token: string): { field: string; transforms: string[] } {
@@ -450,12 +492,31 @@ export class ExpressionBuilder {
         return condition.operator === 'NOT IN' ? `!(${expr})` : expr;
       }
 
-      const formattedValues = value.map((v: any) => {
+      const formattedResults = value.map((v: any) => {
          if (isLink) {
             return this.formatLinkValue(v, column, table);
          }
          return formatValue(v, column, this.uriResolver, this.getUriContext());
-      }).join(', ');
+      });
+
+      const hasPartialLink = formattedResults.some((result) =>
+        this.isPartialLinkValue(result)
+      );
+      if (hasPartialLink) {
+        const conditions = formattedResults.map((result) => {
+          if (this.isPartialLinkValue(result)) {
+            const escapedId = result.id.replace(/\\/g, '\\\\').replace(/"/g, '\\"');
+            return `STRENDS(STR(${variable}), "#${escapedId}")`;
+          }
+
+          const formatted = Array.isArray(result) ? result.join(', ') : result;
+          return `(${variable} = ${formatted})`;
+        });
+        const expr = `(${conditions.join(' || ')})`;
+        return condition.operator === 'NOT IN' ? `!(${expr})` : expr;
+      }
+
+      const formattedValues = formattedResults.join(', ');
 
       const expr = `${variable} IN(${formattedValues})`;
       return condition.operator === 'NOT IN' ? `!(${expr})` : expr;
@@ -501,8 +562,16 @@ export class ExpressionBuilder {
     if (isSubject) {
         formattedValue = this.formatSubjectValue(value, table, isVirtualId);
     } else if (isLink) {
-        // Resolve link URI
-        formattedValue = this.formatLinkValue(value, column, table);
+        // Resolve link URI. If the target template requires variables that this
+        // single predicate cannot provide, fall back to an id-fragment suffix.
+        const linkValue = this.formatLinkValue(value, column, table);
+        const partialCondition = this.formatPartialLinkCondition(variable, linkValue, condition.operator);
+        if (partialCondition) {
+          return partialCondition;
+        }
+        formattedValue = this.isPartialLinkValue(linkValue)
+          ? `"${linkValue.id.replace(/\\/g, '\\\\').replace(/"/g, '\\"')}"`
+          : linkValue;
     } else {
         formattedValue = formatValue(value, column, this.uriResolver, this.getUriContext());
     }

@@ -62,7 +62,7 @@ export class TripleBuilderImpl implements TripleBuilder {
   /**
    * 构建上下文
    */
-  private createContext(): BuildContext {
+  private createContext(record?: Record<string, unknown>, currentTable?: PodTable): BuildContext {
     return {
       resolveInlineChildUri: this.resolveInlineChildUri.bind(this),
       getNamespaceUri: this.getNamespaceUri.bind(this),
@@ -70,6 +70,8 @@ export class TripleBuilderImpl implements TripleBuilder {
       baseUri: this.baseUri,
       tableRegistry: this.tableRegistry,
       tableNameRegistry: this.tableNameRegistry,
+      record,
+      currentTable,
     };
   }
 
@@ -84,7 +86,7 @@ export class TripleBuilderImpl implements TripleBuilder {
   ): BuildResult {
     const handler = handlerRegistry.getHandler(column);
     const predicate = this.getPredicateUri(column, table);
-    const context = this.createContext();
+    const context = this.createContext((table as any)?.__currentRecord, table);
 
     return handler.buildTriples(subject, predicate, value, column, table, context);
   }

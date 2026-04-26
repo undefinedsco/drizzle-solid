@@ -127,6 +127,12 @@ export interface BuildContext {
 
   /** 表名注册表：tableName -> table，用于明确指定表名时查找 */
   tableNameRegistry?: Map<string, PodTable>;
+
+  /** Current row being serialized, used to resolve compound URI template variables. */
+  record?: Record<string, unknown>;
+
+  /** Current table being serialized, used to map relation fields to linked templates. */
+  currentTable?: PodTable;
 }
 
 /**

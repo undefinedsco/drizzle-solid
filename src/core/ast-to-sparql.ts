@@ -33,6 +33,8 @@ export interface TableRegistryContext {
   tableRegistry: Map<string, PodTable[]>;
   tableNameRegistry: Map<string, PodTable>;
   baseUri?: string;
+  record?: Record<string, unknown>;
+  currentTable?: PodTable;
 }
 
 export class ASTToSPARQLConverter {

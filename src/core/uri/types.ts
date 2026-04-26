@@ -75,6 +75,12 @@ export interface UriContext {
 
   /** tableName -> table 的映射 */
   tableNameRegistry?: Map<string, PodTable>;
+
+  /** Current row being serialized, used to resolve compound URI template variables. */
+  record?: Record<string, unknown>;
+
+  /** Current table being serialized, used to map relation fields to linked templates. */
+  currentTable?: PodTable;
 }
 
 /**
