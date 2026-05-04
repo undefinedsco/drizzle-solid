@@ -66,15 +66,14 @@ export class PodExecutor {
     const { containerUrl, resourceUrl } = this.deps.resolveTableUrls(operation.table);
     const normalizedResourceUrl = this.deps.normalizeResourceUrl(resourceUrl);
 
-    // SELECT 操作时，SPARQL 策略需要使用 endpoint URL。
-    // 精确 IRI 读取必须直接读目标文档，避免 SPARQL endpoint/collection 查询展开为宽 OPTIONAL。
+    // SELECT 操作时，SPARQL 策略需要使用表配置的 scoped endpoint。
+    // xpod sidecar endpoint 负责定义这个路径下的资源集合；SDK 不用 GRAPH 模拟路径范围。
     const exactSelectResourceUrl = operation.type === 'select'
       ? this.getExactSelectResourceUrl(operation)
       : undefined;
-    const selectResourceUrl = exactSelectResourceUrl
-      ?? (operation.type === 'select' && descriptor.mode === 'sparql'
-        ? descriptor.endpoint
-        : normalizedResourceUrl);
+    const selectResourceUrl = operation.type === 'select' && descriptor.mode === 'sparql'
+      ? descriptor.endpoint
+      : exactSelectResourceUrl ?? normalizedResourceUrl;
 
     try {
       switch (operation.type) {
@@ -152,9 +151,6 @@ export class PodExecutor {
   }
 
   private getSelectStrategy(operation: PodOperation, descriptor: TableResourceDescriptor): ExecutionStrategy {
-    if (descriptor.mode === 'sparql' && this.isExactIriSelect(operation)) {
-      return this.deps.getLdpStrategy();
-    }
     return this.deps.getStrategy(operation.table);
   }
 

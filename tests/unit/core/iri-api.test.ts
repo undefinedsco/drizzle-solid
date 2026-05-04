@@ -210,11 +210,11 @@ describe('IRI API', () => {
       expect(mockSession.select).not.toHaveBeenCalled();
     });
 
-    it('findByIri should query the exact document graph for SPARQL-backed tables', async () => {
+    it('findByIri should keep SPARQL-backed exact reads subject-bound and let the endpoint scope the source set', async () => {
       const dialect = {
         resolveTableResource: () => ({ mode: 'sparql', endpoint: 'https://example.com/sparql' }),
         executeOnResource: exactSparqlRows.mockResolvedValueOnce([
-          { p: 'https://schema.org/name', o: 'Document Graph Alice' },
+          { p: 'https://schema.org/name', o: 'Scoped Alice' },
         ]),
         getResolver: () => ({
           parseId: (_table: any, subjectUri: string) => subjectUri.split('#').pop(),
@@ -224,9 +224,9 @@ describe('IRI API', () => {
       const exactDb = new PodDatabase(dialect as PodDialect, mockSession as PodAsyncSession);
       const row = await exactDb.findByIri(testTable, 'https://example.com/profile#me');
 
-      expect(row?.name).toBe('Document Graph Alice');
+      expect(row?.name).toBe('Scoped Alice');
       expect(exactSparqlRows).toHaveBeenCalledTimes(1);
-      expect(String(exactSparqlRows.mock.calls[0]?.[1]?.query)).toContain('GRAPH <https://example.com/profile>');
+      expect(String(exactSparqlRows.mock.calls[0]?.[1]?.query)).toBe('SELECT ?p ?o WHERE { <https://example.com/profile#me> ?p ?o . }');
       expect(mockSession.select).not.toHaveBeenCalled();
     });
 

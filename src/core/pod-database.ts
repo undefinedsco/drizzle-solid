@@ -360,9 +360,7 @@ export class PodDatabase<TSchema extends Record<string, unknown> = Record<string
     const descriptor = this.dialect.resolveTableResource(table);
     const query = {
       type: 'SELECT' as const,
-      query: descriptor.mode === 'sparql'
-        ? `SELECT ?p ?o WHERE { GRAPH <${documentUrl}> { <${iri}> ?p ?o . } }`
-        : `SELECT ?p ?o WHERE { <${iri}> ?p ?o . }`,
+      query: `SELECT ?p ?o WHERE { <${iri}> ?p ?o . }`,
       prefixes: {}
     };
     const rows = descriptor.mode === 'sparql'

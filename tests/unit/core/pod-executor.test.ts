@@ -75,7 +75,7 @@ describe('PodExecutor', () => {
     }
   });
 
-  it('routes exact IRI reads to the LDP document even when table has SPARQL endpoint', async () => {
+  it('routes exact IRI reads through the scoped SPARQL endpoint when one is configured', async () => {
     const { deps, ldpStrategy, sparqlStrategy } = createDeps();
 
     await expect(new PodExecutor(deps).query({
@@ -84,11 +84,11 @@ describe('PodExecutor', () => {
       where: { '@id': 'https://example.com/users.ttl#alice' },
     })).rejects.toThrow('boom');
 
-    expect(ldpStrategy.executeSelect).toHaveBeenCalledWith(
+    expect(sparqlStrategy.executeSelect).toHaveBeenCalledWith(
       expect.any(Object),
       'https://example.com/',
-      'https://example.com/users.ttl',
+      'https://example.com/sparql',
     );
-    expect(sparqlStrategy.executeSelect).not.toHaveBeenCalled();
+    expect(ldpStrategy.executeSelect).not.toHaveBeenCalled();
   });
 });
