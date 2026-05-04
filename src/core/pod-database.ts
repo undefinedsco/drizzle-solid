@@ -47,6 +47,7 @@ type QueryExactOptions = {
   columns?: SelectFieldMap;
   with?: Record<string, boolean | { table?: GenericPodTable }>;
 };
+type VirtualIdPodColumn = PodColumnBase & { _virtualId?: boolean };
 type EntityLocator = Record<string, unknown>;
 type QueryFindManyOptions = {
   where?: PublicWhereObject | PublicQueryCondition;
@@ -415,17 +416,17 @@ export class PodDatabase<TSchema extends Record<string, unknown> = Record<string
         hasType = true;
       }
 
-      for (const [key, column] of Object.entries(table.columns ?? {})) {
-        if ((column as any)._virtualId) {
+      for (const [key, column] of Object.entries(table.columns ?? {}) as Array<[string, VirtualIdPodColumn]>) {
+        if (column._virtualId) {
           continue;
         }
 
-        const columnPredicate = this.getColumnPredicate(table, column as PodColumnBase);
+        const columnPredicate = this.getColumnPredicate(table, column);
         if (!columnPredicate || columnPredicate === '@id' || columnPredicate !== predicate) {
           continue;
         }
 
-        const isArray = (column as PodColumnBase).options?.isArray || (column as PodColumnBase).dataType === 'array';
+        const isArray = column.options?.isArray || column.dataType === 'array';
         if (isArray) {
           const existing = Array.isArray(row[key]) ? row[key] : row[key] === undefined ? [] : [row[key]];
           row[key] = [...existing, object];

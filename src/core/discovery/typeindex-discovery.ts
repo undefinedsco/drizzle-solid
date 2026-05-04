@@ -23,7 +23,9 @@ export class TypeIndexDiscovery implements DataDiscovery {
   }
 
   private getPodUrl(): string {
-    return this.manager.getConfig().podUrl || this.podUrl;
+    return typeof this.manager.getConfig === 'function'
+      ? this.manager.getConfig().podUrl || this.podUrl
+      : this.podUrl;
   }
 
   /**
