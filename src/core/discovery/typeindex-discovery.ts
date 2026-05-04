@@ -18,6 +18,14 @@ export class TypeIndexDiscovery implements DataDiscovery {
     this.uriResolver = uriResolver ?? new UriResolverImpl(podUrl);
   }
 
+  setPodUrl(podUrl: string): void {
+    this.podUrl = podUrl;
+  }
+
+  private getPodUrl(): string {
+    return this.manager.getConfig().podUrl || this.podUrl;
+  }
+
   /**
    * 注册表的类型到 TypeIndex
    */
@@ -40,14 +48,15 @@ export class TypeIndexDiscovery implements DataDiscovery {
     // 如果是 document 模式，instanceContainer 指向容器
     const resourceMode = this.uriResolver.getResourceMode(table);
     let containerPath = table.getContainerPath() || '/data/';
-    let instanceContainer = `${this.podUrl.replace(/\/$/, '')}${containerPath}`;
+    const podUrl = this.getPodUrl();
+    let instanceContainer = `${podUrl.replace(/\/$/, '')}${containerPath}`;
     
     // 尝试从 resourcePath 反推
     // 这部分逻辑从 PodDialect 迁移过来
     const descriptor = this.resolveTableResource(table);
     if (descriptor.mode === 'ldp') {
       const containerUrl = descriptor.containerUrl;
-      const podUrlBase = this.podUrl.replace(/\/$/, '');
+      const podUrlBase = podUrl.replace(/\/$/, '');
       if (containerUrl.startsWith(podUrlBase)) {
         containerPath = containerUrl.substring(podUrlBase.length);
         instanceContainer = containerUrl.replace(/\/$/, '') + '/';
@@ -134,7 +143,8 @@ export class TypeIndexDiscovery implements DataDiscovery {
 
   private toAbsolute(path: string): string {
     if (path.startsWith('http')) return path;
-    const base = this.podUrl.endsWith('/') ? this.podUrl : `${this.podUrl}/`;
+    const podUrl = this.getPodUrl();
+    const base = podUrl.endsWith('/') ? podUrl : `${podUrl}/`;
     const rel = path.startsWith('/') ? path.slice(1) : path;
     return `${base}${rel}`;
   }

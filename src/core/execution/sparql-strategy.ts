@@ -32,6 +32,10 @@ export class SparqlStrategy implements ExecutionStrategy {
     this.createQueryEngine = deps.createQueryEngine;
   }
 
+  setPodUrl(podUrl: string): void {
+    this.podUrl = podUrl;
+  }
+
   private resolveTargetGraph(table?: { config?: { base?: string; containerPath?: string }; getContainerPath?: () => string }, forSelect = false): string | undefined {
     if (!table) return undefined;
 

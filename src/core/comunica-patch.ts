@@ -29,8 +29,8 @@ const createRequireFn = resolveCreateRequire();
 const moduleFilename = typeof __filename === 'string'
   ? __filename
   : (typeof process !== 'undefined' && typeof process.cwd === 'function'
-      ? process.cwd()
-      : '/');
+      ? `${process.cwd().replace(/\/$/, '')}/package.json`
+      : '/package.json');
 
 const defaultRequireModule = createRequireFn
   ? createRequireFn(moduleFilename)
@@ -51,6 +51,10 @@ const patchActionObserverHttp = (requireModule: NodeRequire | null, moduleName: 
     const comunica = requireModule(moduleName);
 
     if (comunica && comunica.ActionObserverHttp) {
+      if (comunica.ActionObserverHttp.prototype.__drizzleSolidObservedActorsPatchApplied) {
+        return true;
+      }
+
       const originalOnRun = comunica.ActionObserverHttp.prototype.onRun as OnRunHandler;
 
       comunica.ActionObserverHttp.prototype.onRun = function(actor: unknown, _action: unknown, _output: unknown) {
@@ -61,6 +65,7 @@ const patchActionObserverHttp = (requireModule: NodeRequire | null, moduleName: 
         return originalOnRun.call(this, actor, _action, _output);
       };
 
+      comunica.ActionObserverHttp.prototype.__drizzleSolidObservedActorsPatchApplied = true;
       return true;
     }
     return false;

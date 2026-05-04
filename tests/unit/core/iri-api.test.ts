@@ -9,6 +9,8 @@ import { eq } from '@src/core/query-conditions';
 import { podTable, string, id } from '@src/core/schema';
 import { UriResolverImpl } from '@src/core/uri/resolver';
 
+const exactSparqlRows = vi.fn();
+
 const testTable = podTable('profiles', {
   id: id(),
   name: string('name').predicate('https://schema.org/name'),
@@ -101,8 +103,11 @@ describe('IRI API', () => {
 
   describe('*ByIri methods signature', () => {
     let db: PodDatabase;
+    let mockSession: any;
 
     beforeEach(() => {
+      exactSparqlRows.mockReset();
+
       const createBuilder = (): any => {
         const builder: any = {
           from: () => builder,
@@ -114,8 +119,8 @@ describe('IRI API', () => {
         return builder;
       };
 
-      const mockSession = {
-        select: () => createBuilder(),
+      mockSession = {
+        select: vi.fn(() => createBuilder()),
         update: () => ({
           set: () => ({
             where: vi.fn(),
@@ -184,6 +189,79 @@ describe('IRI API', () => {
       await expect(async () => {
         await db.findByLocator(testTable, { id: 'https://example.com/profile#me' });
       }).rejects.toThrow('findByLocator does not accept a full IRI in locator.id');
+    });
+
+    it('findByIri should prefer exact subject reads before whereByIri fallback', async () => {
+      const dialect = {
+        resolveTableResource: () => ({ mode: 'sparql', endpoint: 'https://example.com/sparql' }),
+        executeOnResource: exactSparqlRows.mockResolvedValueOnce([
+          { p: 'https://schema.org/name', o: 'Alice' },
+        ]),
+        getResolver: () => ({
+          parseId: (_table: any, subjectUri: string) => subjectUri.split('#').pop(),
+        }),
+      } as any;
+
+      const exactDb = new PodDatabase(dialect as PodDialect, mockSession as PodAsyncSession);
+      const row = await exactDb.findByIri(testTable, 'https://example.com/profile#me');
+
+      expect(row?.name).toBe('Alice');
+      expect(exactSparqlRows).toHaveBeenCalled();
+      expect(mockSession.select).not.toHaveBeenCalled();
+    });
+
+    it('findByIri should query the exact document graph for SPARQL-backed tables', async () => {
+      const dialect = {
+        resolveTableResource: () => ({ mode: 'sparql', endpoint: 'https://example.com/sparql' }),
+        executeOnResource: exactSparqlRows.mockResolvedValueOnce([
+          { p: 'https://schema.org/name', o: 'Document Graph Alice' },
+        ]),
+        getResolver: () => ({
+          parseId: (_table: any, subjectUri: string) => subjectUri.split('#').pop(),
+        }),
+      } as any;
+
+      const exactDb = new PodDatabase(dialect as PodDialect, mockSession as PodAsyncSession);
+      const row = await exactDb.findByIri(testTable, 'https://example.com/profile#me');
+
+      expect(row?.name).toBe('Document Graph Alice');
+      expect(exactSparqlRows).toHaveBeenCalledTimes(1);
+      expect(String(exactSparqlRows.mock.calls[0]?.[1]?.query)).toContain('GRAPH <https://example.com/profile>');
+      expect(mockSession.select).not.toHaveBeenCalled();
+    });
+
+    it('findByIri should return null when the exact document graph read misses', async () => {
+      const dialect = {
+        resolveTableResource: () => ({ mode: 'sparql', endpoint: 'https://example.com/sparql' }),
+        executeOnResource: exactSparqlRows.mockResolvedValueOnce([]),
+        getResolver: () => ({
+          parseId: (_table: any, subjectUri: string) => subjectUri.split('#').pop(),
+        }),
+      } as any;
+
+      const exactDb = new PodDatabase(dialect as PodDialect, mockSession as PodAsyncSession);
+      const row = await exactDb.findByIri(testTable, 'https://example.com/profile#me');
+
+      expect(row).toBeNull();
+      expect(exactSparqlRows).toHaveBeenCalledTimes(1);
+      expect(mockSession.select).not.toHaveBeenCalled();
+    });
+
+    it('findByIri should surface exact read execution errors instead of silently falling back', async () => {
+      const dialect = {
+        resolveTableResource: () => ({ mode: 'sparql', endpoint: 'https://example.com/sparql' }),
+        executeOnResource: exactSparqlRows.mockRejectedValue(new Error('endpoint failed')),
+        getResolver: () => ({
+          parseId: (_table: any, subjectUri: string) => subjectUri.split('#').pop(),
+        }),
+      } as any;
+
+      const exactDb = new PodDatabase(dialect as PodDialect, mockSession as PodAsyncSession);
+
+      await expect(
+        exactDb.findByIri(testTable, 'https://example.com/profile#me'),
+      ).rejects.toThrow('endpoint failed');
+      expect(mockSession.select).not.toHaveBeenCalled();
     });
   });
 

@@ -18,6 +18,10 @@ export interface PodExecutorDeps {
   normalizeResourceKey: (resourceUrl: string) => string;
   ensureContainerExists: (containerUrl: string) => Promise<void>;
   ensureResourceExists: (resourceUrl: string, options?: { createIfMissing?: boolean }) => Promise<void>;
+  getTableRegistries?: () => {
+    tableRegistry: Map<string, PodTable[]>;
+    tableNameRegistry: Map<string, PodTable>;
+  };
   ensureIdentifierCondition: (
     condition: QueryCondition | undefined,
     table: PodTable,
@@ -55,17 +59,22 @@ export class PodExecutor {
     // - SELECT: 使用表配置的策略（可能是 SPARQL 或 LDP）
     // - INSERT/UPDATE/DELETE: 强制使用 LDP 策略（SPARQL mode 仅用于查询增强）
     const strategy = operation.type === 'select'
-      ? this.deps.getStrategy(operation.table)
+      ? this.getSelectStrategy(operation, descriptor)
       : this.deps.getLdpStrategy();
 
     // LDP container/resource URLs（物理存储位置）
     const { containerUrl, resourceUrl } = this.deps.resolveTableUrls(operation.table);
     const normalizedResourceUrl = this.deps.normalizeResourceUrl(resourceUrl);
 
-    // SELECT 操作时，SPARQL 策略需要使用 endpoint URL
-    const selectResourceUrl = operation.type === 'select' && descriptor.mode === 'sparql'
-      ? descriptor.endpoint
-      : normalizedResourceUrl;
+    // SELECT 操作时，SPARQL 策略需要使用 endpoint URL。
+    // 精确 IRI 读取必须直接读目标文档，避免 SPARQL endpoint/collection 查询展开为宽 OPTIONAL。
+    const exactSelectResourceUrl = operation.type === 'select'
+      ? this.getExactSelectResourceUrl(operation)
+      : undefined;
+    const selectResourceUrl = exactSelectResourceUrl
+      ?? (operation.type === 'select' && descriptor.mode === 'sparql'
+        ? descriptor.endpoint
+        : normalizedResourceUrl);
 
     try {
       switch (operation.type) {
@@ -85,7 +94,9 @@ export class PodExecutor {
           throw new Error(`Unsupported operation type: ${operation.type}`);
       }
     } catch (error) {
-      console.error(`${operation.type.toUpperCase()} operation failed:`, error);
+      if (typeof process !== 'undefined' && process.env?.LINX_DEBUG === '1') {
+        console.error(`${operation.type.toUpperCase()} operation failed:`, error);
+      }
       throw error;
     }
   }
@@ -140,6 +151,31 @@ export class PodExecutor {
     return results;
   }
 
+  private getSelectStrategy(operation: PodOperation, descriptor: TableResourceDescriptor): ExecutionStrategy {
+    if (descriptor.mode === 'sparql' && this.isExactIriSelect(operation)) {
+      return this.deps.getLdpStrategy();
+    }
+    return this.deps.getStrategy(operation.table);
+  }
+
+  private isExactIriSelect(operation: PodOperation): boolean {
+    const condition = operation.where;
+    if (!condition || typeof condition !== 'object' || 'type' in condition) {
+      return false;
+    }
+    const value = (condition as Record<string, unknown>)['@id'];
+    return typeof value === 'string' && value.startsWith('http');
+  }
+
+  private getExactSelectResourceUrl(operation: PodOperation): string | undefined {
+    if (!this.isExactIriSelect(operation)) {
+      return undefined;
+    }
+    const iri = (operation.where as Record<string, string>)['@id'];
+    const hashIndex = iri.indexOf('#');
+    return hashIndex >= 0 ? iri.slice(0, hashIndex) : iri;
+  }
+
   /**
    * Execute INSERT operation via ExecutionStrategy
    */
@@ -155,15 +191,15 @@ export class PodExecutor {
       throw new Error('INSERT operation requires at least one value');
     }
 
-    // LDP mode: ensure container and resource exist first
-    if (descriptor.mode === 'ldp') {
-      if (!this.deps.preparedContainers.has(this.deps.normalizeContainerKey(containerUrl))) {
-        await this.deps.ensureContainerExists(containerUrl);
-      }
-      if (!this.deps.preparedResources.has(this.deps.normalizeResourceKey(resourceUrl))) {
-        await this.deps.ensureResourceExists(resourceUrl, { createIfMissing: true });
-      }
+    // Writes always go through LDP, even when SELECT uses a SPARQL endpoint.
+    if (!this.deps.preparedContainers.has(this.deps.normalizeContainerKey(containerUrl))) {
+      await this.deps.ensureContainerExists(containerUrl);
+    }
+    if (descriptor.mode === 'ldp' && !this.deps.preparedResources.has(this.deps.normalizeResourceKey(resourceUrl))) {
+      await this.deps.ensureResourceExists(resourceUrl, { createIfMissing: true });
+    }
 
+    if (descriptor.mode === 'ldp') {
       // Pre-flight check for duplicates (Strategy: INSERT means NEW)
       // 如果资源不存在（404），清除缓存以避免后续查询被缓存的 404 影响
       for (const row of values) {
@@ -183,9 +219,14 @@ export class PodExecutor {
       }
     }
 
-    const insertPlan = this.deps.isInsertPlan(operation.plan)
-      ? operation.plan
-      : { table: operation.table, rows: values };
+    const insertPlan = {
+      ...(this.deps.isInsertPlan(operation.plan)
+        ? operation.plan
+        : { table: operation.table, rows: values }),
+      ensureContainerExists: this.deps.ensureContainerExists,
+      tableRegistry: this.deps.getTableRegistries?.().tableRegistry,
+      tableNameRegistry: this.deps.getTableRegistries?.().tableNameRegistry,
+    };
 
     if (!strategy.executeInsert) {
       throw new Error('Strategy does not support INSERT operations');

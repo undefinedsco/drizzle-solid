@@ -18,6 +18,24 @@ type QueryTerm = {
   value?: string;
 };
 
+function getContainerUrl(resourceUrl: string): string | null {
+  try {
+    const parsed = new URL(resourceUrl);
+    const lastSlash = parsed.pathname.lastIndexOf('/');
+    if (lastSlash < 0) {
+      return null;
+    }
+
+    parsed.pathname = parsed.pathname.slice(0, lastSlash + 1);
+    parsed.search = '';
+    parsed.hash = '';
+    return parsed.toString();
+  } catch {
+    const lastSlash = resourceUrl.lastIndexOf('/');
+    return lastSlash > 0 ? resourceUrl.slice(0, lastSlash + 1) : null;
+  }
+}
+
 export class LdpExecutor {
   private sparqlExecutor: ComunicaSPARQLExecutor;
   private fetchFn: typeof fetch;
@@ -56,8 +74,17 @@ export class LdpExecutor {
   async executeInsert(
     rows: any[],
     table: PodTable,
-    resourceUrl: string
+    resourceUrl: string,
+    options: {
+      ensureContainerExists?: (containerUrl: string) => Promise<void>;
+      tableRegistry?: Map<string, PodTable[]>;
+      tableNameRegistry?: Map<string, PodTable>;
+    } = {}
   ): Promise<any[]> {
+    if (options.tableRegistry && options.tableNameRegistry) {
+      this.setTableRegistry(options.tableRegistry, options.tableNameRegistry);
+    }
+
     const insertTriples: string[] = [];
 
     rows.forEach((row, idx) => {
@@ -146,6 +173,11 @@ export class LdpExecutor {
       // 对每个唯一的 resourceUrl 执行一次写入
       const results: any[] = [];
       for (const [docResourceUrl, triples] of resourceTriples.entries()) {
+        const containerUrl = getContainerUrl(docResourceUrl);
+        if (containerUrl && options.ensureContainerExists) {
+          await options.ensureContainerExists(containerUrl);
+        }
+
         // 检查资源是否已存在，如果存在则使用 PATCH 追加
         const headRes = await this.fetchFn(docResourceUrl, { method: 'HEAD' });
         const resourceExists = headRes.ok || headRes.status === 405;
@@ -191,6 +223,11 @@ export class LdpExecutor {
 
     // Fragment Mode: 所有记录写入同一个文件
     // 使用 SPARQL UPDATE (INSERT DATA) 进行插入
+    const containerUrl = getContainerUrl(resourceUrl);
+    if (containerUrl && options.ensureContainerExists) {
+      await options.ensureContainerExists(containerUrl);
+    }
+
     const sparql = `INSERT DATA {\n${insertTriples.join('\n')}\n}`;
     
     let response = await this.fetchFn(resourceUrl, {

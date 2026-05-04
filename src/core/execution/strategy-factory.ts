@@ -45,6 +45,11 @@ export class ExecutionStrategyFactoryImpl implements ExecutionStrategyFactory {
     this.deps = deps;
   }
 
+  setPodUrl(podUrl: string): void {
+    this.deps.podUrl = podUrl;
+    this.sparqlStrategy?.setPodUrl(podUrl);
+  }
+
   getStrategy(table: PodTable): ExecutionStrategy {
     const endpoint = table.getSparqlEndpoint?.();
 

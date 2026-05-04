@@ -112,6 +112,8 @@ export class PodDialect {
   private preparedContainers: Set<string> = new Set();
   private preparedResources: Set<string> = new Set();
   private debugLogger: DebugLogger;
+  private currentTableRegistry: Map<string, PodTable[]> = new Map();
+  private currentTableNameRegistry: Map<string, PodTable> = new Map();
 
   constructor(config: PodDialectConfig) {
     this.config = config;
@@ -178,6 +180,10 @@ export class PodDialect {
       normalizeResourceKey: (resourceUrl) => this.normalizeResourceKey(resourceUrl),
       ensureContainerExists: (containerUrl) => this.ensureContainerExists(containerUrl),
       ensureResourceExists: (resourceUrl, options) => this.ensureResourceExists(resourceUrl, options),
+      getTableRegistries: () => ({
+        tableRegistry: this.currentTableRegistry,
+        tableNameRegistry: this.currentTableNameRegistry,
+      }),
       ensureIdentifierCondition: (condition, table, resourceUrl) =>
         this.ensureIdentifierCondition(condition, table, resourceUrl),
       resourceExists: (resourceUrl) => this.resourceExists(resourceUrl),
@@ -259,11 +265,42 @@ export class PodDialect {
       }
     }
     
-    this.ldpExecutor.setTableRegistry(tableRegistry, tableNameRegistry);
+    this.currentTableRegistry = tableRegistry;
+    this.currentTableNameRegistry = tableNameRegistry;
+    this.refreshBaseUrlFromRuntime();
+  }
+
+  private refreshBaseUrlFromRuntime(): void {
+    const nextPodUrl = this.runtime.getPodUrl();
+    if (!nextPodUrl) {
+      return;
+    }
+
+    if (this.podUrl !== nextPodUrl) {
+      this.podUrl = nextPodUrl;
+      this.preparedContainers.clear();
+      this.preparedResources.clear();
+    }
+
+    this.uriResolver.setPodUrl(this.podUrl);
+    this.resolverFactory.setPodBaseUrl(this.podUrl);
+    this.strategyFactory.setPodUrl(this.podUrl);
+    this.typeIndexManager.updateConfig({
+      ...this.typeIndexManager.getConfig(),
+      podUrl: this.podUrl,
+    });
     this.ldpExecutor.setBaseUri(this.podUrl);
-    
-    // Also set table registry for SPARQL converter (for link URI resolution in queries)
-    this.sparqlConverter.setTableRegistry(tableRegistry, tableNameRegistry, this.podUrl);
+    if (this.currentTableRegistry.size > 0 || this.currentTableNameRegistry.size > 0) {
+      this.ldpExecutor.setTableRegistry(
+        this.currentTableRegistry,
+        this.currentTableNameRegistry,
+      );
+      this.sparqlConverter.setTableRegistry(
+        this.currentTableRegistry,
+        this.currentTableNameRegistry,
+        this.podUrl,
+      );
+    }
   }
 
   private async findSubjectsForCondition(
@@ -284,6 +321,7 @@ export class PodDialect {
 
   async connect(): Promise<void> {
     await this.runtime.connect();
+    this.refreshBaseUrlFromRuntime();
   }
 
   async disconnect(): Promise<void> {
@@ -317,7 +355,7 @@ export class PodDialect {
     return '';
   }
 
-  private resolveTableResource(table: PodTable): TableResourceDescriptor {
+  resolveTableResource(table: PodTable): TableResourceDescriptor {
     const endpointSource = table.getSparqlEndpoint?.();
     if (endpointSource) {
       const endpoint = this.isAbsoluteUrl(endpointSource)
@@ -628,7 +666,7 @@ export class PodDialect {
     }
   }
 
-  private async executeOnResource(
+  async executeOnResource(
     resourceUrl: string,
     sparqlQuery: SPARQLQuery,
     descriptor?: TableResourceDescriptor

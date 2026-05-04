@@ -12,6 +12,9 @@ import type { SelectQueryPlan } from '../select-plan';
 export interface InsertQueryPlan {
   table: PodTable;
   rows: any[];
+  ensureContainerExists?: (containerUrl: string) => Promise<void>;
+  tableRegistry?: Map<string, PodTable[]>;
+  tableNameRegistry?: Map<string, PodTable>;
 }
 
 export interface UpdateQueryPlan {

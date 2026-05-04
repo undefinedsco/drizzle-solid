@@ -137,7 +137,12 @@ export class LdpStrategy implements ExecutionStrategy {
     const results = await this.ldpExecutor.executeInsert(
       plan.rows,
       plan.table,
-      resourceUrl
+      resourceUrl,
+      {
+        ensureContainerExists: plan.ensureContainerExists,
+        tableRegistry: plan.tableRegistry,
+        tableNameRegistry: plan.tableNameRegistry,
+      }
     );
     return results as ExecutionResult[];
   }

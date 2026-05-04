@@ -321,6 +321,11 @@ export class PodDatabase<TSchema extends Record<string, unknown> = Record<string
       throw new Error('findByIri requires a valid IRI string');
     }
 
+    const exactRead = await this.findByIriViaExactSparql(table, iri);
+    if (exactRead !== undefined) {
+      return exactRead as InferTableData<TTable>;
+    }
+
     // 保持原始表上下文，让 subjectTemplate/base 反解保持一致。
     // whereByIri() 已经会把 SELECT 精确定位到目标资源，不需要把表重绑到具体文档。
     const rows = await this.session
@@ -330,6 +335,146 @@ export class PodDatabase<TSchema extends Record<string, unknown> = Record<string
       .limit(1);
     
     return (rows[0] ?? null) as InferTableData<TTable> | null;
+  }
+
+  private getColumnPredicate(table: PodTable, column: PodColumnBase): string | undefined {
+    return column.options?.predicate ?? column.getPredicate?.(table.config.namespace);
+  }
+
+  private async findByIriViaExactSparql<TTable extends PodTable>(
+    table: TTable,
+    iri: string,
+  ): Promise<Record<string, unknown> | null | undefined> {
+    if (!isPodTable(table)) {
+      return undefined;
+    }
+    if (
+      typeof this.dialect.resolveTableResource !== 'function'
+      || typeof this.dialect.executeOnResource !== 'function'
+    ) {
+      return undefined;
+    }
+
+    const documentUrl = this.parseIri(iri).documentUrl;
+    const descriptor = this.dialect.resolveTableResource(table);
+    const query = {
+      type: 'SELECT' as const,
+      query: descriptor.mode === 'sparql'
+        ? `SELECT ?p ?o WHERE { GRAPH <${documentUrl}> { <${iri}> ?p ?o . } }`
+        : `SELECT ?p ?o WHERE { <${iri}> ?p ?o . }`,
+      prefixes: {}
+    };
+    const rows = descriptor.mode === 'sparql'
+      ? await this.dialect.executeOnResource(documentUrl, query, descriptor)
+      : await this.dialect.executeOnResource(documentUrl, query);
+    const mapped = this.mapPredicateObjectRows(table, iri, rows);
+    if (mapped) {
+      return mapped;
+    }
+
+    return null;
+  }
+
+  private mapPredicateObjectRows(
+    table: PodTable,
+    iri: string,
+    rows: unknown[],
+  ): Record<string, unknown> | null {
+    if (!Array.isArray(rows) || rows.length === 0) {
+      return null;
+    }
+
+    const row: Record<string, unknown> = {
+      subject: iri,
+      '@id': iri,
+      uri: iri,
+    };
+    const derivedId = this.extractIdFromIri(table, iri);
+    if (derivedId !== undefined) {
+      row.id = derivedId;
+    }
+
+    let hasType = false;
+    let hasAnyMappedPredicate = false;
+
+    for (const result of rows) {
+      if (!isRecord(result)) {
+        continue;
+      }
+
+      const predicate = result.p ?? result.predicate ?? result['?p'];
+      const object = result.o ?? result.object ?? result['?o'];
+      if (typeof predicate !== 'string') {
+        continue;
+      }
+
+      if (
+        predicate === 'http://www.w3.org/1999/02/22-rdf-syntax-ns#type'
+        && object === table.config.type
+      ) {
+        hasType = true;
+      }
+
+      for (const [key, column] of Object.entries(table.columns ?? {})) {
+        if ((column as any)._virtualId) {
+          continue;
+        }
+
+        const columnPredicate = this.getColumnPredicate(table, column as PodColumnBase);
+        if (!columnPredicate || columnPredicate === '@id' || columnPredicate !== predicate) {
+          continue;
+        }
+
+        const isArray = (column as PodColumnBase).options?.isArray || (column as PodColumnBase).dataType === 'array';
+        if (isArray) {
+          const existing = Array.isArray(row[key]) ? row[key] : row[key] === undefined ? [] : [row[key]];
+          row[key] = [...existing, object];
+        } else if (row[key] === undefined) {
+          row[key] = object;
+        }
+        hasAnyMappedPredicate = true;
+      }
+    }
+
+    if (!hasType && !hasAnyMappedPredicate) {
+      return null;
+    }
+    return row;
+  }
+
+  private extractIdFromIri(table: PodTable, iri: string): string | undefined {
+    try {
+      const parsedId = this.dialect.getResolver(table).parseId(table, iri);
+      if (parsedId) {
+        return parsedId;
+      }
+    } catch {
+      // Fall through to conservative legacy parsing for non-standard tables.
+    }
+
+    const template = table.getSubjectTemplate?.() ?? table.config?.subjectTemplate;
+    if (!template) {
+      return undefined;
+    }
+
+    if (template === '{id}.ttl') {
+      const fileName = iri.split('/').pop() ?? '';
+      return fileName.endsWith('.ttl') ? fileName.slice(0, -4) : fileName || undefined;
+    }
+
+    if (template === '{id}.ttl#it') {
+      const withoutFragment = iri.split('#')[0];
+      const fileName = withoutFragment.split('/').pop() ?? '';
+      return fileName.endsWith('.ttl') ? fileName.slice(0, -4) : fileName || undefined;
+    }
+
+    const hashIndex = iri.indexOf('#');
+    if (hashIndex >= 0 && template.includes('{id}') && template.startsWith('#')) {
+      return decodeURIComponent(iri.slice(hashIndex + 1));
+    }
+
+    const fileName = iri.split('#')[0].split('/').pop() ?? '';
+    return fileName.endsWith('.ttl') ? fileName.slice(0, -4) : undefined;
   }
 
   /**
