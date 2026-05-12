@@ -1,7 +1,7 @@
 import { z } from 'zod';
 import { PodTable, InferTableData, InferInsertData, InferUpdateData, PodColumnBase } from './schema';
 
-type GenericPodTable = PodTable<Record<string, PodColumnBase>>;
+type GenericPodTable = PodTable<any>;
 
 /**
  * 从 PodTable 生成 Zod 模式

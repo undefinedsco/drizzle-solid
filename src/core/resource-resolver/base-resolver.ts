@@ -48,38 +48,19 @@ export abstract class BaseResourceResolver implements ResourceResolver {
   // ================= 统一的 id 解析逻辑 =================
 
   /**
-   * 从 subject URI 解析出 id
-   * 
-   * 两步解析：
-   * 1. relativePath = subjectUri - baseUrl
-   * 2. 根据 subjectTemplate 反向解析 {id}
-   * 
+   * 从 subject URI 解析出 ORM row id。
+   *
+   * `id()` 是虚拟列，不写入 RDF 谓词；它暴露的是 subjectTemplate 中的
+   * 本地 `{id}`，而不是完整 IRI 或 base-relative resource id。
+   * 需要 base-relative resource id 时使用 parsePodResourceRef/resolveResourceId。
+   *
    * 例如：
    * - uri = "http://pod/items/alice.ttl#it", template = "{id}.ttl#it" → id = "alice"
    * - uri = "http://pod/tags.ttl#tag-1", template = "#{id}" → id = "tag-1"
+   * - uri = "http://pod/a/2026/05/07.ttl#x", template = "{yyyy}/{MM}/{dd}.ttl#{id}" → id = "x"
    */
   parseId(table: PodTable, subjectUri: string): string {
-    const baseUrl = this.getBaseUrlForTable(table);
-    
-    // Step 1: 计算相对路径
-    let relativePath: string;
-    if (subjectUri.startsWith(baseUrl)) {
-      relativePath = subjectUri.substring(baseUrl.length);
-    } else {
-      relativePath = this.extractIdFallback(subjectUri);
-    }
-    
-    // Step 2: 根据模板反向解析 {id}
-    const template = this.getEffectiveTemplate(table);
-    if (template) {
-      const extractedId = this.extractIdFromTemplate(relativePath, template);
-      if (extractedId !== null) {
-        return extractedId;
-      }
-    }
-    
-    // 如果没有模板或解析失败，返回相对路径
-    return relativePath;
+    return this.parseTemplateId(table, subjectUri) ?? this.extractRelativeSubjectId(table, subjectUri);
   }
 
   /**
@@ -100,6 +81,13 @@ export abstract class BaseResourceResolver implements ResourceResolver {
       return id;
     }
 
+    if (typeof id === 'string') {
+      const subjectFromRelativeId = this.resolveBaseRelativeSubjectId(table, id);
+      if (subjectFromRelativeId) {
+        return subjectFromRelativeId;
+      }
+    }
+
     // 如果没有 id，生成 UUID
     if (id === undefined || id === null) {
       id = this.generateUuid();
@@ -110,6 +98,70 @@ export abstract class BaseResourceResolver implements ResourceResolver {
     const relativePath = this.applyTemplate({ ...record, id }, template, table, index);
 
     return baseUrl + relativePath;
+  }
+
+  /**
+   * Extract the local template `{id}` variable for template transforms and link
+   * normalization. This is distinct from the public `id()` resource locator.
+   */
+  protected parseTemplateId(table: PodTable, subjectUri: string): string | null {
+    const relativePath = this.extractTemplateRelativeSubjectId(table, subjectUri);
+    return this.extractIdFromTemplate(relativePath, this.getEffectiveTemplate(table));
+  }
+
+  protected extractRelativeSubjectId(table: PodTable, subjectUri: string): string {
+    const baseUrl = this.getBaseUrlForTable(table);
+
+    if (subjectUri.startsWith(baseUrl)) {
+      return subjectUri.substring(baseUrl.length);
+    }
+
+    return this.extractIdFallback(subjectUri);
+  }
+
+  private extractTemplateRelativeSubjectId(table: PodTable, subjectUri: string): string {
+    const baseUrl = this.resolveBaseUrl(table);
+
+    if (subjectUri.startsWith(baseUrl)) {
+      return subjectUri.substring(baseUrl.length);
+    }
+
+    return this.extractRelativeSubjectId(table, subjectUri);
+  }
+
+  protected isBaseRelativeSubjectId(value: string): boolean {
+    if (!value || this.isAbsoluteUri(value) || value.startsWith('/')) {
+      return false;
+    }
+
+    return (
+      value.startsWith('#') ||
+      value.includes('#') ||
+      /\.(ttl|jsonld|json)(?:#|$)/i.test(value)
+    );
+  }
+
+  protected resolveBaseRelativeSubjectId(table: PodTable, value: string): string | null {
+    if (!this.isBaseRelativeSubjectId(value)) {
+      return null;
+    }
+
+    const baseUrl = this.getBaseUrlForTable(table);
+    if (value.startsWith('#')) {
+      return `${baseUrl.endsWith('/') ? baseUrl.slice(0, -1) : baseUrl}${value}`;
+    }
+
+    if (baseUrl.endsWith('/')) {
+      return `${baseUrl}${value}`;
+    }
+
+    const lastSlash = baseUrl.lastIndexOf('/');
+    const containerUrl = lastSlash >= 0 ? baseUrl.slice(0, lastSlash + 1) : `${baseUrl}/`;
+    return `${containerUrl}${value}`;
+  }
+
+  protected hasVirtualIdColumn(table: PodTable): boolean {
+    return Boolean((table as any).columns?.id?._virtualId);
   }
 
   /**
@@ -463,6 +515,11 @@ export abstract class BaseResourceResolver implements ResourceResolver {
   }
 
   protected extractTemplateId(value: string, table?: PodTable, field?: string): string {
+    if (value.startsWith('/')) {
+      const podBase = this.podBaseUrl.endsWith('/') ? this.podBaseUrl : `${this.podBaseUrl}/`;
+      value = new URL(value.replace(/^\/+/, ''), podBase).toString();
+    }
+
     if (!this.isAbsoluteUri(value)) {
       return value;
     }
@@ -471,7 +528,7 @@ export abstract class BaseResourceResolver implements ResourceResolver {
     const linkedTable = column?.getLinkTable?.() ?? column?.options?.linkTable;
 
     if (linkedTable) {
-      return this.parseId(linkedTable, value);
+      return this.parseTemplateId(linkedTable, value) ?? this.parseId(linkedTable, value);
     }
 
     const fallback = this.extractIdFallback(value);

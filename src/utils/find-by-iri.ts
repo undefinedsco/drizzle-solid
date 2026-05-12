@@ -1,12 +1,12 @@
 import { PodAsyncSession } from '../core/pod-session';
 import { PodDatabase } from '../core/pod-database';
-import { PodColumnBase, PodTable, type InferTableData } from '../core/schema';
+import { PodTable, type InferTableData } from '../core/schema';
 
 const isPodDatabase = (value: unknown): value is PodDatabase => {
   return !!value && typeof value === 'object' && 'session' in (value as Record<string, unknown>);
 };
 
-type GenericPodTable = PodTable<Record<string, PodColumnBase>>;
+type GenericPodTable = PodTable<any>;
 
 /**
  * 从绝对 IRI 或 fragment 查询单行记录。

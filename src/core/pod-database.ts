@@ -8,7 +8,7 @@ import {
   UpdateQueryBuilder,
   DeleteQueryBuilder
 } from './pod-session';
-import { PodTable, SolidSchema, isSolidSchema, type InferTableData, type ColumnBuilderDataType, PodColumnBase, type RelationDefinition, type InstantiateTableOptions } from './schema';
+import { PodTable, SolidSchema, isSolidSchema, type InferTableData, PodColumnBase, type RelationDefinition, type InstantiateTableOptions } from './schema';
 import { type PublicQueryCondition, type PublicWhereObject } from './query-conditions';
 import { inArray } from './query-conditions';
 import {
@@ -23,6 +23,7 @@ import {
 import { FederatedQueryExecutor, type FederatedError } from './federated';
 import type { DataDiscovery } from './discovery';
 import type { OrderByExpression } from './order-by';
+import { parsePodResourceRef } from './resource-reference';
 
 
 /**
@@ -37,7 +38,7 @@ export interface InitOptions {
   shapeLocation?: string;
 }
 
-type GenericPodTable = PodTable;
+type GenericPodTable = PodTable<any>;
 type QueryRow = Record<string, unknown>;
 type QueryOrderBy = {
   column: PodColumnBase | string | OrderByExpression;
@@ -49,6 +50,20 @@ type QueryExactOptions = {
 };
 type VirtualIdPodColumn = PodColumnBase & { _virtualId?: boolean };
 type EntityLocator = Record<string, unknown>;
+type LocatorMethodName =
+  | 'findByLocator'
+  | 'findByResource'
+  | 'updateByLocator'
+  | 'updateByResource'
+  | 'deleteByLocator'
+  | 'deleteByResource'
+  | 'resolveLocatorIri'
+  | 'resolveLocatorId'
+  | 'resolveResourceIri'
+  | 'resolveResourceId'
+  | 'resolveRelationIri'
+  | 'resolveRowIri'
+  | 'resolveRowId';
 type QueryFindManyOptions = {
   where?: PublicWhereObject | PublicQueryCondition;
   columns?: SelectFieldMap;
@@ -62,13 +77,13 @@ type QueryTableHelper<TTable extends GenericPodTable = GenericPodTable> = {
   findFirst<T = InferTableData<TTable>>(options?: QueryFindManyOptions): Promise<T | null>;
   findByLocator<T = InferTableData<TTable>>(locator: EntityLocator, options?: QueryExactOptions): Promise<T | null>;
   findByIri<T = InferTableData<TTable>>(iri: string, options?: QueryExactOptions): Promise<T | null>;
+  findByResource<T = InferTableData<TTable>>(target: string | EntityLocator, options?: QueryExactOptions): Promise<T | null>;
   count(options?: { where?: PublicWhereObject | PublicQueryCondition }): Promise<number>;
 };
 type QueryProxy<TSchema extends Record<string, unknown>> = {
   [K in keyof TSchema as TSchema[K] extends GenericPodTable ? K : never]:
     TSchema[K] extends GenericPodTable ? QueryTableHelper<TSchema[K]> : never;
 };
-type GenericPodColumn = PodColumnBase<ColumnBuilderDataType, boolean, boolean, ColumnBuilderDataType | null>;
 
 function isRecord(value: unknown): value is Record<string, unknown> {
   return typeof value === 'object' && value !== null;
@@ -80,6 +95,46 @@ function isPodTable(value: unknown): value is GenericPodTable {
 
 function hasStringValue(value: unknown): value is { value: string } {
   return isRecord(value) && typeof value.value === 'string';
+}
+
+function isAbsoluteIri(value: string): boolean {
+  return value.startsWith('http://') || value.startsWith('https://');
+}
+
+function isBaseRelativeSubjectId(value: string): boolean {
+  if (!value || isAbsoluteIri(value) || value.startsWith('/')) {
+    return false;
+  }
+  return (
+    value.startsWith('#') ||
+    value.includes('/') ||
+    value.includes('#') ||
+    /\.(ttl|jsonld|json)(?:#|$)/i.test(value)
+  );
+}
+
+function isTimeLocatorKey(key: string): boolean {
+  return ['yyyy', 'MM', 'dd', 'HH', 'mm', 'ss', 'timestamp'].includes(key);
+}
+
+function parseTemplateVariableField(token: string): string {
+  return token.split('|').map((part) => part.trim()).filter(Boolean)[0] ?? token;
+}
+
+function hasTimeLocatorContext(locator: EntityLocator): boolean {
+  return locator.createdAt !== undefined
+    || locator.created_at !== undefined
+    || locator.dateCreated !== undefined;
+}
+
+function getKnownRowIri(row: EntityLocator): string | undefined {
+  for (const key of ['@id', 'subject', 'uri', 'source']) {
+    const value = row[key];
+    if (typeof value === 'string' && isAbsoluteIri(value)) {
+      return value;
+    }
+  }
+  return undefined;
 }
 
 export class PodDatabase<TSchema extends Record<string, unknown> = Record<string, never>> {
@@ -186,22 +241,22 @@ export class PodDatabase<TSchema extends Record<string, unknown> = Record<string
   }
 
   // SELECT 查询
-  select<TTable extends PodTable>(fields?: SelectFieldMap): SelectQueryBuilder<TTable> {
+  select<TTable extends GenericPodTable = GenericPodTable>(fields?: SelectFieldMap): SelectQueryBuilder<TTable> {
     return this.session.select<TTable>(fields);
   }
 
   // INSERT 查询
-  insert<TTable extends PodTable>(table: TTable): InsertQueryBuilder<TTable> {
+  insert<TTable extends GenericPodTable>(table: TTable): InsertQueryBuilder<TTable> {
     return this.session.insert(table);
   }
 
   // UPDATE 查询
-  update<TTable extends PodTable>(table: TTable): UpdateQueryBuilder<TTable> {
+  update<TTable extends GenericPodTable>(table: TTable): UpdateQueryBuilder<TTable> {
     return this.session.update(table);
   }
 
   // DELETE 查询
-  delete<TTable extends PodTable>(table: TTable): DeleteQueryBuilder<TTable> {
+  delete<TTable extends GenericPodTable>(table: TTable): DeleteQueryBuilder<TTable> {
     return this.session.delete(table);
   }
 
@@ -230,7 +285,7 @@ export class PodDatabase<TSchema extends Record<string, unknown> = Record<string
   }
 
   // Find first matching row (LIMIT 1)
-  async findFirst<TTable extends PodTable>(
+  async findFirst<TTable extends GenericPodTable>(
     table: TTable,
     where?: PublicWhereObject
   ): Promise<InferTableData<TTable> | null> {
@@ -249,49 +304,184 @@ export class PodDatabase<TSchema extends Record<string, unknown> = Record<string
   private getRequiredLocatorKeys(table: PodTable): string[] {
     const template = this.getLocatorTemplate(table);
     const keys = Array.from(template.matchAll(/\{([^}]+)\}/g))
-      .map((match) => match[1])
+      .map((match) => parseTemplateVariableField(match[1]))
       .filter((key) => key !== 'index');
     return Array.from(new Set(keys));
   }
 
-  private resolveLocatorSubject<TTable extends PodTable>(
+  private resolveResourceTargetIri<TTable extends GenericPodTable>(
+    table: TTable,
+    target: string | EntityLocator,
+    methodName: LocatorMethodName,
+  ): string {
+    if (typeof target === 'string') {
+      if (isAbsoluteIri(target)) {
+        return target;
+      }
+      return this.resolveLocatorSubject(table, { id: target }, methodName);
+    }
+
+    if (!isRecord(target) || Array.isArray(target)) {
+      throw new Error(`${methodName} requires a resource IRI, base-relative id, row, or locator object`);
+    }
+
+    const knownIri = getKnownRowIri(target);
+    if (knownIri) {
+      return knownIri;
+    }
+
+    return this.resolveLocatorSubject(table, target, methodName);
+  }
+
+  private resolveLocatorSubject<TTable extends GenericPodTable>(
     table: TTable,
     locator: EntityLocator,
-    methodName: 'findByLocator' | 'updateByLocator' | 'deleteByLocator',
+    methodName: LocatorMethodName,
   ): string {
     if (!isRecord(locator) || Array.isArray(locator)) {
       throw new Error(`${methodName} requires a locator object`);
     }
 
     if ('@id' in locator) {
-      throw new Error(`${methodName} does not accept '@id'. Use ${methodName.replace('Locator', 'Iri')}(table, iri) instead.`);
+      throw new Error(`${methodName} does not accept '@id'. Use ${this.getIriAlternative(methodName)} instead.`);
     }
 
     const idValue = locator.id;
-    if (typeof idValue === 'string' && (idValue.startsWith('http://') || idValue.startsWith('https://'))) {
-      throw new Error(`${methodName} does not accept a full IRI in locator.id. Use ${methodName.replace('Locator', 'Iri')}(table, iri) instead.`);
+    if (typeof idValue === 'string' && isAbsoluteIri(idValue)) {
+      throw new Error(`${methodName} does not accept a full IRI in locator.id. Use ${this.getIriAlternative(methodName)} instead.`);
+    }
+
+    const resolver = this.dialect.getResolver(table);
+    if (typeof idValue === 'string' && isBaseRelativeSubjectId(idValue)) {
+      return resolver.resolveSubject(table, locator);
     }
 
     const requiredKeys = this.getRequiredLocatorKeys(table);
-    const missingKeys = requiredKeys.filter((key) => locator[key] === undefined || locator[key] === null);
+    const hasTimeContext = hasTimeLocatorContext(locator);
+    const missingKeys = requiredKeys.filter((key) => {
+      if (locator[key] !== undefined && locator[key] !== null) {
+        return false;
+      }
+      return !(hasTimeContext && isTimeLocatorKey(key));
+    });
     if (missingKeys.length > 0) {
       const template = this.getLocatorTemplate(table);
       throw new Error(
         `${methodName} requires a complete locator for subjectTemplate '${template}'. ` +
         `Missing [${missingKeys.join(', ')}]. ` +
-        `Use ${methodName.replace('Locator', 'Iri')}(table, iri) when you already have a full IRI.`
+        `Use ${this.getIriAlternative(methodName)} when you already have a full IRI.`
       );
     }
 
-    const resolver = this.dialect.getResolver(table);
     return resolver.resolveSubject(table, locator);
   }
 
-  async findByLocator<TTable extends PodTable>(
+  private getIriAlternative(methodName: LocatorMethodName): string {
+    if (methodName === 'resolveLocatorIri' || methodName === 'resolveLocatorId') {
+      return 'the full IRI directly';
+    }
+    if (methodName === 'findByResource') {
+      return 'findByIri(table, iri)';
+    }
+    if (methodName === 'updateByResource') {
+      return 'updateByIri(table, iri, data)';
+    }
+    if (methodName === 'deleteByResource') {
+      return 'deleteByIri(table, iri)';
+    }
+
+    return `${methodName.replace('Locator', 'Iri')}(table, iri)`;
+  }
+
+  resolveLocatorIri<TTable extends GenericPodTable>(
     table: TTable,
     locator: EntityLocator,
-  ): Promise<InferTableData<TTable> | null> {
+  ): string {
+    return this.resolveLocatorSubject(table, locator, 'resolveLocatorIri');
+  }
+
+  resolveLocatorId<TTable extends GenericPodTable>(
+    table: TTable,
+    locator: EntityLocator,
+  ): string {
+    const iri = this.resolveLocatorSubject(table, locator, 'resolveLocatorId');
+    return this.dialect.getResolver(table).parseId(table, iri);
+  }
+
+  resolveResourceIri<TTable extends GenericPodTable>(
+    table: TTable,
+    target: string | EntityLocator,
+  ): string {
+    return this.resolveResourceTargetIri(table, target, 'resolveResourceIri');
+  }
+
+  resolveResourceId<TTable extends GenericPodTable>(
+    table: TTable,
+    target: string | EntityLocator,
+  ): string {
+    const iri = this.resolveResourceTargetIri(table, target, 'resolveResourceId');
+    return parsePodResourceRef(table, iri)?.resourceId ?? this.dialect.getResolver(table).parseId(table, iri);
+  }
+
+  resolveRelationIri<TTable extends GenericPodTable>(
+    table: TTable,
+    target: string | EntityLocator,
+  ): string {
+    return this.resolveResourceTargetIri(table, target, 'resolveRelationIri');
+  }
+
+  resolveRowIri<TTable extends GenericPodTable>(
+    table: TTable,
+    row: EntityLocator,
+  ): string {
+    if (!isRecord(row) || Array.isArray(row)) {
+      throw new Error('resolveRowIri requires a row object');
+    }
+
+    return getKnownRowIri(row) ?? this.resolveLocatorSubject(table, row, 'resolveRowIri');
+  }
+
+  resolveRowId<TTable extends GenericPodTable>(
+    table: TTable,
+    row: EntityLocator,
+  ): string {
+    if (!isRecord(row) || Array.isArray(row)) {
+      throw new Error('resolveRowId requires a row object');
+    }
+
+    const iri = getKnownRowIri(row) ?? this.resolveLocatorSubject(table, row, 'resolveRowId');
+    return this.dialect.getResolver(table).parseId(table, iri);
+  }
+
+  findByLocator<TTable extends GenericPodTable>(
+    table: TTable,
+    locator: EntityLocator,
+  ): Promise<InferTableData<TTable> | null>;
+  findByLocator<TRow = unknown>(
+    table: GenericPodTable,
+    locator: EntityLocator,
+  ): Promise<TRow | null>;
+  async findByLocator(
+    table: GenericPodTable,
+    locator: EntityLocator,
+  ): Promise<unknown | null> {
     const iri = this.resolveLocatorSubject(table, locator, 'findByLocator');
+    return await this.findByIri(table, iri);
+  }
+
+  findByResource<TTable extends GenericPodTable>(
+    table: TTable,
+    target: string | EntityLocator,
+  ): Promise<InferTableData<TTable> | null>;
+  findByResource<TRow = unknown>(
+    table: GenericPodTable,
+    target: string | EntityLocator,
+  ): Promise<TRow | null>;
+  async findByResource(
+    table: GenericPodTable,
+    target: string | EntityLocator,
+  ): Promise<unknown | null> {
+    const iri = this.resolveResourceTargetIri(table, target, 'findByResource');
     return await this.findByIri(table, iri);
   }
 
@@ -314,17 +504,25 @@ export class PodDatabase<TSchema extends Record<string, unknown> = Record<string
    * db.findByIri(agentTable, contact.entityUri)
    * ```
    */
-  async findByIri<TTable extends PodTable>(
+  findByIri<TTable extends GenericPodTable>(
     table: TTable,
     iri: string
-  ): Promise<InferTableData<TTable> | null> {
+  ): Promise<InferTableData<TTable> | null>;
+  findByIri<TRow = unknown>(
+    table: GenericPodTable,
+    iri: string
+  ): Promise<TRow | null>;
+  async findByIri(
+    table: GenericPodTable,
+    iri: string
+  ): Promise<unknown | null> {
     if (!iri || typeof iri !== 'string') {
       throw new Error('findByIri requires a valid IRI string');
     }
 
     const exactRead = await this.findByIriViaExactSparql(table, iri);
     if (exactRead !== undefined) {
-      return exactRead as InferTableData<TTable>;
+      return exactRead;
     }
 
     // 保持原始表上下文，让 subjectTemplate/base 反解保持一致。
@@ -335,15 +533,15 @@ export class PodDatabase<TSchema extends Record<string, unknown> = Record<string
       .whereByIri(iri)
       .limit(1);
     
-    return (rows[0] ?? null) as InferTableData<TTable> | null;
+    return rows[0] ?? null;
   }
 
   private getColumnPredicate(table: PodTable, column: PodColumnBase): string | undefined {
     return column.options?.predicate ?? column.getPredicate?.(table.config.namespace);
   }
 
-  private async findByIriViaExactSparql<TTable extends PodTable>(
-    table: TTable,
+  private async findByIriViaExactSparql(
+    table: GenericPodTable,
     iri: string,
   ): Promise<Record<string, unknown> | null | undefined> {
     if (!isPodTable(table)) {
@@ -520,7 +718,7 @@ export class PodDatabase<TSchema extends Record<string, unknown> = Record<string
    * unsubscribe()
    * ```
    */
-  async subscribeByIri<TTable extends PodTable>(
+  async subscribeByIri<TTable extends GenericPodTable>(
     table: TTable,
     iri: string,
     options: EntitySubscribeOptions<InferTableData<TTable>>
@@ -588,11 +786,21 @@ export class PodDatabase<TSchema extends Record<string, unknown> = Record<string
    * )
    * ```
    */
-  async updateByIri<TTable extends PodTable>(
+  updateByIri<TTable extends GenericPodTable>(
     table: TTable,
     iri: string,
     data: Partial<Omit<InferTableData<TTable>, '@id' | 'id'>>
-  ): Promise<InferTableData<TTable> | null> {
+  ): Promise<InferTableData<TTable> | null>;
+  updateByIri<TRow = unknown>(
+    table: GenericPodTable,
+    iri: string,
+    data: Record<string, unknown>
+  ): Promise<TRow | null>;
+  async updateByIri(
+    table: GenericPodTable,
+    iri: string,
+    data: Record<string, unknown>
+  ): Promise<unknown | null> {
     if (!iri || typeof iri !== 'string') {
       throw new Error('updateByIri requires a valid IRI string');
     }
@@ -601,7 +809,7 @@ export class PodDatabase<TSchema extends Record<string, unknown> = Record<string
       throw new Error(`updateByIri requires an absolute IRI, got: ${iri}`);
     }
 
-    const updateData = data as Parameters<UpdateQueryBuilder<typeof table>['set']>[0];
+    const updateData = data as Parameters<UpdateQueryBuilder<GenericPodTable>['set']>[0];
 
     // 使用 whereByIri 内部方法进行更新
     await this.session
@@ -613,12 +821,41 @@ export class PodDatabase<TSchema extends Record<string, unknown> = Record<string
     return await this.findByIri(table, iri);
   }
 
-  async updateByLocator<TTable extends PodTable>(
+  updateByLocator<TTable extends GenericPodTable>(
     table: TTable,
     locator: EntityLocator,
     data: Partial<Omit<InferTableData<TTable>, '@id' | 'id'>>
-  ): Promise<InferTableData<TTable> | null> {
+  ): Promise<InferTableData<TTable> | null>;
+  updateByLocator<TRow = unknown>(
+    table: GenericPodTable,
+    locator: EntityLocator,
+    data: Record<string, unknown>
+  ): Promise<TRow | null>;
+  async updateByLocator(
+    table: GenericPodTable,
+    locator: EntityLocator,
+    data: Record<string, unknown>
+  ): Promise<unknown | null> {
     const iri = this.resolveLocatorSubject(table, locator, 'updateByLocator');
+    return await this.updateByIri(table, iri, data);
+  }
+
+  updateByResource<TTable extends GenericPodTable>(
+    table: TTable,
+    target: string | EntityLocator,
+    data: Partial<Omit<InferTableData<TTable>, '@id' | 'id'>>
+  ): Promise<InferTableData<TTable> | null>;
+  updateByResource<TRow = unknown>(
+    table: GenericPodTable,
+    target: string | EntityLocator,
+    data: Record<string, unknown>
+  ): Promise<TRow | null>;
+  async updateByResource(
+    table: GenericPodTable,
+    target: string | EntityLocator,
+    data: Record<string, unknown>
+  ): Promise<unknown | null> {
+    const iri = this.resolveResourceTargetIri(table, target, 'updateByResource');
     return await this.updateByIri(table, iri, data);
   }
 
@@ -637,7 +874,7 @@ export class PodDatabase<TSchema extends Record<string, unknown> = Record<string
    * )
    * ```
    */
-  async deleteByIri<TTable extends PodTable>(
+  async deleteByIri<TTable extends GenericPodTable>(
     table: TTable,
     iri: string
   ): Promise<boolean> {
@@ -663,11 +900,19 @@ export class PodDatabase<TSchema extends Record<string, unknown> = Record<string
     return true;
   }
 
-  async deleteByLocator<TTable extends PodTable>(
+  async deleteByLocator<TTable extends GenericPodTable>(
     table: TTable,
     locator: EntityLocator,
   ): Promise<boolean> {
     const iri = this.resolveLocatorSubject(table, locator, 'deleteByLocator');
+    return await this.deleteByIri(table, iri);
+  }
+
+  async deleteByResource<TTable extends GenericPodTable>(
+    table: TTable,
+    target: string | EntityLocator,
+  ): Promise<boolean> {
+    const iri = this.resolveResourceTargetIri(table, target, 'deleteByResource');
     return await this.deleteByIri(table, iri);
   }
 
@@ -747,7 +992,7 @@ export class PodDatabase<TSchema extends Record<string, unknown> = Record<string
    * subscription.unsubscribe();
    * ```
    */
-  async subscribe<TTable extends PodTable>(
+  async subscribe<TTable extends GenericPodTable>(
     table: TTable,
     options: TableSubscribeOptions
   ): Promise<Subscription> {
@@ -816,7 +1061,7 @@ export class PodDatabase<TSchema extends Record<string, unknown> = Record<string
    * @param table 表定义
    * @param iriOverride 可选的 IRI 覆盖（用于订阅其他 Pod 的资源）
    */
-  private resolveTableTopic<TTable extends PodTable>(table: TTable, iriOverride?: string): string {
+  private resolveTableTopic<TTable extends GenericPodTable>(table: TTable, iriOverride?: string): string {
     // 如果提供了 iri 覆盖，直接使用
     if (iriOverride) {
       if (!iriOverride.startsWith('http://') && !iriOverride.startsWith('https://')) {
@@ -866,7 +1111,7 @@ export class PodDatabase<TSchema extends Record<string, unknown> = Record<string
    * }
    * ```
    */
-  async discoverTable(rdfClass: string): Promise<PodTable | null> {
+  async discoverTable(rdfClass: string): Promise<GenericPodTable | null> {
     // 1. 发现数据位置
     const locations = await this.dialect.discoverDataLocations(rdfClass);
     
@@ -907,15 +1152,15 @@ export class PodDatabase<TSchema extends Record<string, unknown> = Record<string
       base: location.container
     });
 
-    await this.init(table as unknown as PodTable<Record<string, GenericPodColumn>>);
-    return table as unknown as PodTable;
+    await this.init(table);
+    return table;
   }
 
   /**
    * 发现多个类型的表
    */
-  async discoverTables(rdfClasses: string[]): Promise<PodTable[]> {
-    const tables: PodTable[] = [];
+  async discoverTables(rdfClasses: string[]): Promise<GenericPodTable[]> {
+    const tables: GenericPodTable[] = [];
     
     for (const rdfClass of rdfClasses) {
       const table = await this.discoverTable(rdfClass);
@@ -1012,7 +1257,7 @@ export class PodDatabase<TSchema extends Record<string, unknown> = Record<string
   async locationToTable(
     location: import('./discovery').DataLocation, 
     options?: import('./discovery').LocationToTableOptions
-  ): Promise<PodTable> {
+  ): Promise<GenericPodTable> {
     const opts = options ?? {};
 
     // 1. 选择 Shape（按优先级：shape > appId > 默认第一个）
@@ -1073,8 +1318,8 @@ export class PodDatabase<TSchema extends Record<string, unknown> = Record<string
       base: location.container
     });
 
-    await this.init(table as unknown as PodTable<Record<string, GenericPodColumn>>);
-    return table as unknown as PodTable;
+    await this.init(table);
+    return table;
   }
 
   /**
@@ -1113,9 +1358,9 @@ export class PodDatabase<TSchema extends Record<string, unknown> = Record<string
     rdfClass: string, 
     options?: import('./discovery').DiscoverOptions,
     tableOptions?: import('./discovery').LocationToTableOptions
-  ): Promise<PodTable[]> {
+  ): Promise<GenericPodTable[]> {
     const locations = await this.discover(rdfClass, options);
-    const tables: PodTable[] = [];
+    const tables: GenericPodTable[] = [];
     
     for (const location of locations) {
       const table = await this.locationToTable(location, tableOptions);
@@ -1159,21 +1404,12 @@ export class PodDatabase<TSchema extends Record<string, unknown> = Record<string
     return await this.dialect.addSourcesFromTypeIndex();
   }
 
-  async init<
-    TColumns extends Record<string, GenericPodColumn>,
-    TTable extends PodTable<TColumns>
-  >(
+  async init<TTable extends GenericPodTable>(
     tables: TTable | TTable[],
     options?: InitOptions
   ): Promise<void>;
-  async init<
-    TColumns extends Record<string, GenericPodColumn>,
-    TTable extends PodTable<TColumns>
-  >(...tables: Array<TTable | TTable[]>): Promise<void>;
-  async init<
-    TColumns extends Record<string, GenericPodColumn>,
-    TTable extends PodTable<TColumns>
-  >(
+  async init<TTable extends GenericPodTable>(...tables: Array<TTable | TTable[]>): Promise<void>;
+  async init<TTable extends GenericPodTable>(
     ...args: Array<TTable | TTable[] | InitOptions>
   ): Promise<void> {
     // 解析参数：最后一个参数可能是 options
@@ -1189,7 +1425,7 @@ export class PodDatabase<TSchema extends Record<string, unknown> = Record<string
       tableArgs = args as Array<TTable | TTable[]>;
     }
 
-    const flattened: PodTable[] = [];
+    const flattened: GenericPodTable[] = [];
     for (const entry of tableArgs) {
       if (!entry) continue;
       if (Array.isArray(entry)) {
@@ -1388,11 +1624,15 @@ export class PodDatabase<TSchema extends Record<string, unknown> = Record<string
       const createFindByIri = () => <T = InferTableData<typeof table>>(iri: string, options?: QueryExactOptions): Promise<T | null> =>
         createLazy(async () => await applyExactOptions<T>(await this.findByIri(table, iri) as QueryRow | null, options));
 
+      const createFindByResource = () => <T = InferTableData<typeof table>>(target: string | EntityLocator, options?: QueryExactOptions): Promise<T | null> =>
+        createLazy(async () => await applyExactOptions<T>(await this.findByResource(table, target) as QueryRow | null, options));
+
       return {
         findMany,
         findFirst,
         findByLocator: createFindByLocator(),
         findByIri: createFindByIri(),
+        findByResource: createFindByResource(),
         count
       };
     };

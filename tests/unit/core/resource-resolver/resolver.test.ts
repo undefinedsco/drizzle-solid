@@ -144,8 +144,7 @@ describe('DocumentResourceResolver', () => {
   });
 
   describe('parseId()', () => {
-    it('should extract id from subject URI', () => {
-      // 默认模板 {id}.ttl，反向解析得 id
+    it('should extract template id from subject URI', () => {
       const resolver = new DocumentResourceResolver('http://localhost:3000/test/');
       const table = podTable('items', {
         id: id(),
@@ -155,14 +154,11 @@ describe('DocumentResourceResolver', () => {
         namespace: ns,
       });
 
-      // base = http://localhost:3000/test/.data/items/
-      // subject = http://localhost:3000/test/.data/items/item-123.ttl
-      // 默认模板 {id}.ttl → id = item-123
       const parsedId = resolver.parseId(table, 'http://localhost:3000/test/.data/items/item-123.ttl');
       expect(parsedId).toBe('item-123');
     });
 
-    it('should extract id including fragment from subject URI', () => {
+    it('should extract template id from document-fragment subject URI', () => {
       const resolver = new DocumentResourceResolver('http://localhost:3000/test/');
       const table = podTable('items', {
         id: id(),
@@ -173,10 +169,28 @@ describe('DocumentResourceResolver', () => {
         namespace: ns,
       });
 
-      // 模板 {id}.ttl#it → id = item-123
       const parsedId = resolver.parseId(table, 'http://localhost:3000/test/.data/items/item-123.ttl#it');
       expect(parsedId).toBe('item-123');
     });
+
+    it('should resolve and parse date-bucketed fragment resource ids', () => {
+      const resolver = new DocumentResourceResolver('http://localhost:3000/test/');
+      const table = podTable('approvals', {
+        id: id(),
+      }, {
+        base: '/.data/approvals/',
+        subjectTemplate: '{yyyy}/{MM}/{dd}.ttl#{id}',
+        type: 'https://example.org/Approval',
+        namespace: ns,
+      });
+
+      const resourceId = '2026/05/07.ttl#approval_123';
+      const subject = resolver.resolveSubject(table, { id: resourceId });
+
+      expect(subject).toBe('http://localhost:3000/test/.data/approvals/2026/05/07.ttl#approval_123');
+      expect(resolver.parseId(table, subject)).toBe('approval_123');
+    });
+
   });
 
   describe('getResourceUrlForSubject()', () => {
@@ -279,11 +293,27 @@ describe('FragmentResourceResolver', () => {
       const subject = resolver.resolveSubject(table, {});
       expect(subject).toMatch(/^http:\/\/localhost:3000\/test\/\.data\/tags\.ttl#[a-f0-9-]+$/);
     });
+
+    it('should apply fragment templates to slash-qualified business ids', () => {
+      const resolver = new FragmentResourceResolver('http://localhost:3000/test/');
+      const table = podTable('ai-models', {
+        id: id(),
+      }, {
+        base: '/settings/ai/models.ttl',
+        subjectTemplate: '#{id}',
+        type: 'https://example.org/Model',
+        namespace: ns,
+      });
+
+      const subject = resolver.resolveSubject(table, { id: 'undefineds/linx' });
+
+      expect(subject).toBe('http://localhost:3000/test/settings/ai/models.ttl#undefineds/linx');
+      expect(resolver.parseId(table, subject)).toBe('undefineds/linx');
+    });
   });
 
   describe('parseId()', () => {
-    it('should extract fragment as id', () => {
-      // 默认模板 #{id}，反向解析得 id (不含 #)
+    it('should extract fragment template id without #', () => {
       const resolver = new FragmentResourceResolver('http://localhost:3000/test/');
       const table = podTable('tags', {
         id: id(),
@@ -293,9 +323,6 @@ describe('FragmentResourceResolver', () => {
         namespace: ns,
       });
 
-      // base = http://localhost:3000/test/.data/tags.ttl
-      // subject = http://localhost:3000/test/.data/tags.ttl#my-tag
-      // 默认模板 #{id} → id = my-tag
       const parsedId = resolver.parseId(table, 'http://localhost:3000/test/.data/tags.ttl#my-tag');
       expect(parsedId).toBe('my-tag');
     });

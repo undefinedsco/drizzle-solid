@@ -5,6 +5,22 @@ export * from './solid';
 
 // 公共工具
 export { findByIRI } from './utils/find-by-iri';
+export { resolveRowSubject } from './core/query-builders/helpers';
+export {
+  parsePodResourceRef,
+  extractPodResourceTemplateValue,
+  type PodResourceReference,
+} from './core/resource-reference';
+export {
+  createRepositoryDescriptor,
+  definePodRepository,
+  initSolidTables,
+  type AnyPodTable,
+  type PodRepositoryDescriptor,
+  type RepositoryCacheOptions,
+  type RepositoryInvalidations,
+  type RepositoryScope,
+} from './core/repository';
 
 // 表和列构建器
 export {

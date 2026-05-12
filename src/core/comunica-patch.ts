@@ -26,15 +26,27 @@ const resolveCreateRequire = (): NodeCreateRequire | null => {
 };
 
 const createRequireFn = resolveCreateRequire();
-const moduleFilename = typeof __filename === 'string'
+const isAbsoluteModuleFilename = (value: string): boolean =>
+  value.startsWith('file:') || value.startsWith('/') || /^[a-zA-Z]:[\\/]/.test(value);
+
+const moduleFilename = typeof __filename === 'string' && isAbsoluteModuleFilename(__filename)
   ? __filename
   : (typeof process !== 'undefined' && typeof process.cwd === 'function'
       ? `${process.cwd().replace(/\/$/, '')}/package.json`
       : '/package.json');
 
-const defaultRequireModule = createRequireFn
-  ? createRequireFn(moduleFilename)
-  : null;
+const createDefaultRequireModule = (): NodeRequire | null => {
+  if (!createRequireFn) {
+    return null;
+  }
+  try {
+    return createRequireFn(moduleFilename);
+  } catch {
+    return null;
+  }
+};
+
+const defaultRequireModule = createDefaultRequireModule();
 
 type ActionObserverHttpLike = {
   observedActors?: unknown[];

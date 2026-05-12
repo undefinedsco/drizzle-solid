@@ -1452,7 +1452,7 @@ export class PodDialect {
         return;
       }
 
-      if (checkResponse.status === 404) {
+      if (checkResponse.status === 404 || checkResponse.status === 500) {
         // 先递归创建父容器
         const parentContainer = this.getParentContainer(targetContainer);
         if (parentContainer && parentContainer !== targetContainer) {

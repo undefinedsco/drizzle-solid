@@ -80,7 +80,7 @@ export function buildConditionTreeFromObject(
   return new LogicalExpression('AND', nodes);
 }
 
-export function resolveRowSubject(row: Record<string, any>): string | undefined {
+export function resolveRowSubject(row?: Record<string, any> | null): string | undefined {
   if (!row || typeof row !== 'object') {
     return undefined;
   }
@@ -95,6 +95,14 @@ export function resolveRowSubject(row: Record<string, any>): string | undefined 
 
   if (typeof row.uri === 'string' && row.uri.length > 0) {
     return row.uri;
+  }
+
+  if (typeof row.source === 'string' && row.source.length > 0) {
+    return row.source;
+  }
+
+  if (typeof row.id === 'string' && row.id.length > 0) {
+    return row.id;
   }
 
   return undefined;

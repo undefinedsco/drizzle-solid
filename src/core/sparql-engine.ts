@@ -76,6 +76,7 @@ const loadComunicaModuleWithRequire = async (resolveFrom: string): Promise<Comun
   const requireFrom = createRequire(resolveFrom);
   applyComunicaPatches(requireFrom);
   const comunicaModule = requireFrom('@comunica/query-sparql-solid') as Partial<ComunicaModule>;
+  applyComunicaPatches(requireFrom);
 
   if (!comunicaModule || typeof comunicaModule.QueryEngine !== 'function') {
     throw new Error('Resolved module does not export QueryEngine.');
@@ -89,12 +90,15 @@ const loadDefaultComunicaModule = async (): Promise<ComunicaModule> => {
     return await loadComunicaModuleWithRequire(
       typeof __filename === 'string'
         ? __filename
-        : (typeof process !== 'undefined' && typeof process.cwd === 'function' ? process.cwd() : '/')
+        : (typeof process !== 'undefined' && typeof process.cwd === 'function'
+            ? `${process.cwd().replace(/\/$/, '')}/package.json`
+            : '/package.json')
     );
   } catch (requireError) {
     try {
       applyComunicaPatches();
       const importedModule = await import('@comunica/query-sparql-solid') as Partial<ComunicaModule>;
+      applyComunicaPatches();
       if (importedModule && typeof importedModule.QueryEngine === 'function') {
         return importedModule as ComunicaModule;
       }

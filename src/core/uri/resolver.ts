@@ -76,13 +76,9 @@ export class UriResolverImpl implements UriResolver {
       if (this.isAbsoluteUri(explicitId)) {
         return explicitId;
       }
-      // Check if it's a relative URI with fragment
-      const hashIndex = explicitId.indexOf('#');
-      if (hashIndex > 0) {
-        const template = this.getEffectivePattern(table);
-        if (template.startsWith('#')) {
-          record = { ...record, id: explicitId.slice(hashIndex + 1) };
-        }
+      const resolvedRelativeId = this.resolveBaseRelativeSubjectId(table, explicitId);
+      if (resolvedRelativeId) {
+        return resolvedRelativeId;
       }
     }
 
@@ -119,7 +115,7 @@ export class UriResolverImpl implements UriResolver {
     const resourceUrl = hasFragment ? uri.slice(0, hashIndex) : uri;
     const fragment = hasFragment ? uri.slice(hashIndex + 1) : undefined;
 
-    const id = this.extractId(uri, table);
+    const id = this.extractPublicId(uri, table);
     const mode = this.getResourceMode(table);
 
     return {
@@ -380,6 +376,14 @@ export class UriResolverImpl implements UriResolver {
    * @returns 提取的 ID (如 chat-123)，如果无法解析则返回原 URI
    */
   extractLinkId(uri: string, column: PodColumnBase | any, context?: UriContext): string {
+    if (uri?.startsWith('/')) {
+      const base = context?.baseUri || this.podUrl;
+      if (base) {
+        const baseUrl = base.endsWith('/') ? base : `${base}/`;
+        uri = new URL(uri.replace(/^\/+/, ''), baseUrl).toString();
+      }
+    }
+
     if (!uri || !this.isAbsoluteUri(uri)) {
       return uri;
     }
@@ -392,9 +396,9 @@ export class UriResolverImpl implements UriResolver {
     }
 
     // 使用目标表的信息提取 ID
-    const parsed = this.parseSubject(uri, targetTable);
-    if (parsed && parsed.id) {
-      return parsed.id;
+    const templateId = this.extractTemplateIdFromSubject(uri, targetTable);
+    if (templateId) {
+      return templateId;
     }
 
     return uri;
@@ -560,6 +564,37 @@ export class UriResolverImpl implements UriResolver {
   private getSubjectBaseUrl(table: PodTable): string {
     const base = table.config?.base ?? '';
     return this.toAbsoluteUrl(base);
+  }
+
+  private isBaseRelativeSubjectId(value: string): boolean {
+    if (!value || this.isAbsoluteUri(value) || value.startsWith('/')) {
+      return false;
+    }
+
+    return (
+      value.startsWith('#') ||
+      value.includes('#') ||
+      /\.(ttl|jsonld|json)(?:#|$)/i.test(value)
+    );
+  }
+
+  private resolveBaseRelativeSubjectId(table: PodTable, value: string): string | null {
+    if (!this.isBaseRelativeSubjectId(value)) {
+      return null;
+    }
+
+    const base = this.getSubjectBaseUrl(table);
+    if (value.startsWith('#')) {
+      return `${base.endsWith('/') ? base.slice(0, -1) : base}${value}`;
+    }
+
+    if (base.endsWith('/')) {
+      return `${base}${value}`;
+    }
+
+    const lastSlash = base.lastIndexOf('/');
+    const containerUrl = lastSlash >= 0 ? base.slice(0, lastSlash + 1) : `${base}/`;
+    return `${containerUrl}${value}`;
   }
 
   /**
@@ -792,8 +827,7 @@ export class UriResolverImpl implements UriResolver {
    * - template = "{id}/index.ttl#this"
    * - id = "chat-123"
    */
-  private extractId(uri: string, table: PodTable): string {
-    const template = table.config?.subjectTemplate || this.getDefaultPattern(table);
+  private extractRelativeSubjectId(uri: string, table: PodTable): string {
     const tableBase = table.config?.base ?? '';
 
     // Step 1: 计算相对路径
@@ -818,16 +852,17 @@ export class UriResolverImpl implements UriResolver {
       return '';
     }
 
-    // Step 2: 根据 subjectTemplate 反向解析 {id}
-    if (template) {
-      const extractedId = this.extractIdFromTemplate(relativePath, template);
-      if (extractedId !== null) {
-        return extractedId;
-      }
-    }
-
-    // 如果没有模板或解析失败，返回相对路径
     return relativePath;
+  }
+
+  private extractPublicId(uri: string, table: PodTable): string {
+    return this.extractTemplateIdFromSubject(uri, table) ?? this.extractRelativeSubjectId(uri, table);
+  }
+
+  private extractTemplateIdFromSubject(uri: string, table: PodTable): string | null {
+    const relativePath = this.extractRelativeSubjectId(uri, table);
+    const template = table.config?.subjectTemplate || this.getDefaultPattern(table);
+    return template ? this.extractIdFromTemplate(relativePath, template) : null;
   }
 
   /**

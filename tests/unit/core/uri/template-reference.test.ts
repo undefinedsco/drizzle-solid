@@ -48,6 +48,31 @@ describe('Subject Template Link & Query Handling', () => {
     type: 'http://example.org/Entry',
   });
 
+  const SlashQualifiedModel = podTable('ai-model', {
+    id: string('id').primaryKey(),
+  }, {
+    base: '/settings/ai/models.ttl',
+    subjectTemplate: '#{id}',
+    type: 'http://example.org/Model',
+  });
+
+  const AIProvider = podTable('ai-provider', {
+    id: string('id').primaryKey(),
+  }, {
+    base: '/settings/ai/providers.ttl',
+    subjectTemplate: '#{id}',
+    type: 'http://example.org/Provider',
+  });
+
+  const ProviderBucketModel = podTable('provider-bucket-model', {
+    id: string('id').primaryKey(),
+    isProvidedBy: uri('isProvidedBy').predicate('http://example.org/isProvidedBy').link(AIProvider),
+  }, {
+    base: '/settings/ai/models/',
+    subjectTemplate: '{isProvidedBy|id}.ttl#{id}',
+    type: 'http://example.org/Model',
+  });
+
   describe('Path Generation (INSERT)', () => {
     it('should resolve subject correctly when passing a slug for link column', () => {
       const record = {
@@ -85,6 +110,41 @@ describe('Subject Template Link & Query Handling', () => {
 
       const subject = uriResolver.resolveSubject(SlugEntry, record);
       expect(subject).toBe('https://pod.example.org/data/slug-demo/hello-linx-世界/index.ttl#entry-1');
+    });
+
+    it('should treat slash-qualified ids as template ids instead of pre-resolved resource paths', () => {
+      const subject = uriResolver.resolveSubject(SlashQualifiedModel, {
+        id: 'undefineds/linx',
+      });
+
+      expect(subject).toBe('https://pod.example.org/settings/ai/models.ttl#undefineds/linx');
+    });
+
+    it('should resolve provider-bucketed model subjects from a provider link', () => {
+      const subject = uriResolver.resolveSubject(ProviderBucketModel, {
+        id: 'linx',
+        isProvidedBy: 'https://pod.example.org/settings/ai/providers.ttl#undefineds',
+      });
+
+      expect(subject).toBe('https://pod.example.org/settings/ai/models/undefineds.ttl#linx');
+    });
+
+    it('should resolve provider-bucketed model subjects from a provider id', () => {
+      const subject = uriResolver.resolveSubject(ProviderBucketModel, {
+        id: 'linx',
+        isProvidedBy: 'undefineds',
+      });
+
+      expect(subject).toBe('https://pod.example.org/settings/ai/models/undefineds.ttl#linx');
+    });
+
+    it('should resolve provider-bucketed model subjects from a base-relative provider link', () => {
+      const subject = uriResolver.resolveSubject(ProviderBucketModel, {
+        id: 'linx',
+        isProvidedBy: '/settings/ai/providers.ttl#undefineds',
+      });
+
+      expect(subject).toBe('https://pod.example.org/settings/ai/models/undefineds.ttl#linx');
     });
   });
 
@@ -179,6 +239,68 @@ describe('Subject Template Link & Query Handling', () => {
 
       expect(sources).toEqual([
         'https://pod.example.org/data/slug-demo/hello-linx-世界/index.ttl',
+      ]);
+    });
+
+    it('should resolve provider-bucketed model sources from id and provider relation', async () => {
+      const condition = {
+        type: 'logical_expr',
+        operator: 'AND',
+        expressions: [
+          {
+            type: 'binary_expr',
+            left: { type: 'column_ref', name: 'id' },
+            operator: '=',
+            right: 'linx',
+          },
+          {
+            type: 'binary_expr',
+            left: { type: 'column_ref', name: 'isProvidedBy' },
+            operator: '=',
+            right: 'https://pod.example.org/settings/ai/providers.ttl#undefineds',
+          },
+        ],
+      };
+
+      const sources = await resourceResolver.resolveSelectSources(
+        ProviderBucketModel,
+        'https://pod.example.org/settings/ai/models/',
+        condition,
+      );
+
+      expect(sources).toEqual([
+        'https://pod.example.org/settings/ai/models/undefineds.ttl',
+      ]);
+    });
+
+    it('should resolve provider-bucketed model sources from a base-relative provider relation', async () => {
+      const condition = {
+        type: 'logical_expr',
+        operator: 'AND',
+        expressions: [
+          {
+            type: 'binary_expr',
+            left: { type: 'column_ref', name: 'id' },
+            operator: '=',
+            right: 'linx',
+          },
+          {
+            type: 'binary_expr',
+            left: { type: 'column_ref', name: 'isProvidedBy' },
+            operator: '=',
+            right: '/settings/ai/providers.ttl#undefineds',
+          },
+        ],
+      };
+
+      const sources = await resourceResolver.resolveSelectSources(
+        ProviderBucketModel,
+        'https://pod.example.org/settings/ai/models/',
+        condition,
+      );
+
+      expect(sources).toEqual([
+        'https://pod.example.org/settings/ai/models/undefineds.ttl',
       ]);
     });
   });

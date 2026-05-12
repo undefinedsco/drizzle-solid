@@ -6,8 +6,9 @@ import { SelectQueryBuilder } from '@src/core/query-builders/select-query-builde
 import { UpdateQueryBuilder } from '@src/core/query-builders/update-query-builder';
 import { DeleteQueryBuilder } from '@src/core/query-builders/delete-query-builder';
 import { eq } from '@src/core/query-conditions';
-import { podTable, string, id } from '@src/core/schema';
+import { podTable, string, id, uri } from '@src/core/schema';
 import { UriResolverImpl } from '@src/core/uri/resolver';
+import { extractPodResourceTemplateValue, parsePodResourceRef } from '@src/core/resource-reference';
 
 const exactSparqlRows = vi.fn();
 
@@ -189,6 +190,250 @@ describe('IRI API', () => {
       await expect(async () => {
         await db.findByLocator(testTable, { id: 'https://example.com/profile#me' });
       }).rejects.toThrow('findByLocator does not accept a full IRI in locator.id');
+    });
+
+    it('findByLocator should accept base-relative resource ids without extra template variables', async () => {
+      const approvalTable = podTable('approvals', {
+        id: id(),
+        name: string('name').predicate('https://schema.org/name'),
+      }, {
+        base: 'https://example.com/.data/approvals/',
+        type: 'https://example.org/Approval',
+        subjectTemplate: '{yyyy}/{MM}/{dd}.ttl#{id}',
+      });
+      const resolveSubject = vi.fn((_table: any, record: Record<string, unknown>) =>
+        `https://example.com/.data/approvals/${String(record.id)}`,
+      );
+      const exactDb = new PodDatabase({
+        getResolver: () => ({ resolveSubject }),
+      } as unknown as PodDialect, mockSession as PodAsyncSession);
+
+      await exactDb.findByLocator(approvalTable, { id: '2026/05/07.ttl#approval_123' });
+
+      expect(resolveSubject).toHaveBeenCalledWith(approvalTable, { id: '2026/05/07.ttl#approval_123' });
+      expect(mockSession.select).toHaveBeenCalled();
+    });
+
+    it('resolveLocatorIri and resolveLocatorId should expose ORM-owned subject and local id resolution', () => {
+      const approvalTable = podTable('approvals', {
+        id: id(),
+        name: string('name').predicate('https://schema.org/name'),
+      }, {
+        base: 'https://example.com/.data/approvals/',
+        type: 'https://example.org/Approval',
+        subjectTemplate: '{yyyy}/{MM}/{dd}.ttl#{id}',
+      });
+      const resolver = {
+        resolveSubject: (table: any, record: Record<string, unknown>) => {
+          const createdAt = record.createdAt instanceof Date
+            ? record.createdAt
+            : new Date(String(record.createdAt ?? '2026-05-07T00:00:00.000Z'));
+          const yyyy = String(createdAt.getUTCFullYear());
+          const MM = String(createdAt.getUTCMonth() + 1).padStart(2, '0');
+          const dd = String(createdAt.getUTCDate()).padStart(2, '0');
+          if (String(record.id).includes('/') || String(record.id).includes('#')) {
+            return `https://example.com/.data/approvals/${String(record.id)}`;
+          }
+          return `https://example.com/.data/approvals/${yyyy}/${MM}/${dd}.ttl#${String(record.id)}`;
+        },
+        parseId: (_table: any, iri: string) => iri.split('#').pop() ?? iri,
+      };
+      const exactDb = new PodDatabase({
+        getResolver: () => resolver,
+      } as unknown as PodDialect, mockSession as PodAsyncSession);
+
+      expect(exactDb.resolveLocatorIri(approvalTable, {
+        id: 'approval_123',
+        createdAt: new Date('2026-05-07T00:00:00.000Z'),
+      })).toBe('https://example.com/.data/approvals/2026/05/07.ttl#approval_123');
+      expect(exactDb.resolveLocatorId(approvalTable, { id: '2026/05/07.ttl#approval_123' }))
+        .toBe('approval_123');
+    });
+
+    it('resolveRowIri and resolveRowId should prefer known row IRI before locator reconstruction', () => {
+      const approvalTable = podTable('approvals', {
+        id: id(),
+        name: string('name').predicate('https://schema.org/name'),
+      }, {
+        base: 'https://example.com/.data/approvals/',
+        type: 'https://example.org/Approval',
+        subjectTemplate: '{yyyy}/{MM}/{dd}.ttl#{id}',
+      });
+      const resolver = {
+        resolveSubject: vi.fn(),
+        parseId: (_table: any, iri: string) => iri.split('#').pop() ?? iri,
+      };
+      const exactDb = new PodDatabase({
+        getResolver: () => resolver,
+      } as unknown as PodDialect, mockSession as PodAsyncSession);
+      const row = {
+        id: 'approval_123',
+        '@id': 'https://example.com/.data/approvals/2026/05/07.ttl#approval_123',
+      };
+
+      expect(exactDb.resolveRowIri(approvalTable, row))
+        .toBe('https://example.com/.data/approvals/2026/05/07.ttl#approval_123');
+      expect(exactDb.resolveRowId(approvalTable, row))
+        .toBe('approval_123');
+      expect(resolver.resolveSubject).not.toHaveBeenCalled();
+    });
+
+    it('resolveResourceIri and resolveResourceId should accept full IRIs, rows, locators, and base-relative ids', () => {
+      const approvalTable = podTable('approvals', {
+        id: id(),
+        name: string('name').predicate('https://schema.org/name'),
+      }, {
+        base: 'https://example.com/.data/approvals/',
+        type: 'https://example.org/Approval',
+        subjectTemplate: '{yyyy}/{MM}/{dd}.ttl#{id}',
+      });
+      const resolver = {
+        resolveSubject: (table: any, record: Record<string, unknown>) => {
+          const createdAt = record.createdAt instanceof Date
+            ? record.createdAt
+            : new Date(String(record.createdAt ?? '2026-05-07T00:00:00.000Z'));
+          const yyyy = String(createdAt.getUTCFullYear());
+          const MM = String(createdAt.getUTCMonth() + 1).padStart(2, '0');
+          const dd = String(createdAt.getUTCDate()).padStart(2, '0');
+          if (String(record.id).includes('/') || String(record.id).includes('#')) {
+            return `https://example.com/.data/approvals/${String(record.id)}`;
+          }
+          return `https://example.com/.data/approvals/${yyyy}/${MM}/${dd}.ttl#${String(record.id)}`;
+        },
+        parseId: (_table: any, iri: string) => iri.split('#').pop() ?? iri,
+      };
+      const exactDb = new PodDatabase({
+        getResolver: () => resolver,
+      } as unknown as PodDialect, mockSession as PodAsyncSession);
+      const fullIri = 'https://example.com/.data/approvals/2026/05/07.ttl#approval_123';
+
+      expect(exactDb.resolveResourceIri(approvalTable, fullIri)).toBe(fullIri);
+      expect(exactDb.resolveResourceIri(approvalTable, { id: 'approval_123', createdAt: new Date('2026-05-07T00:00:00.000Z') })).toBe(fullIri);
+      expect(exactDb.resolveResourceIri(approvalTable, '2026/05/07.ttl#approval_123')).toBe(fullIri);
+      expect(exactDb.resolveResourceId(approvalTable, { '@id': fullIri })).toBe('2026/05/07.ttl#approval_123');
+      expect(exactDb.resolveRelationIri(approvalTable, { id: 'approval_123', createdAt: new Date('2026-05-07T00:00:00.000Z') })).toBe(fullIri);
+    });
+
+    it('*ByResource methods should accept full IRIs, rows, locators, and base-relative ids', async () => {
+      const approvalTable = podTable('approvals', {
+        id: id(),
+        name: string('name').predicate('https://schema.org/name'),
+      }, {
+        base: 'https://example.com/.data/approvals/',
+        type: 'https://example.org/Approval',
+        subjectTemplate: '{yyyy}/{MM}/{dd}.ttl#{id}',
+      });
+      const resolver = {
+        resolveSubject: (table: any, record: Record<string, unknown>) => {
+          const createdAt = record.createdAt instanceof Date
+            ? record.createdAt
+            : new Date(String(record.createdAt ?? '2026-05-07T00:00:00.000Z'));
+          const yyyy = String(createdAt.getUTCFullYear());
+          const MM = String(createdAt.getUTCMonth() + 1).padStart(2, '0');
+          const dd = String(createdAt.getUTCDate()).padStart(2, '0');
+          if (String(record.id).includes('/') || String(record.id).includes('#')) {
+            return `https://example.com/.data/approvals/${String(record.id)}`;
+          }
+          return `https://example.com/.data/approvals/${yyyy}/${MM}/${dd}.ttl#${String(record.id)}`;
+        },
+        parseId: (_table: any, iri: string) => iri.split('#').pop() ?? iri,
+      };
+      const exactDb = new PodDatabase({
+        getResolver: () => resolver,
+      } as unknown as PodDialect, mockSession as PodAsyncSession);
+      const fullIri = 'https://example.com/.data/approvals/2026/05/07.ttl#approval_123';
+
+      const findSpy = vi.spyOn(exactDb, 'findByIri').mockResolvedValue({ id: 'approval_123' } as never);
+      await exactDb.findByResource(approvalTable, { id: 'approval_123', createdAt: new Date('2026-05-07T00:00:00.000Z') });
+      await exactDb.findByResource(approvalTable, '2026/05/07.ttl#approval_123');
+      expect(findSpy).toHaveBeenNthCalledWith(1, approvalTable, fullIri);
+      expect(findSpy).toHaveBeenNthCalledWith(2, approvalTable, fullIri);
+      findSpy.mockRestore();
+
+      const updateSpy = vi.spyOn(exactDb, 'updateByIri').mockResolvedValue({ id: 'approval_123' } as never);
+      await exactDb.updateByResource(approvalTable, { '@id': fullIri }, { name: 'Approved' });
+      expect(updateSpy).toHaveBeenCalledWith(approvalTable, fullIri, { name: 'Approved' });
+      updateSpy.mockRestore();
+
+      const deleteSpy = vi.spyOn(exactDb, 'deleteByIri').mockResolvedValue(true);
+      await exactDb.deleteByResource(approvalTable, fullIri);
+      expect(deleteSpy).toHaveBeenCalledWith(approvalTable, fullIri);
+      deleteSpy.mockRestore();
+    });
+
+    it('resolveLocatorIri should treat transformed subjectTemplate variables as their source field names', () => {
+      const chatTable = podTable('chat', {
+        id: id(),
+        title: string('title').predicate('https://schema.org/name'),
+      }, {
+        base: 'https://example.com/.data/chat/',
+        type: 'https://example.org/Chat',
+        subjectTemplate: '{id}/index.ttl#this',
+      });
+      const messageTable = podTable('message', {
+        id: id(),
+        chat: uri('chat').predicate('https://example.org/chat').link(chatTable),
+        content: string('content').predicate('https://schema.org/text'),
+      }, {
+        base: 'https://example.com/.data/chat/',
+        type: 'https://example.org/Message',
+        subjectTemplate: '{chat|id}/{yyyy}/{MM}/{dd}/messages.ttl#{id}',
+      });
+      const resolveSubject = vi.fn((_table: any, record: Record<string, unknown>) =>
+        `https://example.com/.data/chat/chat-1/2026/05/07/messages.ttl#${String(record.id)}`,
+      );
+      const exactDb = new PodDatabase({
+        getResolver: () => ({ resolveSubject, parseId: (_table: any, iri: string) => iri }),
+      } as unknown as PodDialect, mockSession as PodAsyncSession);
+
+      expect(exactDb.resolveLocatorIri(messageTable, {
+        id: 'msg-1',
+        chat: 'https://example.com/.data/chat/chat-1/index.ttl#this',
+        createdAt: new Date('2026-05-07T00:00:00.000Z'),
+      })).toBe('https://example.com/.data/chat/chat-1/2026/05/07/messages.ttl#msg-1');
+      expect(resolveSubject).toHaveBeenCalled();
+    });
+
+    it('parsePodResourceRef should parse resource ids and template values from table metadata', () => {
+      const chatTable = podTable('chat', {
+        id: id(),
+        title: string('title').predicate('https://schema.org/name'),
+      }, {
+        base: '/.data/chat/',
+        type: 'https://example.org/Chat',
+        subjectTemplate: '{id}/index.ttl#this',
+      });
+      const threadTable = podTable('thread', {
+        id: id(),
+        chat: uri('chat').predicate('https://example.org/chat').link(chatTable),
+      }, {
+        base: '/.data/chat/',
+        type: 'https://example.org/Thread',
+        subjectTemplate: '{chat|id}/index.ttl#{id}',
+      });
+      const approvalTable = podTable('approval', {
+        id: id(),
+      }, {
+        base: '/.data/approvals/',
+        type: 'https://example.org/Approval',
+        subjectTemplate: '{yyyy}/{MM}/{dd}.ttl#{id}',
+      });
+
+      expect(parsePodResourceRef(chatTable, 'https://alice.example/.data/chat/chat-1/index.ttl#this')).toEqual({
+        resourceId: 'chat-1/index.ttl#this',
+        templateValues: { id: 'chat-1' },
+      });
+      expect(parsePodResourceRef(threadTable, 'https://alice.example/.data/chat/chat-1/index.ttl#thread-1')).toEqual({
+        resourceId: 'chat-1/index.ttl#thread-1',
+        templateValues: { chat: 'chat-1', id: 'thread-1' },
+      });
+      expect(extractPodResourceTemplateValue(approvalTable, 'https://alice.example/.data/approvals/2026/05/07.ttl#approval-1'))
+        .toBe('approval-1');
+      expect(parsePodResourceRef(approvalTable, 'approval-1')).toEqual({
+        resourceId: 'approval-1',
+        templateValues: { id: 'approval-1' },
+      });
+      expect(parsePodResourceRef(approvalTable, 'https://alice.example/.data/audits/2026/05/07.ttl#audit-1')).toBeNull();
     });
 
     it('findByIri should prefer exact subject reads before whereByIri fallback', async () => {

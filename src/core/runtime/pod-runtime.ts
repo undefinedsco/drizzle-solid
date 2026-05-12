@@ -18,6 +18,7 @@ export class PodRuntime {
   private connected = false;
   private wrappedFetch: typeof fetch | null = null;
   private requestIdSupported: boolean | null = null;
+  private explicitPodUrl: boolean;
 
   /** Storage 缓存过期时间，默认 5 分钟 */
   private storageTTL: number = 5 * 60 * 1000;
@@ -26,6 +27,7 @@ export class PodRuntime {
     this.session = options.session;
     this.webId = options.webId;
     this.podUrl = resolvePodBase({ webId: this.webId, podUrl: options.podUrl });
+    this.explicitPodUrl = typeof options.podUrl === 'string' && options.podUrl.trim().length > 0;
     if (options.storageTTL !== undefined) {
       this.storageTTL = options.storageTTL;
     }
@@ -133,7 +135,7 @@ export class PodRuntime {
     if (resolvedStorage) {
       this.storageUrl = resolvedStorage;
       this.storageResolvedAt = Date.now();
-      if (resolvedStorage !== this.podUrl) {
+      if (!this.explicitPodUrl && resolvedStorage !== this.podUrl) {
         console.log(`[PodRuntime] Storage refreshed: ${resolvedStorage}`);
         this.podUrl = resolvedStorage;
       }
@@ -170,7 +172,7 @@ export class PodRuntime {
         this.storageUrl = resolvedStorage;
         this.storageResolvedAt = Date.now();
         // 如果 storage URL 与当前 podUrl 不同，更新 podUrl
-        if (resolvedStorage !== this.podUrl) {
+        if (!this.explicitPodUrl && resolvedStorage !== this.podUrl) {
           console.log(`[PodRuntime] IdP-SP separation detected: storage at ${resolvedStorage}`);
           this.podUrl = resolvedStorage;
         }
@@ -182,13 +184,18 @@ export class PodRuntime {
       });
 
       const status = response.status;
-      if (status === 500) {
+      if (status === 500 && !this.explicitPodUrl) {
         const requestId = this.requestIdSupported
           ? (response.headers.get('X-Request-ID') || 'unknown')
           : 'disabled';
         console.error(`Pod probe failed, X-Request-ID: ${requestId}`);
         throw new Error(`Failed to connect to Pod: ${status} ${response.statusText}`);
       }
+
+      if (status === 500 && this.explicitPodUrl) {
+        console.warn(`Pod root returned ${status} for explicit Pod URL, continuing (child resources may still be writable)`);
+      }
+
       if (response.ok) {
         console.log('Successfully connected to Solid Pod');
       } else if (status === 401 || status === 403) {

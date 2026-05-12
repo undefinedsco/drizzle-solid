@@ -1,7 +1,7 @@
 import { entityKind } from 'drizzle-orm';
 import { SQL } from 'drizzle-orm';
 import { PodDialect, type PodOperation } from './pod-dialect';
-import { PodColumnBase, PodTable } from './schema';
+import { PodTable } from './schema';
 
 // Import the new Query Builders and types
 import { SelectQueryBuilder } from './query-builders/select-query-builder';
@@ -15,7 +15,7 @@ export type { SelectFieldMap, InsertQueryPlan, UpdateQueryPlan, DeleteQueryPlan 
 export type { PodOperation } from './pod-dialect';
 export { SelectQueryBuilder, InsertQueryBuilder, UpdateQueryBuilder, DeleteQueryBuilder };
 
-type GenericPodTable = PodTable<Record<string, PodColumnBase>>;
+type GenericPodTable = PodTable<any>;
 
 export class PodAsyncSession {
   static readonly [entityKind] = 'PodAsyncSession';

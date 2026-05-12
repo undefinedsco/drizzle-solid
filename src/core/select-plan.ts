@@ -2,7 +2,7 @@ import { PodTable, PodColumnBase } from './schema';
 import { AggregateExpression } from './aggregates';
 import { QueryCondition } from './query-conditions';
 
-type GenericPodTable = PodTable<Record<string, PodColumnBase>>;
+type GenericPodTable = PodTable<any>;
 
 export type SelectField = PodColumnBase | GenericPodTable | string | AggregateExpression | SelectFieldMap;
 export interface SelectFieldMap {
