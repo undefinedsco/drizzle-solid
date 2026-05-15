@@ -136,7 +136,7 @@ export class PodDialect {
     const session = config.session;
 
     // Initialize debug logger
-    this.debugLogger = new DebugLogger(config.debug || false);
+    this.debugLogger = new DebugLogger(config.debug || (typeof process !== 'undefined' && process.env?.LINX_DEBUG === '1'));
     setGlobalDebugLogger(this.debugLogger);
 
     this.debugLogger.log('Initializing PodDialect with config:', {
@@ -567,7 +567,7 @@ export class PodDialect {
 
       return response.ok;
     } catch (error) {
-      console.warn('[PodDialect] Failed to check resource existence via HEAD, falling back to GET', error);
+      this.debugLogger.warn('[PodDialect] Failed to check resource existence via HEAD, falling back to GET', error);
       try {
         const getResponse = await this.runtime.getFetch()(normalizedUrl, {
           method: 'GET',
@@ -579,7 +579,7 @@ export class PodDialect {
         }
         return false;
       } catch (fallbackError) {
-        console.warn('[PodDialect] Resource existence fallback GET failed', fallbackError);
+        this.debugLogger.warn('[PodDialect] Resource existence fallback GET failed', fallbackError);
         return false;
       }
     }
@@ -721,18 +721,25 @@ export class PodDialect {
         }
         
         if (response.status >= 500) {
-           console.warn(`[PodDialect] ensureResourceExists attempt ${i + 1}/3 failed with ${response.status}, retrying...`);
+           this.debugLogger.warn(`[PodDialect] ensureResourceExists attempt ${i + 1}/3 failed with ${response.status}, retrying...`);
            await new Promise(r => setTimeout(r, 1000));
            continue;
         }
 
-        throw new Error(`Failed to create resource: ${response.status} ${response.statusText}`);
+        const details = await this.readErrorResponseBody(response);
+        throw new Error(this.formatResourcePreparationError(
+          'Failed to create resource',
+          response.status,
+          response.statusText,
+          normalizedUrl,
+          details,
+        ));
     } catch (error) {
         if (i === 2) {
-          console.error('[PodDialect] ensureResourceExists failed after 3 attempts:', error);
+          this.debugLogger.error('[PodDialect] ensureResourceExists failed after 3 attempts:', error);
       throw error;
         }
-        console.warn(`[PodDialect] ensureResourceExists attempt ${i + 1}/3 failed with error:`, error);
+        this.debugLogger.warn(`[PodDialect] ensureResourceExists attempt ${i + 1}/3 failed with error:`, error);
         await new Promise(r => setTimeout(r, 1000));
       }
     }
@@ -1417,7 +1424,7 @@ export class PodDialect {
           await this.ensureResourceExists(descriptor.resourceUrl, { createIfMissing: true });
           this.markResourcePrepared(descriptor.resourceUrl);
         } catch (error: unknown) {
-          console.warn(`[registerTable] ensureResourceExists failed for ${descriptor.resourceUrl}:`, error);
+          this.debugLogger.warn(`[registerTable] ensureResourceExists failed for ${descriptor.resourceUrl}:`, error);
           // 不标记为已准备，让后续 INSERT 有机会重试创建
         }
 
@@ -1426,11 +1433,11 @@ export class PodDialect {
         try {
           table.setBase?.(descriptor.resourceUrl);
         } catch (error) {
-          console.warn(`[registerTable] setBase failed for ${table.config.name}:`, error);
+          this.debugLogger.warn(`[registerTable] setBase failed for ${table.config.name}:`, error);
         }
       }
     } catch (error: unknown) {
-      console.warn(`[registerTable] Resource preparation failed for ${table.config.name}:`, error);
+      this.debugLogger.warn(`[registerTable] Resource preparation failed for ${table.config.name}:`, error);
       if (this.config.resourcePreparation === 'strict') {
         throw error;
       }
@@ -1547,7 +1554,7 @@ export class PodDialect {
       });
 
       if (checkResponse.status === 401 || checkResponse.status === 403) {
-        console.log(`[Container] ${targetContainer} 不允许 HEAD，视为已存在`);
+        this.debugLogger.log(`[Container] ${targetContainer} 不允许 HEAD，视为已存在`);
         this.markContainerPrepared(targetContainer);
         return;
       }
@@ -1556,12 +1563,12 @@ export class PodDialect {
         // 先递归创建父容器
         const parentContainer = this.getParentContainer(targetContainer);
         if (parentContainer && parentContainer !== targetContainer) {
-          console.log(`[Container] 先创建父容器: ${parentContainer}`);
+          this.debugLogger.log(`[Container] 先创建父容器: ${parentContainer}`);
           await this.ensureContainerExists(parentContainer);
         }
 
         // 再创建当前容器
-        console.log(`[Container] 创建容器: ${targetContainer}`);
+        this.debugLogger.log(`[Container] 创建容器: ${targetContainer}`);
         const createResponse = await this.runtime.getFetch()(targetContainer, {
           method: 'PUT',
           headers: {
@@ -1571,28 +1578,65 @@ export class PodDialect {
         });
 
         if (createResponse.ok) {
-          console.log(`[Container] 容器创建成功: ${createResponse.status}`);
+          this.debugLogger.log(`[Container] 容器创建成功: ${createResponse.status}`);
           await this.sparqlExecutor.invalidateHttpCache(targetContainer);
           this.markContainerPrepared(targetContainer);
         } else if (createResponse.status === 409) {
-          console.log(`[Container] 容器已存在（409冲突）: ${targetContainer}`);
+          this.debugLogger.log(`[Container] 容器已存在（409冲突）: ${targetContainer}`);
           this.markContainerPrepared(targetContainer);
         } else {
-          throw new Error(`Failed to create container: ${createResponse.status} ${createResponse.statusText}`);
+          const details = await this.readErrorResponseBody(createResponse);
+          throw new Error(this.formatResourcePreparationError(
+            'Failed to create container',
+            createResponse.status,
+            createResponse.statusText,
+            targetContainer,
+            details,
+          ));
         }
       } else if (checkResponse.status === 200) {
-        console.log(`[Container] 容器已存在: ${targetContainer}`);
+        this.debugLogger.log(`[Container] 容器已存在: ${targetContainer}`);
         this.markContainerPrepared(targetContainer);
       } else if (checkResponse.status === 409) {
-        console.log(`[Container] 容器已存在（409冲突）: ${targetContainer}`);
+        this.debugLogger.log(`[Container] 容器已存在（409冲突）: ${targetContainer}`);
         this.markContainerPrepared(targetContainer);
       } else if (!checkResponse.ok) {
-        throw new Error(`Failed to check container: ${checkResponse.status} ${checkResponse.statusText}`);
+        throw new Error(this.formatResourcePreparationError(
+          'Failed to check container',
+          checkResponse.status,
+          checkResponse.statusText,
+          targetContainer,
+        ));
       }
     } catch (error) {
-      console.error('[Container] 确保容器存在时出错:', error);
+      this.debugLogger.error('[Container] 确保容器存在时出错:', error);
       throw error;
     }
+  }
+
+  private async readErrorResponseBody(response: Response): Promise<string> {
+    const responseWithText = response as Response & { text?: () => Promise<string> };
+    if (typeof responseWithText.text !== 'function') {
+      return '';
+    }
+
+    try {
+      const text = await responseWithText.text();
+      return text.trim().slice(0, 1000);
+    } catch {
+      return '';
+    }
+  }
+
+  private formatResourcePreparationError(
+    message: string,
+    status: number,
+    statusText: string,
+    target: string,
+    details = '',
+  ): string {
+    const suffix = details ? ` - ${details}` : '';
+    return `${message}: ${status} ${statusText} (${target})${suffix}`;
   }
 
   /**
@@ -1616,7 +1660,7 @@ export class PodDialect {
       url.pathname = '/' + pathParts.join('/') + '/';
       return url.toString();
     } catch (error) {
-      console.error('[Container] 解析父容器 URL 失败:', error);
+      this.debugLogger.error('[Container] 解析父容器 URL 失败:', error);
       return null;
     }
   }

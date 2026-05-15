@@ -161,4 +161,135 @@ const table = new PodTable('profile', {
 
     expect(fetchMock).not.toHaveBeenCalled();
   });
+
+  it('does not print container preparation failures unless debug logging is enabled', async () => {
+    const previousDebug = process.env.LINX_DEBUG;
+    delete process.env.LINX_DEBUG;
+    const consoleError = vi.spyOn(console, 'error').mockImplementation(() => undefined);
+    try {
+      const dialect = new PodDialect({
+        session: {
+          info: {
+            isLoggedIn: true,
+            webId: 'https://pod.example/ganbb/profile/card#me',
+            podUrl: 'https://pod.example/ganbb/',
+          },
+          fetch: fetchMock,
+        } as any,
+        podUrl: 'https://pod.example/ganbb/',
+        resourcePreparation: 'best-effort',
+      });
+
+      const responseBody = '{"errorCode":"H500","message":"container create failed"}';
+      fetchMock
+        .mockResolvedValueOnce({ ok: false, status: 404, statusText: 'Not Found' } as Response)
+        .mockResolvedValueOnce({
+          ok: false,
+          status: 500,
+          statusText: 'Internal Server Error',
+          text: vi.fn().mockResolvedValue(responseBody),
+        } as unknown as Response);
+
+      await expect((dialect as any).ensureContainerExists('https://pod.example/ganbb/items/'))
+        .rejects
+        .toThrow(
+          `Failed to create container: 500 Internal Server Error (https://pod.example/ganbb/items/) - ${responseBody}`,
+        );
+
+      expect(consoleError).not.toHaveBeenCalled();
+    } finally {
+      consoleError.mockRestore();
+      if (previousDebug === undefined) {
+        delete process.env.LINX_DEBUG;
+      } else {
+        process.env.LINX_DEBUG = previousDebug;
+      }
+    }
+  });
+
+  it('prints container preparation failures when LINX_DEBUG=1', async () => {
+    const previousDebug = process.env.LINX_DEBUG;
+    process.env.LINX_DEBUG = '1';
+    const consoleError = vi.spyOn(console, 'error').mockImplementation(() => undefined);
+    const consoleLog = vi.spyOn(console, 'log').mockImplementation(() => undefined);
+    try {
+      const dialect = new PodDialect({
+        session: {
+          info: {
+            isLoggedIn: true,
+            webId: 'https://pod.example/ganbb/profile/card#me',
+            podUrl: 'https://pod.example/ganbb/',
+          },
+          fetch: fetchMock,
+        } as any,
+        podUrl: 'https://pod.example/ganbb/',
+        resourcePreparation: 'best-effort',
+      });
+
+      fetchMock
+        .mockResolvedValueOnce({ ok: false, status: 404, statusText: 'Not Found' } as Response)
+        .mockResolvedValueOnce({ ok: false, status: 500, statusText: 'Internal Server Error' } as Response);
+
+      await expect((dialect as any).ensureContainerExists('https://pod.example/ganbb/items/'))
+        .rejects
+        .toThrow('Failed to create container: 500 Internal Server Error');
+
+      expect(consoleError).toHaveBeenCalledWith(
+        expect.stringContaining('[Container] 确保容器存在时出错:'),
+        expect.any(Error),
+      );
+    } finally {
+      consoleError.mockRestore();
+      consoleLog.mockRestore();
+      if (previousDebug === undefined) {
+        delete process.env.LINX_DEBUG;
+      } else {
+        process.env.LINX_DEBUG = previousDebug;
+      }
+    }
+  });
+
+  it('keeps registerTable resource-preparation failures quiet in best-effort mode', async () => {
+    const previousDebug = process.env.LINX_DEBUG;
+    delete process.env.LINX_DEBUG;
+    const consoleError = vi.spyOn(console, 'error').mockImplementation(() => undefined);
+    const consoleWarn = vi.spyOn(console, 'warn').mockImplementation(() => undefined);
+    const dialect = new PodDialect({
+      session: {
+        info: {
+          isLoggedIn: true,
+          webId: 'https://pod.example/ganbb/profile/card#me',
+          podUrl: 'https://pod.example/ganbb/',
+        },
+        fetch: fetchMock,
+      } as any,
+      podUrl: 'https://pod.example/ganbb/',
+      resourcePreparation: 'best-effort',
+    });
+    const noisyTable = new PodTable('quiet_items', {
+      id: new PodStringColumn('id', { primaryKey: true, predicate: '@id' }),
+    }, {
+      base: '/items/messages.ttl',
+      type: 'http://schema.org/Thing',
+    });
+
+    try {
+      fetchMock
+        .mockResolvedValueOnce({ ok: false, status: 404, statusText: 'Not Found' } as Response)
+        .mockResolvedValueOnce({ ok: false, status: 500, statusText: 'Internal Server Error' } as Response);
+
+      await expect(dialect.registerTable(noisyTable)).resolves.toBeUndefined();
+
+      expect(consoleError).not.toHaveBeenCalled();
+      expect(consoleWarn).not.toHaveBeenCalled();
+    } finally {
+      consoleError.mockRestore();
+      consoleWarn.mockRestore();
+      if (previousDebug === undefined) {
+        delete process.env.LINX_DEBUG;
+      } else {
+        process.env.LINX_DEBUG = previousDebug;
+      }
+    }
+  });
 });
