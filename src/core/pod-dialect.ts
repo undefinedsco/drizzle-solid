@@ -1569,13 +1569,7 @@ export class PodDialect {
 
         // 再创建当前容器
         this.debugLogger.log(`[Container] 创建容器: ${targetContainer}`);
-        const createResponse = await this.runtime.getFetch()(targetContainer, {
-          method: 'PUT',
-          headers: {
-            'Content-Type': 'text/turtle',
-            'Link': '<http://www.w3.org/ns/ldp#BasicContainer>; rel="type"'
-          }
-        });
+        const createResponse = await this.createContainerWithRetry(targetContainer);
 
         if (createResponse.ok) {
           this.debugLogger.log(`[Container] 容器创建成功: ${createResponse.status}`);
@@ -1612,6 +1606,36 @@ export class PodDialect {
       this.debugLogger.error('[Container] 确保容器存在时出错:', error);
       throw error;
     }
+  }
+
+  private async createContainerWithRetry(containerUrl: string): Promise<Response> {
+    let lastResponse: Response | null = null;
+    for (let attempt = 0; attempt < 3; attempt += 1) {
+      const response = await this.runtime.getFetch()(containerUrl, {
+        method: 'PUT',
+        headers: {
+          'Content-Type': 'text/turtle',
+          'Link': '<http://www.w3.org/ns/ldp#BasicContainer>; rel="type"'
+        }
+      });
+      lastResponse = response;
+      if (response.ok || response.status === 409 || response.status < 500) {
+        return response;
+      }
+
+      this.debugLogger.warn(
+        `[Container] 创建容器失败 ${attempt + 1}/3: ${response.status} ${response.statusText} (${containerUrl})`,
+      );
+      if (attempt < 2) {
+        await this.sleep(250 * (attempt + 1));
+      }
+    }
+
+    return lastResponse as Response;
+  }
+
+  private async sleep(ms: number): Promise<void> {
+    await new Promise((resolve) => setTimeout(resolve, ms));
   }
 
   private async readErrorResponseBody(response: Response): Promise<string> {

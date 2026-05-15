@@ -41,6 +41,8 @@ vi.mock('../../../src/core/sparql-executor', () => {
 
     executeQuery = vi.fn();
 
+    invalidateHttpCache = vi.fn();
+
     getSources = vi.fn(() => [...this.sources]);
   }
 
@@ -179,10 +181,23 @@ const table = new PodTable('profile', {
         podUrl: 'https://pod.example/ganbb/',
         resourcePreparation: 'best-effort',
       });
+      (dialect as any).sleep = vi.fn().mockResolvedValue(undefined);
 
       const responseBody = '{"errorCode":"H500","message":"container create failed"}';
       fetchMock
         .mockResolvedValueOnce({ ok: false, status: 404, statusText: 'Not Found' } as Response)
+        .mockResolvedValueOnce({
+          ok: false,
+          status: 500,
+          statusText: 'Internal Server Error',
+          text: vi.fn().mockResolvedValue(responseBody),
+        } as unknown as Response)
+        .mockResolvedValueOnce({
+          ok: false,
+          status: 500,
+          statusText: 'Internal Server Error',
+          text: vi.fn().mockResolvedValue(responseBody),
+        } as unknown as Response)
         .mockResolvedValueOnce({
           ok: false,
           status: 500,
@@ -199,6 +214,68 @@ const table = new PodTable('profile', {
       expect(consoleError).not.toHaveBeenCalled();
     } finally {
       consoleError.mockRestore();
+      if (previousDebug === undefined) {
+        delete process.env.LINX_DEBUG;
+      } else {
+        process.env.LINX_DEBUG = previousDebug;
+      }
+    }
+  });
+
+  it('retries transient container creation failures before succeeding', async () => {
+    const previousDebug = process.env.LINX_DEBUG;
+    delete process.env.LINX_DEBUG;
+    const dialect = new PodDialect({
+      session: {
+        info: {
+          isLoggedIn: true,
+          webId: 'https://pod.example/ganbb/profile/card#me',
+          podUrl: 'https://pod.example/ganbb/',
+        },
+        fetch: fetchMock,
+      } as any,
+      podUrl: 'https://pod.example/ganbb/',
+      resourcePreparation: 'strict',
+    });
+    (dialect as any).sleep = vi.fn().mockResolvedValue(undefined);
+
+    try {
+      fetchMock
+        .mockResolvedValueOnce({ ok: false, status: 404, statusText: 'Not Found' } as Response)
+        .mockResolvedValueOnce({ ok: false, status: 500, statusText: 'Internal Server Error' } as Response)
+        .mockResolvedValueOnce({ ok: false, status: 500, statusText: 'Internal Server Error' } as Response)
+        .mockResolvedValueOnce({ ok: true, status: 201, statusText: 'Created' } as Response);
+
+      await expect((dialect as any).ensureContainerExists('https://pod.example/ganbb/items/'))
+        .resolves
+        .toBeUndefined();
+
+      expect(fetchMock).toHaveBeenCalledTimes(4);
+      expect(fetchMock).toHaveBeenNthCalledWith(1, 'https://pod.example/ganbb/items/', {
+        method: 'HEAD',
+      });
+      expect(fetchMock).toHaveBeenNthCalledWith(2, 'https://pod.example/ganbb/items/', {
+        method: 'PUT',
+        headers: {
+          'Content-Type': 'text/turtle',
+          'Link': '<http://www.w3.org/ns/ldp#BasicContainer>; rel="type"',
+        },
+      });
+      expect(fetchMock).toHaveBeenNthCalledWith(3, 'https://pod.example/ganbb/items/', {
+        method: 'PUT',
+        headers: {
+          'Content-Type': 'text/turtle',
+          'Link': '<http://www.w3.org/ns/ldp#BasicContainer>; rel="type"',
+        },
+      });
+      expect(fetchMock).toHaveBeenNthCalledWith(4, 'https://pod.example/ganbb/items/', {
+        method: 'PUT',
+        headers: {
+          'Content-Type': 'text/turtle',
+          'Link': '<http://www.w3.org/ns/ldp#BasicContainer>; rel="type"',
+        },
+      });
+    } finally {
       if (previousDebug === undefined) {
         delete process.env.LINX_DEBUG;
       } else {
@@ -225,9 +302,12 @@ const table = new PodTable('profile', {
         podUrl: 'https://pod.example/ganbb/',
         resourcePreparation: 'best-effort',
       });
+      (dialect as any).sleep = vi.fn().mockResolvedValue(undefined);
 
       fetchMock
         .mockResolvedValueOnce({ ok: false, status: 404, statusText: 'Not Found' } as Response)
+        .mockResolvedValueOnce({ ok: false, status: 500, statusText: 'Internal Server Error' } as Response)
+        .mockResolvedValueOnce({ ok: false, status: 500, statusText: 'Internal Server Error' } as Response)
         .mockResolvedValueOnce({ ok: false, status: 500, statusText: 'Internal Server Error' } as Response);
 
       await expect((dialect as any).ensureContainerExists('https://pod.example/ganbb/items/'))
@@ -266,6 +346,7 @@ const table = new PodTable('profile', {
       podUrl: 'https://pod.example/ganbb/',
       resourcePreparation: 'best-effort',
     });
+    (dialect as any).sleep = vi.fn().mockResolvedValue(undefined);
     const noisyTable = new PodTable('quiet_items', {
       id: new PodStringColumn('id', { primaryKey: true, predicate: '@id' }),
     }, {
@@ -276,6 +357,8 @@ const table = new PodTable('profile', {
     try {
       fetchMock
         .mockResolvedValueOnce({ ok: false, status: 404, statusText: 'Not Found' } as Response)
+        .mockResolvedValueOnce({ ok: false, status: 500, statusText: 'Internal Server Error' } as Response)
+        .mockResolvedValueOnce({ ok: false, status: 500, statusText: 'Internal Server Error' } as Response)
         .mockResolvedValueOnce({ ok: false, status: 500, statusText: 'Internal Server Error' } as Response);
 
       await expect(dialect.registerTable(noisyTable)).resolves.toBeUndefined();
