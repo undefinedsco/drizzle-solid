@@ -18,6 +18,8 @@ export interface PodExecutorDeps {
   normalizeResourceKey: (resourceUrl: string) => string;
   ensureContainerExists: (containerUrl: string) => Promise<void>;
   ensureResourceExists: (resourceUrl: string, options?: { createIfMissing?: boolean }) => Promise<void>;
+  shouldSkipResourcePreparation?: () => boolean;
+  shouldContinueAfterResourcePreparationError?: () => boolean;
   getTableRegistries?: () => {
     tableRegistry: Map<string, PodTable[]>;
     tableNameRegistry: Map<string, PodTable>;
@@ -66,14 +68,15 @@ export class PodExecutor {
     const { containerUrl, resourceUrl } = this.deps.resolveTableUrls(operation.table);
     const normalizedResourceUrl = this.deps.normalizeResourceUrl(resourceUrl);
 
-    // SELECT 操作时，SPARQL 策略需要使用表配置的 scoped endpoint。
-    // xpod sidecar endpoint 负责定义这个路径下的资源集合；SDK 不用 GRAPH 模拟路径范围。
+    // Exact resource reads already know the concrete Pod document; collection
+    // reads may use the configured scoped SPARQL endpoint.
     const exactSelectResourceUrl = operation.type === 'select'
       ? this.getExactSelectResourceUrl(operation)
       : undefined;
-    const selectResourceUrl = operation.type === 'select' && descriptor.mode === 'sparql'
+    const selectResourceUrl = exactSelectResourceUrl
+      ?? (operation.type === 'select' && descriptor.mode === 'sparql'
       ? descriptor.endpoint
-      : exactSelectResourceUrl ?? normalizedResourceUrl;
+      : normalizedResourceUrl);
 
     try {
       switch (operation.type) {
@@ -97,6 +100,31 @@ export class PodExecutor {
         console.error(`${operation.type.toUpperCase()} operation failed:`, error);
       }
       throw error;
+    }
+  }
+
+  private shouldSkipResourcePreparation(): boolean {
+    return this.deps.shouldSkipResourcePreparation?.() ?? false;
+  }
+
+  private shouldContinueAfterResourcePreparationError(): boolean {
+    return this.deps.shouldContinueAfterResourcePreparationError?.() ?? false;
+  }
+
+  private async prepareResource(operationName: string, prepare: () => Promise<void>): Promise<void> {
+    if (this.shouldSkipResourcePreparation()) {
+      return;
+    }
+
+    try {
+      await prepare();
+    } catch (error) {
+      if (!this.shouldContinueAfterResourcePreparationError()) {
+        throw error;
+      }
+      if (typeof process !== 'undefined' && process.env?.LINX_DEBUG === '1') {
+        console.warn(`[${operationName}] Resource preparation failed; continuing in best-effort mode:`, error);
+      }
     }
   }
 
@@ -189,13 +217,13 @@ export class PodExecutor {
 
     // Writes always go through LDP, even when SELECT uses a SPARQL endpoint.
     if (!this.deps.preparedContainers.has(this.deps.normalizeContainerKey(containerUrl))) {
-      await this.deps.ensureContainerExists(containerUrl);
+      await this.prepareResource('INSERT', () => this.deps.ensureContainerExists(containerUrl));
     }
     if (descriptor.mode === 'ldp' && !this.deps.preparedResources.has(this.deps.normalizeResourceKey(resourceUrl))) {
-      await this.deps.ensureResourceExists(resourceUrl, { createIfMissing: true });
+      await this.prepareResource('INSERT', () => this.deps.ensureResourceExists(resourceUrl, { createIfMissing: true }));
     }
 
-    if (descriptor.mode === 'ldp') {
+    if (descriptor.mode === 'ldp' && !this.shouldSkipResourcePreparation()) {
       // Pre-flight check for duplicates (Strategy: INSERT means NEW)
       // 如果资源不存在（404），清除缓存以避免后续查询被缓存的 404 影响
       for (const row of values) {
@@ -219,7 +247,13 @@ export class PodExecutor {
       ...(this.deps.isInsertPlan(operation.plan)
         ? operation.plan
         : { table: operation.table, rows: values }),
-      ensureContainerExists: this.deps.ensureContainerExists,
+      ensureContainerExists: this.shouldSkipResourcePreparation()
+        ? undefined
+        : async (targetContainerUrl: string) => {
+            await this.prepareResource('INSERT', () => this.deps.ensureContainerExists(targetContainerUrl));
+          },
+      skipResourceExistenceCheck: this.shouldSkipResourcePreparation()
+        || (this.deps.isInsertPlan(operation.plan) && operation.plan.skipResourceExistenceCheck === true),
       tableRegistry: this.deps.getTableRegistries?.().tableRegistry,
       tableNameRegistry: this.deps.getTableRegistries?.().tableNameRegistry,
     };
@@ -253,7 +287,7 @@ export class PodExecutor {
     if (descriptor.mode === 'ldp') {
       if (!this.deps.preparedContainers.has(this.deps.normalizeContainerKey(containerUrl))) {
         try {
-          await this.deps.ensureContainerExists(containerUrl);
+          await this.prepareResource('UPDATE', () => this.deps.ensureContainerExists(containerUrl));
         } catch (error) {
           const message = error instanceof Error ? error.message : String(error);
           if (message.includes('Failed to check container: 401') || message.includes('Failed to check container: 403')) {
@@ -264,7 +298,7 @@ export class PodExecutor {
         }
       }
       if (!this.deps.preparedResources.has(this.deps.normalizeResourceKey(resourceUrl))) {
-        await this.deps.ensureResourceExists(resourceUrl, { createIfMissing: false });
+        await this.prepareResource('UPDATE', () => this.deps.ensureResourceExists(resourceUrl, { createIfMissing: false }));
       }
     }
 
@@ -313,12 +347,14 @@ export class PodExecutor {
     // LDP mode: ensure container and resource exist first
     if (descriptor.mode === 'ldp') {
       if (!this.deps.preparedContainers.has(this.deps.normalizeContainerKey(containerUrl))) {
-        await this.deps.ensureContainerExists(containerUrl);
+        await this.prepareResource('DELETE', () => this.deps.ensureContainerExists(containerUrl));
       }
 
       const hasResource = this.deps.preparedResources.has(this.deps.normalizeResourceKey(resourceUrl))
         ? true
-        : await this.deps.resourceExists(resourceUrl);
+        : this.shouldSkipResourcePreparation()
+          ? true
+          : await this.deps.resourceExists(resourceUrl);
       if (!hasResource) {
         console.log('[DELETE] Target resource does not exist, skipping execution');
         return [{

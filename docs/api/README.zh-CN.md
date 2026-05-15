@@ -15,7 +15,7 @@ English version: [`README.md`](README.md)
 适合新代码，或者你希望 API 直接体现 Solid 语义：
 
 - `collection(table)`
-- `entity(table, iri)`
+- `entity(resource, iri)`
 - `bind(schema, options)`
 - `sparql(query)`
 
@@ -33,10 +33,10 @@ const client = pod(session, {
 适合迁移自 `drizzle-orm`，或者你想保留 builder / facade 形状：
 
 - `select / insert / update / delete`
-- `db.query.<table>`
-- `findByLocator / findByIri`
-- `updateByLocator / updateByIri`
-- `deleteByLocator / deleteByIri`
+- `db.query.<resource>`
+- `findById / findByIri`
+- `updateById / updateByIri`
+- `deleteById / deleteByIri`
 
 ```ts
 import { drizzle } from '@undefineds.co/drizzle-solid';
@@ -73,10 +73,10 @@ const client = pod(session);
 | 定义带存储布局的模型 | `podTable(name, columns, config)` |
 | 定义可复用 schema | `solidSchema(...)` |
 | 运行时把 schema 绑定到位置 | `client.bind(...)` / `db.createTable(...)` |
-| 列表 / 过滤读取 | `collection(table).list(...)` / `db.select()` / `db.query.<table>.findMany()` |
-| 精确读取单个实体 | `client.entity(table, iri)` / `db.findByIri(...)` / `db.findByLocator(...)` |
-| 精确更新单个实体 | `entity.update(...)` / `db.updateByIri(...)` / `db.updateByLocator(...)` |
-| 精确删除单个实体 | `entity.delete()` / `db.deleteByIri(...)` / `db.deleteByLocator(...)` |
+| 列表 / 过滤读取 | `collection(table).list(...)` / `db.select()` / `db.query.<resource>.findMany()` |
+| 精确读取单个资源 | `client.entity(resource, iri)` / `db.query.<resource>.findById(...)` / `db.findById(...)` / `db.findByIri(...)` |
+| 精确更新单个资源 | `entity.update(...)` / `db.updateById(...)` / `db.updateByIri(...)` |
+| 精确删除单个资源 | `entity.delete()` / `db.deleteById(...)` / `db.deleteByIri(...)` |
 | 直接执行 SPARQL | `client.sparql(...)` / `db.executeSPARQL(...)` |
 | 把发现结果转成表定义 | `client.locationToTable(...)` / `db.locationToTable(...)` |
 | 按 RDF class 发现表 | `client.discoverTablesFor(...)` / `db.discoverTablesFor(...)` |
@@ -151,7 +151,7 @@ const profileTable = db.createTable(profileSchema, {
 - `entity(iri)` / `byIri(iri)`
 - `select(fields?)`
 
-### `client.entity(table, iri)`
+### `client.entity(resource, iri)`
 
 用于“一个精确实体”语义。
 
@@ -191,22 +191,34 @@ const profileTable = db.createTable(profileSchema, {
 
 当前支持：
 
-- `db.query.<table>.findMany(...)`
-- `db.query.<table>.findFirst(...)`
-- `db.query.<table>.findByLocator(...)`
-- `db.query.<table>.findByIri(...)`
-- `db.query.<table>.count(...)`
+- `db.query.<resource>.findMany(...)`
+- `db.query.<resource>.findFirst(...)`
+- `db.query.<resource>.find(...)`
+- `db.query.<resource>.findById(...)`
+- `db.query.<resource>.findByLocator(...)`（已废弃）
+- `db.query.<resource>.findByIri(...)`
+- `db.query.<resource>.findByResource(...)`
+- `db.query.<resource>.count(...)`
 
 ### Exact-target helpers
 
 这是单实体读写的正式入口：
 
-- `db.findByLocator(table, locator)`
-- `db.findByIri(table, iri)`
-- `db.updateByLocator(table, locator, data)`
-- `db.updateByIri(table, iri, data)`
-- `db.deleteByLocator(table, locator)`
-- `db.deleteByIri(table, iri)`
+- `db.findById(resource, id)`
+- `db.findByIri(resource, iri)`
+- `db.findByResource(resource, target)`
+- `db.findByLocator(resource, locator)`（已废弃）
+- `db.updateById(resource, id, data)`
+- `db.updateByIri(resource, iri, data)`
+- `db.updateByResource(resource, target, data)`
+- `db.updateByLocator(resource, locator, data)`（已废弃）
+- `db.deleteById(resource, id)`
+- `db.deleteByIri(resource, iri)`
+- `db.deleteByResource(resource, target)`
+- `db.deleteByLocator(resource, locator)`（已废弃）
+
+`*ByResource` 接受完整 IRI、带 `@id` 的 row、base-relative id，或旧 locator
+对象。调用方已经有 base-relative id 时，优先用 `*ById`。
 
 ## SPARQL API
 
@@ -240,15 +252,16 @@ await db.executeSPARQL(`
 
 - `collection().list(...)`
 - `db.select().from(...).where(...)`
-- `db.query.<table>.findMany(...)`
+- `db.query.<resource>.findMany(...)`
 
-单实体操作应该显式走 exact-target API：
+单资源操作应该显式走 exact-target API：
 
-- `entity(table, iri)`
-- `findByIri`
-- `findByLocator`
-- `updateByIri` / `updateByLocator`
-- `deleteByIri` / `deleteByLocator`
+- `entity(resource, iri)`
+- `findById` / `findByIri`
+- `updateById` / `updateByIri`
+- `deleteById` / `deleteByIri`
+- `findByResource` / `updateByResource` / `deleteByResource` 用于混合 exact target
+- `findByLocator` / `updateByLocator` / `deleteByLocator` 仅作已废弃兼容入口
 
 ### 2. 公共 `where()` 不再承担“按 id 精确命中”
 
@@ -260,7 +273,7 @@ await db.executeSPARQL(`
 
 正确做法是改用 exact-target helper。
 
-### 3. 多变量模板必须补齐 locator
+### 3. 多变量模板的 `*ById` 必须传 base-relative id
 
 例如：
 
@@ -271,7 +284,9 @@ subjectTemplate: '{chatId}/messages.ttl#{id}'
 这时只给 `id` 不够，必须：
 
 - 给完整 IRI，或
-- 给完整 locator，例如 `{ chatId, id }`
+- 给 base-relative resource id，例如 `chat-1/messages.ttl#msg-1`
+
+旧 locator helper 仍接受 `{ chatId, id }` 这样的完整 locator，但它们已经废弃。
 
 ### 4. plain LDP document mode 有明确边界
 

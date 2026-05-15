@@ -113,15 +113,15 @@ describe('join execution-path coverage', () => {
 
     expect(rows).toEqual([
       {
-        member: { id: 'member-1', name: 'Alice', tags: ['solid', 'rdf'] },
+        member: { id: 'member-1', name: 'Alice', managerId: undefined, tags: ['solid', 'rdf'] },
         post: { id: 'post-1', memberId: 'member-1', title: 'First Post' },
       },
       {
-        member: { id: 'member-1', name: 'Alice', tags: ['solid', 'rdf'] },
+        member: { id: 'member-1', name: 'Alice', managerId: undefined, tags: ['solid', 'rdf'] },
         post: { id: 'post-2', memberId: 'member-1', title: 'Second Post' },
       },
       {
-        member: { id: 'member-2', name: 'Bob', tags: ['pod'] },
+        member: { id: 'member-2', name: 'Bob', managerId: undefined, tags: ['pod'] },
         post: { id: 'post-3', memberId: 'member-2', title: 'Bob Post' },
       },
     ]);

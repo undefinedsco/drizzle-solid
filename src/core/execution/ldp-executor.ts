@@ -77,6 +77,7 @@ export class LdpExecutor {
     resourceUrl: string,
     options: {
       ensureContainerExists?: (containerUrl: string) => Promise<void>;
+      skipResourceExistenceCheck?: boolean;
       tableRegistry?: Map<string, PodTable[]>;
       tableNameRegistry?: Map<string, PodTable>;
     } = {}
@@ -130,7 +131,7 @@ export class LdpExecutor {
     // 但如果多条记录共享同一个资源 URL（如同一天的 messages.ttl），则合并写入
     if (mode === 'document') {
       // 按 resourceUrl 分组收集三元组
-      const resourceTriples = new Map<string, string[]>();
+      const resourceTriples = new Map<string, { triples: string[]; hasFragmentSubject: boolean }>();
 
       for (let idx = 0; idx < rows.length; idx++) {
         const row = rows[idx];
@@ -162,8 +163,12 @@ export class LdpExecutor {
           if (recordTriples.length === 0) continue;
 
           // 按 resourceUrl 分组
-          const existing = resourceTriples.get(docResourceUrl) || [];
-          existing.push(...recordTriples);
+          const existing = resourceTriples.get(docResourceUrl) || {
+            triples: [],
+            hasFragmentSubject: false,
+          };
+          existing.triples.push(...recordTriples);
+          existing.hasFragmentSubject = existing.hasFragmentSubject || subject.includes('#');
           resourceTriples.set(docResourceUrl, existing);
         } finally {
           delete (table as any).__currentRecord;
@@ -172,18 +177,43 @@ export class LdpExecutor {
 
       // 对每个唯一的 resourceUrl 执行一次写入
       const results: any[] = [];
-      for (const [docResourceUrl, triples] of resourceTriples.entries()) {
+      for (const [docResourceUrl, group] of resourceTriples.entries()) {
+        const triples = group.triples;
         const containerUrl = getContainerUrl(docResourceUrl);
         if (containerUrl && options.ensureContainerExists) {
           await options.ensureContainerExists(containerUrl);
         }
 
-        // 检查资源是否已存在，如果存在则使用 PATCH 追加
-        const headRes = await this.fetchFn(docResourceUrl, { method: 'HEAD' });
-        const resourceExists = headRes.ok || headRes.status === 405;
+        // 检查资源是否已存在，如果存在则使用 PATCH 追加。
+        // Some Solid sidecars are slow or unreliable on HEAD; callers that own
+        // resource creation can skip this probe and fall back from PATCH to PUT.
+        let resourceExists = false;
+        if (!options.skipResourceExistenceCheck) {
+          const headRes = await this.fetchFn(docResourceUrl, { method: 'HEAD' });
+          resourceExists = headRes.ok || headRes.status === 405;
+        }
 
         let response;
-        if (resourceExists) {
+        let via: 'patch' | 'put';
+        if (options.skipResourceExistenceCheck) {
+          const sparql = `INSERT DATA {\n${triples.join('\n')}\n}`;
+          response = await this.fetchFn(docResourceUrl, {
+            method: 'PATCH',
+            headers: { 'Content-Type': 'application/sparql-update' },
+            body: sparql
+          });
+          via = 'patch';
+
+          if (response.status === 404) {
+            const body = triples.join('\n');
+            response = await this.fetchFn(docResourceUrl, {
+              method: 'PUT',
+              headers: { 'Content-Type': 'text/turtle' },
+              body
+            });
+            via = 'put';
+          }
+        } else if (resourceExists) {
           // 资源已存在，使用 SPARQL UPDATE 追加三元组
           const sparql = `INSERT DATA {\n${triples.join('\n')}\n}`;
 
@@ -192,6 +222,7 @@ export class LdpExecutor {
             headers: { 'Content-Type': 'application/sparql-update' },
             body: sparql
           });
+          via = 'patch';
         } else {
           // 资源不存在，使用 PUT 创建
           const body = triples.join('\n');
@@ -201,6 +232,7 @@ export class LdpExecutor {
             headers: { 'Content-Type': 'text/turtle' },
             body
           });
+          via = 'put';
         }
 
         if (![200, 201, 202, 204, 205].includes(response.status)) {
@@ -216,7 +248,7 @@ export class LdpExecutor {
         }
         // Also invalidate global cache to ensure SPARQL endpoint queries see the new data
         await this.sparqlExecutor.invalidateHttpCache(undefined as any).catch(() => undefined);
-        results.push({ success: true, source: docResourceUrl, status: response.status, via: resourceExists ? 'patch' : 'put' });
+        results.push({ success: true, source: docResourceUrl, status: response.status, via });
       }
       return results;
     }
@@ -240,8 +272,10 @@ export class LdpExecutor {
     // 如果资源不存在 (404) 或创建后仍不可访问，先 PUT 创建再重试
     if (response.status === 404 || response.status === 201) {
       // 验证资源是否真的存在
-      const checkRes = await this.fetchFn(resourceUrl, { method: 'HEAD' });
-      if (!checkRes.ok && checkRes.status !== 405) {
+      const needsCreate = options.skipResourceExistenceCheck
+        ? true
+        : await this.fetchFn(resourceUrl, { method: 'HEAD' }).then((checkRes) => !checkRes.ok && checkRes.status !== 405);
+      if (needsCreate) {
         // 资源不存在，先创建
         const createRes = await this.fetchFn(resourceUrl, {
           method: 'PUT',

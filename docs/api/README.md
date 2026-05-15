@@ -15,7 +15,7 @@ This document answers three user-facing questions:
 Best for new code or when you want Solid concepts to be explicit:
 
 - `collection(table)`
-- `entity(table, iri)`
+- `entity(resource, iri)`
 - `bind(schema, options)`
 - `sparql(query)`
 
@@ -24,10 +24,10 @@ Best for new code or when you want Solid concepts to be explicit:
 Best when migrating from `drizzle-orm` or keeping builder-shaped code:
 
 - `select / insert / update / delete`
-- `db.query.<table>`
-- `findByLocator / findByIri`
-- `updateByLocator / updateByIri`
-- `deleteByLocator / deleteByIri`
+- `db.query.<resource>`
+- `findById / findByIri`
+- `updateById / updateByIri`
+- `deleteById / deleteByIri`
 
 ### `solid({ webId, fetch })`
 
@@ -42,10 +42,10 @@ A lightweight inline session helper when you already have an authenticated `fetc
 | define a model with placement | `podTable(name, columns, config)` |
 | define a reusable schema | `solidSchema(...)` |
 | bind a schema to a location at runtime | `client.bind(...)` / `db.createTable(...)` |
-| list or filtered reads | `collection(table).list(...)` / `db.select()` / `db.query.<table>.findMany()` |
-| read one exact entity | `client.entity(table, iri)` / `db.findByIri(...)` / `db.findByLocator(...)` |
-| update one exact entity | `entity.update(...)` / `db.updateByIri(...)` / `db.updateByLocator(...)` |
-| delete one exact entity | `entity.delete()` / `db.deleteByIri(...)` / `db.deleteByLocator(...)` |
+| list or filtered reads | `collection(table).list(...)` / `db.select()` / `db.query.<resource>.findMany()` |
+| read one exact resource | `client.entity(resource, iri)` / `db.query.<resource>.findById(...)` / `db.findById(...)` / `db.findByIri(...)` |
+| update one exact resource | `entity.update(...)` / `db.updateById(...)` / `db.updateByIri(...)` |
+| delete one exact resource | `entity.delete()` / `db.deleteById(...)` / `db.deleteByIri(...)` |
 | execute SPARQL directly | `client.sparql(...)` / `db.executeSPARQL(...)` |
 
 ## Modeling APIs
@@ -91,7 +91,7 @@ Common methods:
 - `entity(iri)` / `byIri(iri)`
 - `select(fields?)`
 
-### `client.entity(table, iri)`
+### `client.entity(resource, iri)`
 
 Exact-entity surface.
 
@@ -127,20 +127,33 @@ Common methods:
 
 ### Read facade
 
-- `db.query.<table>.findMany(...)`
-- `db.query.<table>.findFirst(...)`
-- `db.query.<table>.findByLocator(...)`
-- `db.query.<table>.findByIri(...)`
-- `db.query.<table>.count(...)`
+- `db.query.<resource>.findMany(...)`
+- `db.query.<resource>.findFirst(...)`
+- `db.query.<resource>.find(...)`
+- `db.query.<resource>.findById(...)`
+- `db.query.<resource>.findByLocator(...)` (deprecated)
+- `db.query.<resource>.findByIri(...)`
+- `db.query.<resource>.findByResource(...)`
+- `db.query.<resource>.count(...)`
 
 ### Exact-target helpers
 
-- `db.findByLocator(table, locator)`
-- `db.findByIri(table, iri)`
-- `db.updateByLocator(table, locator, data)`
-- `db.updateByIri(table, iri, data)`
-- `db.deleteByLocator(table, locator)`
-- `db.deleteByIri(table, iri)`
+- `db.findById(resource, id)`
+- `db.findByIri(resource, iri)`
+- `db.findByResource(resource, target)`
+- `db.findByLocator(resource, locator)` (deprecated)
+- `db.updateById(resource, id, data)`
+- `db.updateByIri(resource, iri, data)`
+- `db.updateByResource(resource, target, data)`
+- `db.updateByLocator(resource, locator, data)` (deprecated)
+- `db.deleteById(resource, id)`
+- `db.deleteByIri(resource, iri)`
+- `db.deleteByResource(resource, target)`
+- `db.deleteByLocator(resource, locator)` (deprecated)
+
+`*ByResource` accepts a full IRI, a row with `@id`, a base-relative id, or a
+legacy locator object. Prefer `*ById` when the caller already has the
+base-relative id.
 
 ## SPARQL APIs
 
@@ -167,15 +180,16 @@ Collection reads:
 
 - `collection().list(...)`
 - `db.select().from(...).where(...)`
-- `db.query.<table>.findMany(...)`
+- `db.query.<resource>.findMany(...)`
 
 Exact-target operations:
 
-- `entity(table, iri)`
-- `findByIri`
-- `findByLocator`
-- `updateByIri` / `updateByLocator`
-- `deleteByIri` / `deleteByLocator`
+- `entity(resource, iri)`
+- `findById` / `findByIri`
+- `updateById` / `updateByIri`
+- `deleteById` / `deleteByIri`
+- `findByResource` / `updateByResource` / `deleteByResource` for mixed exact targets
+- `findByLocator` / `updateByLocator` / `deleteByLocator` (deprecated compatibility)
 
 ### 2. public `where()` is not an exact-target shortcut
 
@@ -187,7 +201,7 @@ Do not treat these as exact single-entity APIs:
 
 Use exact-target helpers instead.
 
-### 3. multi-variable templates require complete locator information
+### 3. multi-variable templates require a base-relative id for `*ById`
 
 For example:
 
@@ -198,7 +212,10 @@ subjectTemplate: '{chatId}/messages.ttl#{id}'
 You need either:
 
 - a full IRI, or
-- a complete locator such as `{ chatId, id }`
+- the base-relative resource id, for example `chat-1/messages.ttl#msg-1`
+
+Legacy locator helpers still accept a complete locator such as `{ chatId, id }`,
+but they are deprecated.
 
 ### 4. plain LDP document mode has explicit limits
 

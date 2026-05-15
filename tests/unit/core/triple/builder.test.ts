@@ -209,6 +209,20 @@ describe('TripleBuilder', () => {
       expect(result.childTriples!.length).toBeGreaterThanOrEqual(2);
     });
 
+    it('should preserve nested array properties as JSON literals', () => {
+      const result = tripleBuilder.buildInsert(
+        'https://pod.example/people/alice.ttl',
+        tableWithInline.columns.address,
+        { messageResources: ['https://pod.example/messages/1'] },
+        tableWithInline
+      );
+
+      expect(result.childTriples).toHaveLength(1);
+      expect(result.childTriples![0].predicate.value).toBe('https://schema.org/messageResources');
+      expect(result.childTriples![0].object.value).toBe('["https://pod.example/messages/1"]');
+      expect(result.childTriples![0].object.datatype?.value).toContain('#json');
+    });
+
     it('should generate fragment URI for inline child', () => {
       const result = tripleBuilder.buildInsert(
         'https://pod.example/people/alice.ttl',

@@ -58,20 +58,20 @@ function createWhereIdentifierError(action: PublicWhereAction): string {
     case 'select':
       return [
         `Using 'id' or '@id' in where() is not supported.`,
-        `Use findByLocator(locator) for template-based exact lookups,`,
-        `or findByIri(iri) for IRI-based exact lookups.`,
+        `Use findById(id) for base-relative resource ids,`,
+        `or findByIri(iri) for full IRI exact lookups.`,
       ].join(' ');
     case 'update':
       return [
         `Using 'id' or '@id' in where() is not supported.`,
-        `Use updateByLocator(locator, data) for template-based exact updates,`,
-        `or updateByIri(iri, data) for IRI-based exact updates.`,
+        `Use updateById(id, data) for base-relative resource ids,`,
+        `or updateByIri(iri, data) for full IRI exact updates.`,
       ].join(' ');
     case 'delete':
       return [
         `Using 'id' or '@id' in where() is not supported.`,
-        `Use deleteByLocator(locator) for template-based exact deletes,`,
-        `or deleteByIri(iri) for IRI-based exact deletes.`,
+        `Use deleteById(id) for base-relative resource ids,`,
+        `or deleteByIri(iri) for full IRI exact deletes.`,
       ].join(' ');
   }
 }

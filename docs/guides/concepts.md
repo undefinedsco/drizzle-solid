@@ -80,17 +80,20 @@ Use these when you want a set of rows:
 
 - `collection(table).list(...)`
 - `db.select().from(...)`
-- `db.query.<table>.findMany(...)`
+- `db.query.<resource>.findMany(...)`
 
 ### Exact entity operations
 
 Use these when you already know the concrete target:
 
-- `entity(table, iri)`
-- `findByIri`
-- `findByLocator`
-- `updateByIri` / `updateByLocator`
-- `deleteByIri` / `deleteByLocator`
+- `entity(resource, iri)`
+- `findById` / `findByIri`
+- `updateById` / `updateByIri`
+- `deleteById` / `deleteByIri`
+- `findByResource` / `updateByResource` / `deleteByResource` for mixed exact targets
+
+`findByLocator` / `updateByLocator` / `deleteByLocator` are deprecated
+compatibility helpers.
 
 ## Why relationship fields should be modeled as links
 

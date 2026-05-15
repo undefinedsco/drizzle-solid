@@ -74,13 +74,13 @@ const posts = podTable('posts', {
 
 在 `drizzle-solid` 里，更准确的理解是：
 
-- `id` 往往只是构造 subject IRI 的一个变量
-- 真正的最终身份是 `@id` / subject IRI
+- 公共 `id` 表示精确操作使用的 base-relative resource id
+- `@id` 是完整 subject IRI
 
 例如：
 
 ```ts
-const row = await db.findByLocator(posts, { id: 'post-1' });
+const row = await db.findById(posts, 'post-1.ttl');
 const iri = row?.['@id'];
 ```
 
@@ -132,13 +132,14 @@ await client.collection(posts).list({ where: { title: 'Hello Solid' } });
 当你想操作一个明确实体时，应该改成 exact-target API：
 
 ```ts
-await db.findByLocator(posts, { id: 'post-1' });
+await db.findById(posts, 'post-1.ttl');
 await db.findByIri(posts, iri);
 
-await db.updateByLocator(posts, { id: 'post-1' }, {
+await db.updateById(posts, 'post-1.ttl', {
   title: 'Updated title',
 });
 
+await db.deleteById(posts, 'post-1.ttl');
 await db.deleteByIri(posts, iri);
 ```
 
@@ -161,7 +162,7 @@ await post.delete();
 
 这些写法不再承担 exact-target 语义。
 
-## 第五步：多变量模板要补齐 locator
+## 第五步：多变量模板要传 base-relative id
 
 如果你的布局是：
 
@@ -174,15 +175,12 @@ subjectTemplate: '{chatId}/messages.ttl#{id}'
 你需要：
 
 - 传完整 IRI，或
-- 传完整 locator，例如 `{ chatId, id }`
+- 传 base-relative resource id，例如 `chat-1/messages.ttl#msg-1`
 
 正确示例：
 
 ```ts
-await db.findByLocator(messages, {
-  chatId: 'chat-1',
-  id: 'msg-1',
-});
+await db.findById(messages, 'chat-1/messages.ttl#msg-1');
 ```
 
 错误心智是继续假设：
@@ -263,7 +261,7 @@ await db.executeSPARQL(`
 | row primary key | `@id` / subject IRI |
 | 表位置 | `base` + `subjectTemplate` |
 | foreign key | RDF link / IRI link |
-| 按 `where(id=...)` 更新单行 | `updateByLocator` / `updateByIri` |
+| 按 `where(id=...)` 更新单行 | `updateById` / `updateByIri` |
 | raw SQL | raw SPARQL |
 | `toSQL()` | `toSPARQL()` / `toSparql()` |
 
@@ -273,7 +271,7 @@ await db.executeSPARQL(`
 - [ ] 每个模型都已定义 `subjectTemplate`
 - [ ] 团队已明确哪些字段是 link / IRI
 - [ ] 写操作已改为 exact-target API
-- [ ] 多变量模板已补齐 locator 规则
+- [ ] 多变量模板的精确操作使用 base-relative id
 - [ ] raw SQL 依赖已评估为 SPARQL 或其他方案
 - [ ] 示例和真实 Pod 场景都已验证
 

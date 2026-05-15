@@ -36,6 +36,8 @@ function createDeps() {
       normalizeResourceKey: vi.fn((value: string) => value),
       ensureContainerExists: vi.fn(),
       ensureResourceExists: vi.fn(),
+      shouldSkipResourcePreparation: vi.fn(() => false),
+      shouldContinueAfterResourcePreparationError: vi.fn(() => false),
       ensureIdentifierCondition: vi.fn(),
       resourceExists: vi.fn(),
       getStrategy: vi.fn(() => sparqlStrategy),
@@ -75,7 +77,7 @@ describe('PodExecutor', () => {
     }
   });
 
-  it('routes exact IRI reads through the scoped SPARQL endpoint when one is configured', async () => {
+  it('routes exact IRI reads to the concrete resource document when a scoped SPARQL endpoint is configured', async () => {
     const { deps, ldpStrategy, sparqlStrategy } = createDeps();
 
     await expect(new PodExecutor(deps).query({
@@ -87,8 +89,40 @@ describe('PodExecutor', () => {
     expect(sparqlStrategy.executeSelect).toHaveBeenCalledWith(
       expect.any(Object),
       'https://example.com/',
-      'https://example.com/sparql',
+      'https://example.com/users.ttl',
     );
     expect(ldpStrategy.executeSelect).not.toHaveBeenCalled();
+  });
+
+  it('skips LDP resource preparation when configured', async () => {
+    const { deps } = createDeps();
+    const executeInsert = vi.fn().mockResolvedValue([{ success: true, source: 'https://example.com/users.ttl', status: 200 }]);
+    deps.resolveTableResource.mockReturnValue({ mode: 'ldp', containerUrl: 'https://example.com/', resourceUrl: 'https://example.com/users.ttl' });
+    deps.getLdpStrategy.mockReturnValue({
+      mode: 'ldp',
+      executeInsert,
+    });
+    deps.sparqlConverter.generateSubjectUri = vi.fn(() => 'https://example.com/users.ttl#alice');
+    deps.sparqlExecutor.executeQueryWithSource = vi.fn();
+    deps.sparqlExecutor.invalidateHttpCache = vi.fn();
+    deps.shouldSkipResourcePreparation.mockReturnValue(true);
+
+    await new PodExecutor(deps).query({
+      type: 'insert',
+      table,
+      values: { id: 'alice', name: 'Alice' },
+    });
+
+    expect(deps.ensureContainerExists).not.toHaveBeenCalled();
+    expect(deps.ensureResourceExists).not.toHaveBeenCalled();
+    expect(deps.sparqlExecutor.executeQueryWithSource).not.toHaveBeenCalled();
+    expect(executeInsert).toHaveBeenCalledWith(
+      expect.objectContaining({
+        ensureContainerExists: undefined,
+        skipResourceExistenceCheck: true,
+      }),
+      'https://example.com/',
+      'https://example.com/users.ttl',
+    );
   });
 });

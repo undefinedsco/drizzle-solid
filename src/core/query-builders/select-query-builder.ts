@@ -8,10 +8,11 @@ import {
   SelectField, SelectFieldMap, JoinType, ColumnReference, ResolvedJoinCondition, SessionInterface
 } from './types';
 import { createLiteralCondition, buildConditionTreeFromObject, inferSPARQLQueryType } from './helpers';
-import { UriResolverImpl, UriContext } from '../uri';
+import { UriResolverImpl } from '../uri';
 import { isOrderByExpression, type OrderByExpression } from '../order-by';
 import { SelectionAliasExpression } from '../expressions';
 import { assertPublicWhereCondition, assertPublicWhereObject, conditionTargetsReservedIdentifier } from '../query-where-policy';
+import { parsePodResourceRef } from '../resource-reference';
 
 export class SelectQueryBuilder<TTable extends PodTable<any> = PodTable<any>> {
   static readonly [entityKind] = 'SelectQueryBuilder';
@@ -65,7 +66,7 @@ export class SelectQueryBuilder<TTable extends PodTable<any> = PodTable<any>> {
    * Add WHERE conditions to the query
    * 
    * Public where() is collection-oriented.
-   * Exact-target reads must use findByLocator()/findByIri().
+   * Exact-target reads must use findById()/findByIri().
    */
   where(conditions: PublicWhereObject | SQL | PublicQueryCondition) {
     if (conditions instanceof SQL) {
@@ -653,8 +654,6 @@ export class SelectQueryBuilder<TTable extends PodTable<any> = PodTable<any>> {
 
       if (this.selectedTable) {
         finalRows = await this.hydrateInlineColumns(finalRows, this.selectedTable, !hasJoins);
-        // 处理引用字段：将 URI 转换回 ID
-        finalRows = this.resolveLinkIds(finalRows, this.selectedTable);
       }
 
       if (hasJoins) {
@@ -1194,7 +1193,9 @@ export class SelectQueryBuilder<TTable extends PodTable<any> = PodTable<any>> {
           if (result.id === undefined) {
             result.id = derivedId;
           }
-          result[`${alias}.id`] = derivedId;
+          if (this.shouldUseSubjectIdentityColumn(this.selectedTable, 'id') || result[`${alias}.id`] === undefined) {
+            result[`${alias}.id`] = derivedId;
+          }
         }
       }
 
@@ -1323,56 +1324,6 @@ export class SelectQueryBuilder<TTable extends PodTable<any> = PodTable<any>> {
     });
 
     return rows;
-  }
-
-  /**
-   * 处理引用字段：将 URI 转换回简单 ID
-   * 
-   * 对于配置了 .link() 的列，将存储的完整 URI 转换回用户友好的 ID
-   * 例如：http://pod/.data/chat/chat-123/index.ttl#this -> chat-123
-   */
-  private resolveLinkIds(rows: Record<string, any>[], table: PodTable<any>): Record<string, any>[] {
-    if (!rows.length) return rows;
-
-    // 找出所有链接列
-    const columns = Object.values(table.columns ?? {}) as PodColumnBase[];
-    const linkColumns = columns.filter(col => col.isLink?.());
-
-    if (linkColumns.length === 0) return rows;
-
-    // 获取 URI 解析器和上下文
-    const dialect = this.session.getDialect?.();
-    const resolver = dialect?.getUriResolver?.() ?? new UriResolverImpl(dialect?.getPodUrl?.() ?? '');
-    
-    // 构建 URI 上下文
-    const uriContext: UriContext = {
-      baseUri: dialect?.getPodUrl?.(),
-      tableRegistry: dialect?.getTableRegistry?.(),
-      tableNameRegistry: dialect?.getTableNameRegistry?.(),
-    };
-
-    return rows.map(row => {
-      const result = { ...row };
-      
-      for (const col of linkColumns) {
-        const value = row[col.name];
-        if (!value) continue;
-
-        // 处理数组类型
-        if (Array.isArray(value)) {
-          result[col.name] = value.map(v => {
-            if (typeof v === 'string') {
-              return resolver.extractLinkId(v, col, uriContext);
-            }
-            return v;
-          });
-        } else if (typeof value === 'string') {
-          result[col.name] = resolver.extractLinkId(value, col, uriContext);
-        }
-      }
-
-      return result;
-    });
   }
 
   private normalizeInlinePredicateKey(predicate: string, inlineNamespace?: string): string {
@@ -1906,7 +1857,9 @@ export class SelectQueryBuilder<TTable extends PodTable<any> = PodTable<any>> {
         normalized[`${join.alias}.uri`] = subjectValue;
         const id = this.extractIdFromSubject(subjectValue, join.table);
         if (id !== undefined) {
-          normalized[`${join.alias}.id`] = id;
+          if (this.shouldUseSubjectIdentityColumn(join.table, 'id') || normalized[`${join.alias}.id`] === undefined) {
+            normalized[`${join.alias}.id`] = id;
+          }
         }
       }
 
@@ -2150,6 +2103,11 @@ export class SelectQueryBuilder<TTable extends PodTable<any> = PodTable<any>> {
     return undefined;
   }
 
+  private shouldUseSubjectIdentityColumn(table: PodTable<any> | undefined, columnName: string): boolean {
+    const column = table?.columns?.[columnName] as (PodColumnBase & { _virtualId?: boolean }) | undefined;
+    return Boolean(column?._virtualId || column?.options?.predicate === '@id');
+  }
+
   private serializeValueForKey(value: any): string {
     if (value === null) {
       return 'null';
@@ -2163,6 +2121,13 @@ export class SelectQueryBuilder<TTable extends PodTable<any> = PodTable<any>> {
   private extractIdFromSubject(subject?: string, table?: PodTable<any>): string | undefined {
     if (!subject) {
       return undefined;
+    }
+
+    if (table) {
+      const resourceId = parsePodResourceRef(table, subject)?.resourceId;
+      if (resourceId) {
+        return resourceId;
+      }
     }
 
     // Use UriResolver for proper document/fragment mode handling

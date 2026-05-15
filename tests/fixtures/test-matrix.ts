@@ -94,7 +94,7 @@ export const QUERY_PATTERNS: QueryPattern[] = [
   // Query by ID only
   {
     name: 'by-id-only',
-    description: 'Query with only ID (short id)',
+    description: 'Query with only ID (naked local id)',
     buildWhere: (table, values) => ({ id: values.id }),
     requiredFields: ['id'],
     shouldSucceed: false, // Should fail for multi-variable templates

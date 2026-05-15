@@ -9,7 +9,7 @@ Use it when you want:
 - TypeScript schemas for Pod data
 - explicit Pod layout through `base` and `subjectTemplate`
 - a choice between a Solid-first API (`pod()`) and a Drizzle-shaped API (`drizzle()`)
-- exact entity reads and writes by IRI or locator
+- exact resource reads and writes by base-relative id or IRI
 - SPARQL-backed reads when your backend exposes query capability
 
 ## What it is good at
@@ -56,7 +56,7 @@ If another in-process runtime already ships Comunica, inject that engine instead
 Use this for new code when you want Solid concepts to be explicit in the API:
 
 - `collection(table)`
-- `entity(table, iri)`
+- `entity(resource, iri)`
 - `bind(schema, options)`
 - `sparql(query)`
 
@@ -65,10 +65,10 @@ Use this for new code when you want Solid concepts to be explicit in the API:
 Use this when you are migrating from `drizzle-orm` or want to keep builder-shaped code:
 
 - `select / insert / update / delete`
-- `db.query.<table>`
-- `findByLocator / findByIri`
-- `updateByLocator / updateByIri`
-- `deleteByLocator / deleteByIri`
+- `db.query.<resource>`
+- `findById / findByIri`
+- `updateById / updateByIri`
+- `deleteById / deleteByIri`
 
 Both styles use the same runtime. The difference is API shape, not storage behavior.
 
@@ -131,13 +131,13 @@ await db.insert(posts).values({
   title: 'Hello Solid',
 });
 
-const row = await db.findByLocator(posts, { id: 'post-1' });
+const row = await db.findById(posts, 'post-1.ttl');
 
-await db.updateByLocator(posts, { id: 'post-1' }, {
+await db.updateById(posts, 'post-1.ttl', {
   title: 'Updated title',
 });
 
-await db.deleteByLocator(posts, { id: 'post-1' });
+await db.deleteById(posts, 'post-1.ttl');
 ```
 
 ## How Pod layout works
@@ -158,7 +158,7 @@ Common `subjectTemplate` patterns:
 If your template uses multiple variables, exact lookup requires either:
 
 - the full IRI, or
-- a complete locator with every required variable
+- the base-relative resource id, for example `chat-1/messages.ttl#msg-1`
 
 ## Collection reads vs exact entity operations
 
@@ -170,19 +170,24 @@ Use collection reads when you want a list or filtered subset:
 
 - `client.collection(table).list(...)`
 - `db.select().from(table)...`
-- `db.query.<table>.findMany(...)`
+- `db.query.<resource>.findMany(...)`
 
 ### Exact entity operations
 
 Use exact-target helpers when you mean one concrete entity:
 
-- `client.entity(table, iri)`
-- `db.findByIri(table, iri)`
-- `db.findByLocator(table, locator)`
+- `client.entity(resource, iri)`
+- `db.query.<resource>.findById(id)`
+- `db.findById(resource, id)`
+- `db.findByIri(resource, iri)`
+- `db.updateById(resource, id, data)`
+- `db.deleteById(resource, id)`
 - `db.updateByIri(...)`
-- `db.updateByLocator(...)`
 - `db.deleteByIri(...)`
-- `db.deleteByLocator(...)`
+
+`findByLocator` / `updateByLocator` / `deleteByLocator` remain temporarily for
+compatibility, but are deprecated. Prefer base-relative resource ids, generic
+`*ByResource` helpers for mixed exact targets, or full IRIs.
 
 Do not rely on `where({ id: ... })` or `where(eq(table.id, ...))` as an exact-target shortcut.
 
@@ -231,6 +236,29 @@ Start here:
 - `docs/guides/multi-variable-templates.md`
 - `docs/guides/notifications.md`
 - `docs/guides/data-discovery.md`
+
+## Support and collaboration
+
+`drizzle-solid` is maintained as an open source infrastructure project.
+
+If this library is useful to you, there are three practical ways to support it:
+
+- become a design partner for an upcoming work package
+- fund a specific roadmap item
+- adopt it in a real Solid application and share requirements, edge cases, and feedback
+
+See [`docs/SUPPORT.md`](docs/SUPPORT.md) for current priorities and collaboration options.
+
+## 2026 roadmap priorities
+
+The current public roadmap is centered on the following Solid application infrastructure gaps:
+
+1. Schema lifecycle and migration support
+2. Access-aware discovery across TypeIndex / SAI-related flows
+3. Cross-Pod exact operations with explicit source scoping
+4. Interoperability testing across CSS, xpod, and plain-LDP-style setups
+
+These are intentionally infrastructure-focused. The goal is to reduce app-specific Solid glue code and make Pod-native application development more dependable for downstream projects.
 
 ## Contributing
 

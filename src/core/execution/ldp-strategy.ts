@@ -140,6 +140,7 @@ export class LdpStrategy implements ExecutionStrategy {
       resourceUrl,
       {
         ensureContainerExists: plan.ensureContainerExists,
+        skipResourceExistenceCheck: plan.skipResourceExistenceCheck,
         tableRegistry: plan.tableRegistry,
         tableNameRegistry: plan.tableNameRegistry,
       }

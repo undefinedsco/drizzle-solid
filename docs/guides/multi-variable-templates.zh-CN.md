@@ -28,9 +28,9 @@ const Message = podTable('Message', {
 - `chatId` 决定消息落在哪个分区
 - `id` 决定同一分区里的实体 fragment
 
-所以一条消息的完整身份不只是 `id`，而是：
+所以公共 resource id 不是裸 fragment，而是：
 
-- `chatId + id`
+- base-relative resource id，例如 `chat-1/messages.ttl#msg-123`
 - 或完整 IRI
 
 ## 什么时候该用多变量模板
@@ -68,13 +68,10 @@ const chat1Messages = await messages.list({
 
 ### 2. 精确读取一个实体
 
-如果你知道所有模板变量：
+如果你有 base-relative resource id：
 
 ```ts
-const row = await db.findByLocator(Message, {
-  chatId: 'chat-1',
-  id: 'msg-123',
-});
+const row = await db.findById(Message, 'chat-1/messages.ttl#msg-123');
 ```
 
 如果你已经拿到了完整 IRI：
@@ -88,17 +85,11 @@ const row = await entity.get();
 ### 3. 精确更新 / 删除
 
 ```ts
-await db.updateByLocator(Message, {
-  chatId: 'chat-1',
-  id: 'msg-123',
-}, {
+await db.updateById(Message, 'chat-1/messages.ttl#msg-123', {
   content: 'Updated',
 });
 
-await db.deleteByLocator(Message, {
-  chatId: 'chat-1',
-  id: 'msg-123',
-});
+await db.deleteById(Message, 'chat-1/messages.ttl#msg-123');
 ```
 
 或者直接用 IRI：
@@ -138,14 +129,14 @@ subjectTemplate: '{chatId}/messages.ttl#{id}'
 用：
 
 - 完整 IRI，或
-- 完整 locator
+- base-relative resource id
 
 ### 写单体
 
 也用：
 
 - 完整 IRI，或
-- 完整 locator
+- base-relative resource id
 
 ### 列表读取
 

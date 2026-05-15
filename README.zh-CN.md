@@ -9,7 +9,7 @@ English version: [`README.md`](README.md)
 - 用 TypeScript schema 描述 Pod 数据
 - 用 `base` 和 `subjectTemplate` 明确声明数据布局
 - 在 `pod()` 和 `drizzle()` 两种 API 风格之间选择
-- 通过 IRI 或 locator 精确读写单个实体
+- 通过 base-relative id 或 IRI 精确读写单个资源
 - 在后端提供查询能力时走 SPARQL 读取
 
 ## 它擅长什么
@@ -56,7 +56,7 @@ npm install @comunica/query-sparql-solid
 适合新代码，或者你希望 API 直接体现 Solid 语义：
 
 - `collection(table)`
-- `entity(table, iri)`
+- `entity(resource, iri)`
 - `bind(schema, options)`
 - `sparql(query)`
 
@@ -65,10 +65,10 @@ npm install @comunica/query-sparql-solid
 适合从 `drizzle-orm` 迁移，或者你想保留 builder 形状：
 
 - `select / insert / update / delete`
-- `db.query.<table>`
-- `findByLocator / findByIri`
-- `updateByLocator / updateByIri`
-- `deleteByLocator / deleteByIri`
+- `db.query.<resource>`
+- `findById / findByIri`
+- `updateById / updateByIri`
+- `deleteById / deleteByIri`
 
 两者底层是同一个运行时。区别是 API 组织方式，不是存储行为。
 
@@ -131,13 +131,13 @@ await db.insert(posts).values({
   title: 'Hello Solid',
 });
 
-const row = await db.findByLocator(posts, { id: 'post-1' });
+const row = await db.findById(posts, 'post-1.ttl');
 
-await db.updateByLocator(posts, { id: 'post-1' }, {
+await db.updateById(posts, 'post-1.ttl', {
   title: 'Updated title',
 });
 
-await db.deleteByLocator(posts, { id: 'post-1' });
+await db.deleteById(posts, 'post-1.ttl');
 ```
 
 ## Pod 布局怎么理解
@@ -158,7 +158,7 @@ await db.deleteByLocator(posts, { id: 'post-1' });
 如果模板用了多个变量，精确定位就必须提供：
 
 - 完整 IRI，或
-- 完整 locator
+- base-relative resource id，例如 `chat-1/messages.ttl#msg-1`
 
 ## 集合读取 vs 精确实体操作
 
@@ -170,19 +170,25 @@ await db.deleteByLocator(posts, { id: 'post-1' });
 
 - `client.collection(table).list(...)`
 - `db.select().from(table)...`
-- `db.query.<table>.findMany(...)`
+- `db.query.<resource>.findMany(...)`
 
 ### 精确实体操作
 
 当你要操作一个明确实体时，用：
 
-- `client.entity(table, iri)`
-- `db.findByIri(table, iri)`
-- `db.findByLocator(table, locator)`
+- `client.entity(resource, iri)`
+- `db.query.<resource>.findById(id)`
+- `db.findById(resource, id)`
+- `db.findByIri(resource, iri)`
+- `db.updateById(resource, id, data)`
+- `db.deleteById(resource, id)`
 - `db.updateByIri(...)`
-- `db.updateByLocator(...)`
 - `db.deleteByIri(...)`
-- `db.deleteByLocator(...)`
+
+`findByLocator` / `updateByLocator` / `deleteByLocator` 仍临时保留以兼容旧代码，
+但已经废弃。精确定位优先使用 base-relative resource id；如果调用方拿到的是
+IRI、row、locator 或 id 的混合 target，再用通用 `*ByResource` helper；已知完整
+IRI 时直接用 `*ByIri`。
 
 不要再把 `where({ id: ... })` 或 `where(eq(table.id, ...))` 当成精确单体捷径。
 

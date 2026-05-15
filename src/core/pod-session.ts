@@ -2,6 +2,7 @@ import { entityKind } from 'drizzle-orm';
 import { SQL } from 'drizzle-orm';
 import { PodDialect, type PodOperation } from './pod-dialect';
 import { PodTable } from './schema';
+import { generateSubjectUri } from './sparql/helpers';
 
 // Import the new Query Builders and types
 import { SelectQueryBuilder } from './query-builders/select-query-builder';
@@ -16,6 +17,7 @@ export type { PodOperation } from './pod-dialect';
 export { SelectQueryBuilder, InsertQueryBuilder, UpdateQueryBuilder, DeleteQueryBuilder };
 
 type GenericPodTable = PodTable<any>;
+type ResourcePreparationMode = 'strict' | 'best-effort' | 'off';
 
 export class PodAsyncSession {
   static readonly [entityKind] = 'PodAsyncSession';
@@ -55,19 +57,44 @@ export class PodAsyncSession {
   }
 
   private async ensureInitialized(table: GenericPodTable): Promise<void> {
+    const preparationMode: ResourcePreparationMode =
+      typeof (this.dialect as unknown as { getResourcePreparationMode?: () => ResourcePreparationMode }).getResourcePreparationMode === 'function'
+        ? (this.dialect as unknown as { getResourcePreparationMode: () => ResourcePreparationMode }).getResourcePreparationMode()
+        : 'strict';
+
+    if (preparationMode === 'off') {
+      if (table && typeof table.markInitialized === 'function') {
+        table.markInitialized(true);
+      }
+      return;
+    }
+
     if (table && typeof table.isInitialized === 'function') {
       if (!table.isInitialized()) {
-        if (typeof table.init === 'function') {
-          await table.init(this.dialect);
-        } else {
-          await this.dialect.registerTable(table);
+        try {
+          if (typeof table.init === 'function') {
+            await table.init(this.dialect);
+          } else {
+            await this.dialect.registerTable(table);
+          }
+        } catch (error) {
+          if (preparationMode !== 'best-effort') {
+            throw error;
+          }
+          table.markInitialized?.(true);
         }
       }
       return;
     }
 
     if (table) {
-      await this.dialect.registerTable(table);
+      try {
+        await this.dialect.registerTable(table);
+      } catch (error) {
+        if (preparationMode !== 'best-effort') {
+          throw error;
+        }
+      }
     }
   }
 
@@ -103,7 +130,71 @@ export class PodAsyncSession {
       }
     }
 
-    return await this.dialect.query(operation);
+    const result = await this.dialect.query(operation);
+    this.updateSubjectIndex(operation, result);
+    return result;
+  }
+
+  private updateSubjectIndex(operation: PodOperation, result: unknown[]): void {
+    if (operation.type === 'select') {
+      return;
+    }
+
+    const dialect = this.dialect as unknown as {
+      registerResourceSubject?: (table: GenericPodTable, subject: string) => void;
+      unregisterResourceSubject?: (table: GenericPodTable, subject: string) => void;
+    };
+    if (
+      typeof dialect.registerResourceSubject !== 'function'
+      && typeof dialect.unregisterResourceSubject !== 'function'
+    ) {
+      return;
+    }
+
+    const subjects = this.resolveOperationSubjects(operation, result);
+    if (operation.type === 'delete') {
+      subjects.forEach((subject) => dialect.unregisterResourceSubject?.(operation.table, subject));
+      return;
+    }
+    subjects.forEach((subject) => dialect.registerResourceSubject?.(operation.table, subject));
+  }
+
+  private resolveOperationSubjects(operation: PodOperation, result: unknown[]): string[] {
+    const subjects = new Set<string>();
+    for (const row of result) {
+      const subject = this.getKnownRowIri(row);
+      if (subject) {
+        subjects.add(subject);
+      }
+    }
+
+    if (operation.type === 'insert') {
+      const plan = operation.plan as InsertQueryPlan<GenericPodTable> | undefined;
+      const rows = Array.isArray(plan?.rows) ? plan.rows : [];
+      rows.forEach((row: Record<string, unknown>) => {
+        try {
+          subjects.add(generateSubjectUri(row, operation.table, this.dialect.getUriResolver?.()));
+        } catch {
+          // Operation result rows remain the primary source when subject generation is unavailable.
+        }
+      });
+    }
+
+    return Array.from(subjects);
+  }
+
+  private getKnownRowIri(row: unknown): string | null {
+    if (!row || typeof row !== 'object' || Array.isArray(row)) {
+      return null;
+    }
+    const record = row as Record<string, unknown>;
+    for (const key of ['@id', 'subject', 'uri', 'source']) {
+      const value = record[key];
+      if (typeof value === 'string' && /^https?:\/\//.test(value)) {
+        return value;
+      }
+    }
+    return null;
   }
 
   // 执行 SQL（Drizzle AST）

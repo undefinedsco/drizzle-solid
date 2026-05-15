@@ -155,7 +155,7 @@ describe('DocumentResourceResolver', () => {
       });
 
       const parsedId = resolver.parseId(table, 'http://localhost:3000/test/.data/items/item-123.ttl');
-      expect(parsedId).toBe('item-123');
+      expect(parsedId).toBe('item-123.ttl');
     });
 
     it('should extract template id from document-fragment subject URI', () => {
@@ -170,7 +170,7 @@ describe('DocumentResourceResolver', () => {
       });
 
       const parsedId = resolver.parseId(table, 'http://localhost:3000/test/.data/items/item-123.ttl#it');
-      expect(parsedId).toBe('item-123');
+      expect(parsedId).toBe('item-123.ttl#it');
     });
 
     it('should resolve and parse date-bucketed fragment resource ids', () => {
@@ -188,7 +188,37 @@ describe('DocumentResourceResolver', () => {
       const subject = resolver.resolveSubject(table, { id: resourceId });
 
       expect(subject).toBe('http://localhost:3000/test/.data/approvals/2026/05/07.ttl#approval_123');
-      expect(resolver.parseId(table, subject)).toBe('approval_123');
+      expect(resolver.parseId(table, subject)).toBe('2026/05/07.ttl#approval_123');
+    });
+
+    it('should not treat fragment-only ids as complete resource ids for date-bucketed templates', () => {
+      const resolver = new DocumentResourceResolver('http://localhost:3000/test/');
+      const table = podTable('approvals', {
+        id: id(),
+      }, {
+        base: '/.data/approvals/',
+        subjectTemplate: '{yyyy}/{MM}/{dd}.ttl#{id}',
+        type: 'https://example.org/Approval',
+        namespace: ns,
+      });
+
+      expect(resolver.resolveSubject(table, { id: '#approval_123', createdAt: new Date('2026-05-07T00:00:00.000Z') }))
+        .toBe('http://localhost:3000/test/.data/approvals/2026/05/07.ttl#approval_123');
+    });
+
+    it('should keep fragment-only resources working for fragment templates', () => {
+      const resolver = new DocumentResourceResolver('http://localhost:3000/test/');
+      const table = podTable('tags', {
+        id: id(),
+      }, {
+        base: '/.data/tags.ttl',
+        subjectTemplate: '#{id}',
+        type: 'https://example.org/Tag',
+        namespace: ns,
+      });
+
+      expect(resolver.resolveSubject(table, { id: '#tag-1' }))
+        .toBe('http://localhost:3000/test/.data/tags.ttl#tag-1');
     });
 
   });
@@ -308,7 +338,7 @@ describe('FragmentResourceResolver', () => {
       const subject = resolver.resolveSubject(table, { id: 'undefineds/linx' });
 
       expect(subject).toBe('http://localhost:3000/test/settings/ai/models.ttl#undefineds/linx');
-      expect(resolver.parseId(table, subject)).toBe('undefineds/linx');
+      expect(resolver.parseId(table, subject)).toBe('models.ttl#undefineds/linx');
     });
   });
 
@@ -324,7 +354,7 @@ describe('FragmentResourceResolver', () => {
       });
 
       const parsedId = resolver.parseId(table, 'http://localhost:3000/test/.data/tags.ttl#my-tag');
-      expect(parsedId).toBe('my-tag');
+      expect(parsedId).toBe('tags.ttl#my-tag');
     });
 
     it('should return empty string when subject equals base', () => {
@@ -337,9 +367,8 @@ describe('FragmentResourceResolver', () => {
         namespace: ns,
       });
 
-      // subject = base 时，relativePath 为空，无法匹配模板
       const parsedId = resolver.parseId(table, 'http://localhost:3000/test/.data/tags.ttl');
-      expect(parsedId).toBe('');
+      expect(parsedId).toBe('tags.ttl');
     });
   });
 

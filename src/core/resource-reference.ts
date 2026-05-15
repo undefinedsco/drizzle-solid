@@ -1,6 +1,6 @@
 import type { PodTable } from './schema';
 
-type AnyPodTable = PodTable<any> & {
+type AnyPodResource = PodTable<any> & {
   getResourcePath?: () => string;
   getSubjectTemplate?: () => string;
 };
@@ -18,25 +18,64 @@ function normalizeResourcePath(path: string): string {
   return path.trim().replace(/^(\.\/)+/, '');
 }
 
-function tableResourcePath(table: AnyPodTable): string {
-  return normalizeResourcePath(table.getResourcePath?.() ?? table.config?.base ?? '');
+function podResourcePath(resource: AnyPodResource): string {
+  return normalizeResourcePath(resource.getResourcePath?.() ?? resource.config?.base ?? '');
 }
 
-function tableSubjectTemplate(table: AnyPodTable): string {
-  return table.getSubjectTemplate?.() ?? table.config?.subjectTemplate ?? '{id}';
+function podResourceSubjectTemplate(resource: AnyPodResource): string {
+  return resource.getSubjectTemplate?.() ?? resource.config?.subjectTemplate ?? '{id}';
 }
 
-function isPlainId(value: string): boolean {
-  return value.length > 0 && !value.includes('/') && !value.includes('#');
-}
+function resourceRelativePrefix(resource: AnyPodResource): string {
+  const resourcePath = podResourcePath(resource);
+  const containerPath = normalizeResourcePath(resource.getContainerPath?.() ?? resource.config?.containerPath ?? '');
 
-function relativeSubjectFromRef(table: AnyPodTable, ref: string): string | null {
-  const resourcePath = tableResourcePath(table);
-  if (!resourcePath) return null;
-
-  if (isPlainId(ref)) {
-    return ref;
+  if (!resourcePath) {
+    return '';
   }
+
+  if (containerPath && resourcePath.startsWith(containerPath)) {
+    return normalizeResourcePath(resourcePath.slice(containerPath.length));
+  }
+
+  return resourcePath.split('/').pop() ?? resourcePath;
+}
+
+function qualifyFragmentResourceId(resource: AnyPodResource, relativeSubject: string): string {
+  if (!relativeSubject.startsWith('#')) {
+    return relativeSubject;
+  }
+
+  const prefix = resourceRelativePrefix(resource);
+  return prefix ? `${prefix}${relativeSubject}` : relativeSubject;
+}
+
+function templateRelativeSubject(resource: AnyPodResource, resourceId: string): string {
+  const template = podResourceSubjectTemplate(resource);
+  if (template.startsWith('#') && !resourceId.startsWith('#')) {
+    const hashIndex = resourceId.indexOf('#');
+    if (hashIndex >= 0) {
+      return resourceId.slice(hashIndex);
+    }
+  }
+  return resourceId;
+}
+
+function isBaseRelativeSubjectId(value: string): boolean {
+  if (!value || /^https?:\/\//.test(value) || value.startsWith('/')) {
+    return false;
+  }
+
+  return (
+    value.startsWith('#') ||
+    value.includes('#') ||
+    /\.(ttl|jsonld|json)(?:#|$)/i.test(value)
+  );
+}
+
+function relativeSubjectFromRef(resource: AnyPodResource, ref: string): string | null {
+  const resourcePath = podResourcePath(resource);
+  if (!resourcePath) return null;
 
   const candidates = Array.from(new Set([
     resourcePath,
@@ -50,6 +89,10 @@ function relativeSubjectFromRef(table: AnyPodTable, ref: string): string | null 
     let relative = ref.slice(index + candidate.length);
     if (relative.startsWith('/')) relative = relative.slice(1);
     if (relative.length > 0) return relative;
+  }
+
+  if (isBaseRelativeSubjectId(ref)) {
+    return normalizeResourcePath(ref);
   }
 
   return null;
@@ -89,30 +132,26 @@ function extractTemplateValues(relativeSubject: string, template: string): Recor
   }
 }
 
-export function parsePodResourceRef(table: AnyPodTable, ref: string | null | undefined): PodResourceReference | null {
+export function parsePodResourceRef(resource: AnyPodResource, ref: string | null | undefined): PodResourceReference | null {
   if (!ref) return null;
 
-  if (isPlainId(ref)) {
-    return {
-      resourceId: ref,
-      templateValues: { id: ref },
-    };
-  }
-
-  const relativeSubject = relativeSubjectFromRef(table, ref);
+  const relativeSubject = relativeSubjectFromRef(resource, ref);
   if (!relativeSubject) return null;
 
-  const templateValues = extractTemplateValues(relativeSubject, tableSubjectTemplate(table)) ?? {};
+  const resourceId = qualifyFragmentResourceId(resource, relativeSubject);
+  const templateValues = extractTemplateValues(templateRelativeSubject(resource, resourceId), podResourceSubjectTemplate(resource));
+  if (!templateValues) return null;
+
   return {
-    resourceId: decodeURIComponent(relativeSubject),
+    resourceId: decodeURIComponent(resourceId),
     templateValues,
   };
 }
 
 export function extractPodResourceTemplateValue(
-  table: AnyPodTable,
+  resource: AnyPodResource,
   ref: string | null | undefined,
   field = 'id',
 ): string | null {
-  return parsePodResourceRef(table, ref)?.templateValues[field] ?? null;
+  return parsePodResourceRef(resource, ref)?.templateValues[field] ?? null;
 }

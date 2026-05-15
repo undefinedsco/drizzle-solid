@@ -201,7 +201,7 @@ it('should not break existing functionality', async () => {
 
   Fixes #4
 
-  - Detect full URI vs short id in document resolver
+  - Detect full URI vs base-relative resource id vs naked local id in document resolver
   - Provide clear error message when template variables are missing
   - Add integration test for full URI queries
   ```
@@ -268,29 +268,29 @@ const Message = podTable('Message', {
 });
 
 // 查询失败
-await db.findByLocator(Message, { id: 'msg-123' });
-// Error: requires a complete locator ... Missing [chatId]
+await db.findById(Message, 'msg-123');
+// Error: requires a base-relative resource id ... Missing [chatId]
 ```
 
 **根本原因**：
 - 模板需要 `{chatId}` 和 `{id}` 两个变量
-- 用户只提供了 `id`，系统无法解析完整路径
+- 用户只提供了局部 fragment，系统无法解析完整路径
 
 **解决方案**：
 1. 如果用户提供**完整 URI**（包含 `://`）：识别并直接使用
-2. 如果用户提供**短 id** 但缺少其他变量：抛出清晰的错误提示
-3. 如果用户提供**所有变量**：正常解析路径
+2. 如果用户提供**base-relative resource id**：正常解析路径
+3. 如果用户提供**局部 fragment** 但缺少其他变量：抛出清晰的错误提示
 
 **实现**：
 ```typescript
 // 知道完整 IRI：走 findByIri()
 await db.findByIri(Message, fullUri);
 
-// 知道全部模板变量：走 findByLocator()
-await db.findByLocator(Message, { chatId: 'chat-1', id: 'msg-123' });
+// 知道 base-relative resource id：走 findById()
+await db.findById(Message, 'chat-1/messages.ttl#msg-123');
 
-// 模板变量不全：抛出明确错误
-await db.findByLocator(Message, { id: 'msg-123' });
+// 局部 fragment 不足以定位：抛出明确错误
+await db.findById(Message, 'msg-123');
 ```
 
 ### 模式 2: FILTER on Optional Fields
@@ -493,8 +493,8 @@ const message = await db.findByIri(
 **如果是用法错误的情况**：
 假设用户这样写：
 ```typescript
-// 只提供短 id，没有提供 chatId
-await db.findByLocator(Message, { id: 'msg-123' });
+// 只提供局部 fragment，没有提供完整 base-relative resource id
+await db.findById(Message, 'msg-123');
 ```
 
 这种情况下：
@@ -542,11 +542,11 @@ describe('Issue #4: Multi-variable template queries', () => {
     expect(message?.content).toBe('Test Message');
   });
 
-  it('should throw clear error with short id (edge case)', async () => {
-    // 测试边界情况：短 id 缺少变量
+  it('should throw clear error with local fragment id (edge case)', async () => {
+    // 测试边界情况：局部 fragment 缺少分区
     await expect(async () => {
-      await db.findByLocator(Message, { id: 'msg-123' }); // 短 id，缺少 chatId
-    }).rejects.toThrow(/requires a complete locator.*chatId/);
+      await db.findById(Message, 'msg-123'); // 局部 fragment，缺少 chatId 分区
+    }).rejects.toThrow(/requires a base-relative resource id.*chatId/);
   });
 });
 ```
@@ -562,7 +562,7 @@ $ npx vitest tests/integration/css/issue-4-multi-variable-template.test.ts
 
 追踪代码发现：
 - `document-resolver.ts` 第 107 行检查模板变量
-- 没有区分短 id 和完整 URI
+- 没有区分局部 fragment、base-relative resource id 和完整 URI
 - 对于完整 URI，所有信息已经在 URI 中，不需要额外变量
 
 #### 5. 设计解决方案
@@ -570,12 +570,13 @@ $ npx vitest tests/integration/css/issue-4-multi-variable-template.test.ts
 **方案**：
 1. 检查 id 是否是完整 URI（包含 `://`）
 2. 如果是完整 URI，直接使用
-3. 如果是短 id 且缺少变量，抛出清晰错误
+3. 如果是 base-relative resource id，直接按 base 解析
+4. 如果只是局部 fragment 且缺少分区信息，抛出清晰错误
 
 **设计理念**：
-- 支持灵活的查询方式（完整 URI 或短 id + 变量）
+- 支持明确的查询方式（完整 URI 或 base-relative resource id）
 - 完整 URI 查询最高效（直接定位资源）
-- 短 id 查询需要所有模板变量（确保查询明确性）
+- 局部 fragment 在多变量模板下不是完整 id（确保查询明确性）
 - 错误提示清晰，告诉用户如何修复
 
 #### 6. 实现修复
@@ -591,7 +592,7 @@ if (idValues.length > 0 && !allVarsPresent) {
     return [this.getResourceUrlForSubject(idValue)];
   }
 
-  // Short id provided but missing template variables - error
+  // Naked local id provided but missing template variables - error
   const missing = requiredVars.filter(v => !(v in templateValues));
   throw new Error(
     `Cannot resolve subjectTemplate '${template}': ` +
@@ -606,7 +607,7 @@ if (idValues.length > 0 && !allVarsPresent) {
 ```bash
 $ npx vitest tests/integration/css/issue-4-multi-variable-template.test.ts
 # ✅ should work with full URI (user exact scenario) - PASS
-# ✅ should throw clear error with short id - PASS
+# ✅ should throw clear error with naked local id - PASS
 
 $ yarn quality
 # ✅ All tests pass
@@ -637,26 +638,23 @@ const message = await db.findByIri(Message, fullUri);
 
 系统会直接定位到该资源，无需扫描容器。
 
-### 方式 2: 提供所有模板变量
+### 方式 2: 使用 base-relative resource id
 
-如果只有短 id，需要提供所有模板变量：
+如果没有完整 IRI，需要提供相对 `base` 的完整资源 id：
 
 \`\`\`typescript
-const message = await db.findByLocator(Message, {
-  chatId: 'chat-1',
-  id: 'msg-123',
-});
+const message = await db.findById(Message, 'chat-1/messages.ttl#msg-123');
 \`\`\`
 
 系统会解析完整路径并查询。
 
-### 错误情况：只提供短 id
+### 错误情况：只提供局部 fragment
 
 \`\`\`typescript
 // ❌ 错误：缺少 chatId 变量
-await db.findByLocator(Message, { id: 'msg-123' });
+await db.findById(Message, 'msg-123');
 
-// Error: findByLocator requires a complete locator ...
+// Error: findById requires a base-relative resource id ...
 // Missing [chatId].
 \`\`\`
 
@@ -670,7 +668,7 @@ await db.findByLocator(Message, { id: 'msg-123' });
 **添加示例** (`examples/04-multi-variable-templates.ts`)：
 ```typescript
 // 展示多变量模板的正确用法
-// 包含完整 URI 查询和变量查询两种方式
+// 包含完整 IRI 和 base-relative resource id 两种方式
 ```
 
 #### 9. 提交和发布
@@ -685,7 +683,7 @@ $ git commit -m "fix(resolver): support full URI in multi-variable template quer
 
 Fixes #4
 
-- Detect full URI vs short id in document resolver
+- Detect full URI vs base-relative resource id vs naked local id in document resolver
 - Provide clear error message when template variables are missing
 - Add integration test for user's exact scenario
 - Add documentation explaining design rationale
@@ -704,12 +702,12 @@ Thanks for reporting this! I've fixed the issue and it's now available in versio
 
 **Problem**: When querying with a full URI on a multi-variable template, the system incorrectly required all template variables to be provided separately.
 
-**Root Cause**: The document resolver didn't distinguish between full URIs and short ids. It always checked for template variables, even when the full URI already contained all the information.
+**Root Cause**: The document resolver didn't distinguish between full URIs, base-relative resource ids, and naked local ids. It always checked for template variables, even when the full URI already contained all the information.
 
 **Solution**:
 - Added detection for full URIs (containing `://`)
 - When a full URI is provided, use it directly without requiring template variables
-- When a short id is provided without all variables, throw a clear error with guidance
+- When a naked local id is provided without all storage slots, throw a clear error with guidance
 
 **Test Results**:
 - ✅ Your exact scenario now works correctly

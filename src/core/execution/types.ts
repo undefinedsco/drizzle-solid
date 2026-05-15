@@ -13,6 +13,7 @@ export interface InsertQueryPlan {
   table: PodTable;
   rows: any[];
   ensureContainerExists?: (containerUrl: string) => Promise<void>;
+  skipResourceExistenceCheck?: boolean;
   tableRegistry?: Map<string, PodTable[]>;
   tableNameRegistry?: Map<string, PodTable>;
 }

@@ -97,7 +97,7 @@ subjectTemplate: '{chatId}/messages.ttl#{id}'
 
 - `collection(table).list(...)`
 - `db.select().from(...)`
-- `db.query.<table>.findMany(...)`
+- `db.query.<resource>.findMany(...)`
 
 它们表达的是“在一个范围里找数据”。
 
@@ -105,11 +105,13 @@ subjectTemplate: '{chatId}/messages.ttl#{id}'
 
 当你想读写一个明确实体时，用：
 
-- `entity(table, iri)`
-- `findByIri`
-- `findByLocator`
-- `updateByIri` / `updateByLocator`
-- `deleteByIri` / `deleteByLocator`
+- `entity(resource, iri)`
+- `findById` / `findByIri`
+- `updateById` / `updateByIri`
+- `deleteById` / `deleteByIri`
+- `findByResource` / `updateByResource` / `deleteByResource` 用于混合 exact target
+
+`findByLocator` / `updateByLocator` / `deleteByLocator` 只是已废弃兼容入口。
 
 它们表达的是“我已经知道目标是谁”。
 

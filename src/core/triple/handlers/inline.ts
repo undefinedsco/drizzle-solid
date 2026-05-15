@@ -124,8 +124,9 @@ export class InlineObjectHandler implements ColumnHandler {
       // 确定谓词 URI
       const predicateUri = this.resolvePredicateUri(key, namespaceUri);
 
-      // 处理值 (支持数组)
-      const values = Array.isArray(raw) ? raw : [raw];
+      // Preserve nested array shape inside inline object properties. Repeated RDF
+      // triples cannot distinguish a single-item array from a scalar on readback.
+      const values = Array.isArray(raw) ? [raw] : [raw];
       values.forEach((entry) => {
         const objectTerm = this.formatChildValue(entry);
         triples.push({

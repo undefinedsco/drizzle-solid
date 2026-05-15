@@ -12,6 +12,7 @@ export interface SelectFieldMap {
 export interface InsertQueryPlan<TTable extends PodTable<any> = PodTable<any>> {
   table: TTable;
   rows: InferInsertData<TTable>[];
+  skipResourceExistenceCheck?: boolean;
 }
 
 export interface UpdateQueryPlan<TTable extends PodTable<any> = PodTable<any>> {

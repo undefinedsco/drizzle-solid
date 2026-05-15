@@ -72,6 +72,33 @@ describe('PodAsyncSession', () => {
       expect(result).toEqual(mockResult);
     });
 
+    it('应该在 resourcePreparation=off 时跳过隐式资源准备', async () => {
+      const table = new PodTable('skip_prepare_users', {
+        id: new PodIntegerColumn('id', { primaryKey: true }),
+        name: new PodStringColumn('name')
+      }, {
+        base: 'idp:///skip-prepare/users.ttl',
+        type: 'https://schema.org/Person',
+        namespace: { prefix: 'schema', uri: 'https://schema.org/' }
+      });
+      const dialect = {
+        ...mockDialect,
+        getResourcePreparationMode: vi.fn(() => 'off'),
+        query: vi.fn().mockResolvedValue([]),
+        registerTable: vi.fn().mockResolvedValue(undefined),
+      } as any;
+      const skipPrepareSession = new PodAsyncSession(dialect);
+
+      await skipPrepareSession.execute({
+        type: 'select',
+        table,
+      });
+
+      expect(dialect.registerTable).not.toHaveBeenCalled();
+      expect(table.isInitialized()).toBe(true);
+      expect(dialect.query).toHaveBeenCalledTimes(1);
+    });
+
     it('应该在启用日志时记录操作', async () => {
       const sessionWithLogger = new PodAsyncSession(mockDialect, undefined, { logger: true });
       const consoleSpy = vi.spyOn(console, 'log').mockImplementation(() => {});

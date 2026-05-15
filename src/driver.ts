@@ -45,6 +45,14 @@ export interface SolidDrizzleConfig<TSchema extends Record<string, unknown> = Re
    * 用于 IdP-SP 分离场景，控制从 profile 重新读取 pim:storage 的频率
    */
   storageTTL?: number;
+  /** Explicit Pod base URL for IdP/SP split deployments. */
+  podUrl?: string;
+  /**
+   * Controls implicit LDP container/resource probes before ORM operations.
+   * Use `off` when the Pod runtime or sidecar owns path creation and direct writes
+   * should not be blocked by HEAD/container preparation probes.
+   */
+  resourcePreparation?: PodDialectConfig['resourcePreparation'];
   /**
    * 启用 debug 模式，输出查询信息
    */
@@ -65,6 +73,8 @@ export function drizzle<TSchema extends Record<string, unknown> = Record<string,
     preferredChannels: config?.notifications?.preferredChannels,
     createQueryEngine: config?.sparql?.createQueryEngine,
     disableInteropDiscovery: config?.disableInteropDiscovery,
+    podUrl: config?.podUrl ?? session.info.podUrl,
+    resourcePreparation: config?.resourcePreparation,
     storageTTL: config?.storageTTL,
     debug: config?.debug ?? config?.logger,
   };

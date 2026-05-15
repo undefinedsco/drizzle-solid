@@ -127,4 +127,38 @@ const table = new PodTable('profile', {
     });
     expect(discoverTable.getSparqlEndpoint()).toBe('https://pod.example/ganbb/items/-/sparql');
   });
+
+  it('exposes resource preparation mode from dialect config', () => {
+    const dialect = new PodDialect({
+      session: {
+        info: {
+          isLoggedIn: true,
+          webId: 'https://pod.example/ganbb/profile/card#me'
+        },
+        fetch: fetchMock,
+      } as any,
+      resourcePreparation: 'off',
+    });
+
+    expect(dialect.getResourcePreparationMode()).toBe('off');
+    expect(dialect.shouldSkipResourcePreparation()).toBe(true);
+  });
+
+  it('treats the Pod storage root as the container preparation boundary', async () => {
+    const dialect = new PodDialect({
+      session: {
+        info: {
+          isLoggedIn: true,
+          webId: 'https://id.example/ganbb/profile/card#me',
+          podUrl: 'https://id.example/ganbb/',
+        },
+        fetch: fetchMock,
+      } as any,
+      podUrl: 'https://id.example/ganbb/',
+    });
+
+    await (dialect as any).ensureContainerExists('https://id.example/ganbb/');
+
+    expect(fetchMock).not.toHaveBeenCalled();
+  });
 });

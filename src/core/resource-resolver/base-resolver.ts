@@ -2,10 +2,10 @@
  * Base ResourceResolver with shared logic
  * 
  * 核心设计原则：
- * - 用户使用简单 id（如 "alice", "tag-123"）
- * - subjectTemplate 定义 id 如何映射到 URI（如 "{id}.ttl#it", "#{id}"）
- * - 写入时：id + template → relativePath → baseUrl + relativePath
- * - 读取时：subjectUri - baseUrl → relativePath → template 反向解析 → id
+ * - 用户写入时可以使用简单 local id（如 "alice", "tag-123"）
+ * - subjectTemplate 定义 local id 如何映射到 URI（如 "{id}.ttl#it", "#{id}"）
+ * - 写入时：local id + template → relativePath → baseUrl + relativePath
+ * - 读取时：row.id 是 base-relative resource id，可从 base 下精确定位资源
  */
 
 import type { PodTable } from '../schema';
@@ -50,17 +50,18 @@ export abstract class BaseResourceResolver implements ResourceResolver {
   /**
    * 从 subject URI 解析出 ORM row id。
    *
-   * `id()` 是虚拟列，不写入 RDF 谓词；它暴露的是 subjectTemplate 中的
-   * 本地 `{id}`，而不是完整 IRI 或 base-relative resource id。
-   * 需要 base-relative resource id 时使用 parsePodResourceRef/resolveResourceId。
+   * `id()` 是虚拟列，不写入 RDF 谓词；读取时它暴露 base-relative
+   * resource id，而不是 subjectTemplate 中的本地 `{id}` slot。需要本地
+   * slot 时使用 parsePodResourceRef(...).templateValues.id 或
+   * extractPodResourceTemplateValue。
    *
    * 例如：
-   * - uri = "http://pod/items/alice.ttl#it", template = "{id}.ttl#it" → id = "alice"
-   * - uri = "http://pod/tags.ttl#tag-1", template = "#{id}" → id = "tag-1"
-   * - uri = "http://pod/a/2026/05/07.ttl#x", template = "{yyyy}/{MM}/{dd}.ttl#{id}" → id = "x"
+   * - uri = "http://pod/items/alice.ttl#it", template = "{id}.ttl#it" → id = "alice.ttl#it"
+   * - uri = "http://pod/tags.ttl#tag-1", template = "#{id}" → id = "tags.ttl#tag-1"
+   * - uri = "http://pod/a/2026/05/07.ttl#x", template = "{yyyy}/{MM}/{dd}.ttl#{id}" → id = "2026/05/07.ttl#x"
    */
   parseId(table: PodTable, subjectUri: string): string {
-    return this.parseTemplateId(table, subjectUri) ?? this.extractRelativeSubjectId(table, subjectUri);
+    return this.extractBaseRelativeResourceId(table, subjectUri);
   }
 
   /**
@@ -71,7 +72,7 @@ export abstract class BaseResourceResolver implements ResourceResolver {
    * 2. subjectUri = baseUrl + relativePath
    */
   resolveSubject(table: PodTable, record: Record<string, any>, index?: number): string {
-    const baseUrl = this.getBaseUrlForTable(table);
+    const baseUrl = this.getSubjectBaseUrl(table);
 
     // 优先使用显式提供的 id
     let id = record.id ?? record['@id'] ?? record.uri;
@@ -85,6 +86,9 @@ export abstract class BaseResourceResolver implements ResourceResolver {
       const subjectFromRelativeId = this.resolveBaseRelativeSubjectId(table, id);
       if (subjectFromRelativeId) {
         return subjectFromRelativeId;
+      }
+      if (id.startsWith('#')) {
+        id = id.slice(1);
       }
     }
 
@@ -119,6 +123,16 @@ export abstract class BaseResourceResolver implements ResourceResolver {
     return this.extractIdFallback(subjectUri);
   }
 
+  protected extractBaseRelativeResourceId(table: PodTable, subjectUri: string): string {
+    const containerUrl = this.getContainerUrl(table);
+
+    if (subjectUri.startsWith(containerUrl)) {
+      return subjectUri.substring(containerUrl.length);
+    }
+
+    return this.extractRelativeSubjectId(table, subjectUri);
+  }
+
   private extractTemplateRelativeSubjectId(table: PodTable, subjectUri: string): string {
     const baseUrl = this.resolveBaseUrl(table);
 
@@ -141,14 +155,28 @@ export abstract class BaseResourceResolver implements ResourceResolver {
     );
   }
 
+  protected acceptsFragmentOnlyResourceId(table: PodTable): boolean {
+    const template = this.getEffectiveTemplate(table);
+    const variables = this.getTemplateVariables(template);
+    return template === '#{id}'
+      || (
+        template.startsWith('#')
+        && variables.length === 1
+        && variables[0].field === 'id'
+      );
+  }
+
   protected resolveBaseRelativeSubjectId(table: PodTable, value: string): string | null {
     if (!this.isBaseRelativeSubjectId(value)) {
       return null;
     }
 
-    const baseUrl = this.getBaseUrlForTable(table);
+    const baseUrl = this.getSubjectBaseUrl(table);
     if (value.startsWith('#')) {
-      return `${baseUrl.endsWith('/') ? baseUrl.slice(0, -1) : baseUrl}${value}`;
+      if (!this.acceptsFragmentOnlyResourceId(table)) {
+        return null;
+      }
+      return `${baseUrl}${value}`;
     }
 
     if (baseUrl.endsWith('/')) {
@@ -169,6 +197,12 @@ export abstract class BaseResourceResolver implements ResourceResolver {
    */
   protected getBaseUrlForTable(table: PodTable): string {
     return this.resolveBaseUrl(table);
+  }
+
+  protected getSubjectBaseUrl(table: PodTable): string {
+    return this.acceptsFragmentOnlyResourceId(table)
+      ? this.getResourceUrl(table)
+      : this.getBaseUrlForTable(table);
   }
 
   /**
@@ -220,16 +254,16 @@ export abstract class BaseResourceResolver implements ResourceResolver {
 
     const timeContext = this.createTimeContext(record);
 
-    return template.replace(/\{([^}]+)\}/g, (_match, token) => {
+    return template.replace(/(#?)\{([^}]+)\}/g, (_match, prefix, token) => {
       const variable = this.parseTemplateVariable(token);
       const field = variable.field;
 
       if (field === 'index' && index !== undefined) {
-        return String(index + 1);
+        return prefix + String(index + 1);
       }
 
       if (field in timeContext) {
-        return timeContext[field as keyof typeof timeContext];
+        return prefix + timeContext[field as keyof typeof timeContext];
       }
 
       let rawValue = record[field];
@@ -238,10 +272,14 @@ export abstract class BaseResourceResolver implements ResourceResolver {
       }
 
       if (rawValue === undefined || rawValue === null) {
-        return `{${token}}`;
+        return `${prefix}{${token}}`;
       }
 
-      return this.applyTemplateTransforms(rawValue, variable, table, field);
+      const value = this.applyTemplateTransforms(rawValue, variable, table, field);
+      if (prefix === '#' && value.startsWith('#')) {
+        return prefix + value.slice(1);
+      }
+      return prefix + value;
     });
   }
 

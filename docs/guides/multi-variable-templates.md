@@ -26,9 +26,9 @@ Here:
 - `chatId` decides the partition
 - `id` decides the fragment inside that partition
 
-So the full identity is not just `id`. It is either:
+So the public resource id is not just the fragment. It is either:
 
-- `chatId + id`
+- the base-relative resource id, such as `chat-1/messages.ttl#msg-123`
 - or the full IRI
 
 ## When to use a multi-variable template
@@ -60,13 +60,10 @@ const chat1Messages = await messages.list({
 
 ### 2. Exact read
 
-If you know every template variable:
+If you have the base-relative resource id:
 
 ```ts
-const row = await db.findByLocator(Message, {
-  chatId: 'chat-1',
-  id: 'msg-123',
-});
+const row = await db.findById(Message, 'chat-1/messages.ttl#msg-123');
 ```
 
 If you already have the full IRI:
@@ -80,17 +77,11 @@ const row = await entity.get();
 ### 3. Exact update / delete
 
 ```ts
-await db.updateByLocator(Message, {
-  chatId: 'chat-1',
-  id: 'msg-123',
-}, {
+await db.updateById(Message, 'chat-1/messages.ttl#msg-123', {
   content: 'Updated',
 });
 
-await db.deleteByLocator(Message, {
-  chatId: 'chat-1',
-  id: 'msg-123',
-});
+await db.deleteById(Message, 'chat-1/messages.ttl#msg-123');
 ```
 
 Or use the full IRI:
@@ -130,14 +121,14 @@ That is an incomplete target, not an optimizer problem.
 Use:
 
 - a full IRI, or
-- a complete locator
+- a base-relative resource id
 
 ### For exact single-entity writes
 
 Use:
 
 - a full IRI, or
-- a complete locator
+- a base-relative resource id
 
 ### For list reads
 

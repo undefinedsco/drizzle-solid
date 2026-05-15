@@ -20,6 +20,7 @@ import { PodRuntime } from './runtime/pod-runtime';
 import { PodServices } from './services/pod-services';
 import { DebugLogger, setGlobalDebugLogger } from './utils/debug-logger';
 import type { SPARQLQueryEngineFactory } from './sparql-engine';
+import { parsePodResourceRef } from './resource-reference';
 
 function isRecord(value: unknown): value is Record<string, unknown> {
   return typeof value === 'object' && value !== null;
@@ -37,6 +38,7 @@ export interface SolidAuthSession {
     sessionId?: string;
     clientId?: string;
     client_id?: string;
+    podUrl?: string;
   };
   fetch: typeof fetch;
   login?: (options?: Record<string, unknown>) => Promise<void>;
@@ -49,7 +51,20 @@ export interface PodDialectConfig {
   session: SolidAuthSession;
   typeIndex?: TypeIndexConfig;
   createQueryEngine?: SPARQLQueryEngineFactory;
+  /** Explicit Pod base URL for IdP/SP split deployments. */
+  podUrl?: string;
   disableInteropDiscovery?: boolean;
+  /**
+   * Controls implicit LDP container/resource probes before ORM operations.
+   *
+   * - strict: fail when preparation fails.
+   * - best-effort: attempt preparation but continue when probes fail.
+   * - off: do not preflight resource preparation; let direct LDP reads/writes surface real failures.
+   *
+   * The default preserves legacy behavior: resource mapping registration is
+   * best-effort, while write-time preparation remains strict.
+   */
+  resourcePreparation?: 'strict' | 'best-effort' | 'off';
   /**
    * 通知通道偏好顺序，默认 ['streaming-http', 'websocket']
    * 会根据服务器支持的通道自动选择第一个匹配的
@@ -111,6 +126,7 @@ export class PodDialect {
   private registeredTables: Set<string> = new Set();
   private preparedContainers: Set<string> = new Set();
   private preparedResources: Set<string> = new Set();
+  private shortIdSubjectIndex: Map<string, Set<string>> = new Map();
   private debugLogger: DebugLogger;
   private currentTableRegistry: Map<string, PodTable[]> = new Map();
   private currentTableNameRegistry: Map<string, PodTable> = new Map();
@@ -140,7 +156,7 @@ export class PodDialect {
     this.runtime = new PodRuntime({
       session,
       webId,
-      podUrl: 'podUrl' in config ? (config as PodDialectConfig & { podUrl?: string }).podUrl : undefined,
+      podUrl: config.podUrl,
       storageTTL: config.storageTTL,
     });
     this.webId = this.runtime.getWebId();
@@ -180,6 +196,8 @@ export class PodDialect {
       normalizeResourceKey: (resourceUrl) => this.normalizeResourceKey(resourceUrl),
       ensureContainerExists: (containerUrl) => this.ensureContainerExists(containerUrl),
       ensureResourceExists: (resourceUrl, options) => this.ensureResourceExists(resourceUrl, options),
+      shouldSkipResourcePreparation: () => this.shouldSkipResourcePreparation(),
+      shouldContinueAfterResourcePreparationError: () => this.shouldContinueAfterResourcePreparationError(),
       getTableRegistries: () => ({
         tableRegistry: this.currentTableRegistry,
         tableNameRegistry: this.currentTableNameRegistry,
@@ -205,6 +223,55 @@ export class PodDialect {
    */
   getResolver(table: PodTable): ResourceResolver {
     return this.resolverFactory.getResolver(table);
+  }
+
+  private buildShortIdSubjectIndexKey(table: PodTable, id: string): string {
+    const base = table.config?.base ?? table.getResourcePath?.() ?? table.getContainerPath?.() ?? '';
+    const template = table.getSubjectTemplate?.() ?? table.config?.subjectTemplate ?? '{id}';
+    const type = table.getType?.() ?? table.config?.type ?? '';
+    const name = table.config?.name ?? '';
+    return `${name}|${base}|${template}|${type}|${id}`;
+  }
+
+  registerResourceSubject(table: PodTable, subject: string): void {
+    const templateId = parsePodResourceRef(table, subject)?.templateValues.id;
+    if (!templateId) {
+      return;
+    }
+    const key = this.buildShortIdSubjectIndexKey(table, templateId);
+    const subjects = this.shortIdSubjectIndex.get(key) ?? new Set<string>();
+    subjects.add(subject);
+    this.shortIdSubjectIndex.set(key, subjects);
+  }
+
+  unregisterResourceSubject(table: PodTable, subject: string): void {
+    const templateId = parsePodResourceRef(table, subject)?.templateValues.id;
+    if (!templateId) {
+      return;
+    }
+    const key = this.buildShortIdSubjectIndexKey(table, templateId);
+    const subjects = this.shortIdSubjectIndex.get(key);
+    if (!subjects) {
+      return;
+    }
+    subjects.delete(subject);
+    if (subjects.size === 0) {
+      this.shortIdSubjectIndex.delete(key);
+    }
+  }
+
+  lookupIndexedResourceSubject(table: PodTable, id: string): string | null {
+    const subjects = this.shortIdSubjectIndex.get(this.buildShortIdSubjectIndexKey(table, id));
+    if (!subjects || subjects.size === 0) {
+      return null;
+    }
+    if (subjects.size > 1) {
+      throw new Error(
+        `Indexed short id '${id}' for resource '${table.config?.name ?? 'resource'}' is ambiguous. ` +
+        `Use a base-relative resource id or full IRI to disambiguate.`
+      );
+    }
+    return Array.from(subjects)[0] ?? null;
   }
 
   /**
@@ -542,6 +609,11 @@ export class PodDialect {
       ? resourceUrl
       : this.resolveAbsoluteUrl(resourceUrl);
     return this.normalizeResourceUrl(absoluteResource);
+  }
+
+  private isStorageRootContainer(containerUrl: string): boolean {
+    const storageRoot = this.runtime.getStorageUrl() ?? this.runtime.getPodUrl();
+    return this.normalizeContainerKey(containerUrl) === this.normalizeContainerKey(storageRoot);
   }
 
   private markContainerPrepared(containerUrl: string): void {
@@ -1301,16 +1373,35 @@ export class PodDialect {
 
   // ========== TypeIndex 相关方法 ==========
 
+  getResourcePreparationMode(): NonNullable<PodDialectConfig['resourcePreparation']> {
+    return this.config.resourcePreparation ?? 'strict';
+  }
+
+  shouldSkipResourcePreparation(): boolean {
+    return this.getResourcePreparationMode() === 'off';
+  }
+
+  shouldContinueAfterResourcePreparationError(): boolean {
+    return this.getResourcePreparationMode() === 'best-effort';
+  }
+
   /**
-   * 注册表到 TypeIndex
+   * Prepare and optionally register a resource mapping.
    */
   async registerTable(table: PodTable): Promise<void> {
+    if (this.shouldSkipResourcePreparation()) {
+      table.markInitialized?.(true);
+      return;
+    }
+
     if (table.config.autoRegister === false) {
+      table.markInitialized?.(true);
       return;
     }
 
     const tableKey = table.config.name ?? JSON.stringify(table.config);
     if (this.registeredTables.has(tableKey)) {
+      table.markInitialized?.(true);
       return;
     }
 
@@ -1340,6 +1431,9 @@ export class PodDialect {
       }
     } catch (error: unknown) {
       console.warn(`[registerTable] Resource preparation failed for ${table.config.name}:`, error);
+      if (this.config.resourcePreparation === 'strict') {
+        throw error;
+      }
     }
 
     this.registeredTables.add(tableKey);
@@ -1348,6 +1442,7 @@ export class PodDialect {
     await this.discovery.register(table, {
       registryPath: table.config.saiRegistryPath,
     });
+    table.markInitialized?.(true);
   }
 
   /**
@@ -1439,6 +1534,11 @@ export class PodDialect {
       const targetContainer = this.normalizeContainerKey(containerUrl);
 
       if (this.preparedContainers.has(targetContainer)) {
+        return;
+      }
+
+      if (this.isStorageRootContainer(targetContainer)) {
+        this.markContainerPrepared(targetContainer);
         return;
       }
 

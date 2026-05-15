@@ -28,14 +28,14 @@ export class DocumentResourceResolver extends BaseResourceResolver {
     return new Error(
       `Document-mode collection queries over plain LDP are not supported for table "${table.config.name}". ` +
       `Configure a global query capability (SPARQL endpoint or index), ` +
-      `or use findByLocator()/findByIri() for exact-target reads.`
+      `or use findById()/findByIri() for exact-target reads.`
     );
   }
 
   private buildUnsupportedCollectionMutationError(table: PodTable): Error {
     return new Error(
       `Document-mode collection mutations over plain LDP are not supported for table "${table.config.name}". ` +
-      `Use updateByLocator()/updateByIri() or deleteByLocator()/deleteByIri() ` +
+      `Use updateById()/updateByIri() or deleteById()/deleteByIri() ` +
       `for exact-target mutations.`
     );
   }

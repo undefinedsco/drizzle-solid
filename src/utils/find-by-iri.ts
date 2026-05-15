@@ -18,7 +18,7 @@ export async function findByIRI<TTable extends GenericPodTable>(
   iri: string
 ): Promise<InferTableData<TTable> | null> {
   if (!iri || (typeof iri === 'string' && !iri.includes('://'))) {
-    throw new Error('findByIRI requires an absolute IRI. Use findByLocator() for template-based exact lookups.');
+    throw new Error('findByIRI requires an absolute IRI. Use findById() for base-relative resource ids.');
   }
 
   if (isPodDatabase(dbOrSession)) {

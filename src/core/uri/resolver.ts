@@ -80,6 +80,9 @@ export class UriResolverImpl implements UriResolver {
       if (resolvedRelativeId) {
         return resolvedRelativeId;
       }
+      if (explicitId.startsWith('#')) {
+        record = { ...record, id: explicitId.slice(1) };
+      }
     }
 
     const pattern = this.getEffectivePattern(table);
@@ -578,6 +581,18 @@ export class UriResolverImpl implements UriResolver {
     );
   }
 
+  private acceptsFragmentOnlyResourceId(table: PodTable): boolean {
+    const template = table.config?.subjectTemplate || this.getDefaultPattern(table);
+    const variables = Array.from(template.matchAll(/\{([^}]+)\}/g))
+      .map((match) => this.parseTemplateVariable(match[1]).field);
+    return template === '#{id}'
+      || (
+        template.startsWith('#')
+        && variables.length === 1
+        && variables[0] === 'id'
+      );
+  }
+
   private resolveBaseRelativeSubjectId(table: PodTable, value: string): string | null {
     if (!this.isBaseRelativeSubjectId(value)) {
       return null;
@@ -585,7 +600,10 @@ export class UriResolverImpl implements UriResolver {
 
     const base = this.getSubjectBaseUrl(table);
     if (value.startsWith('#')) {
-      return `${base.endsWith('/') ? base.slice(0, -1) : base}${value}`;
+      if (!this.acceptsFragmentOnlyResourceId(table)) {
+        return null;
+      }
+      return `${base}${value}`;
     }
 
     if (base.endsWith('/')) {

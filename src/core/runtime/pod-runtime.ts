@@ -2,6 +2,8 @@ import { resolvePodBase } from '../utils/pod-root';
 import { webIdResolver } from '../../utils/webid-resolver';
 import type { SolidAuthSession } from '../pod-dialect';
 
+const REQUEST_ID_DETECTION_TIMEOUT_MS = 3_000;
+
 // 生成唯一请求 ID
 function generateRequestId(): string {
   const timestamp = Date.now().toString(36);
@@ -38,13 +40,22 @@ export class PodRuntime {
    * 使用原生 fetch 发送最干净的 OPTIONS 请求
    */
   private async detectRequestIdSupport(): Promise<boolean> {
-    const response = await globalThis.fetch(this.podUrl, {
-      method: 'OPTIONS',
-    });
+    const controller = new AbortController();
+    const timer = setTimeout(() => controller.abort(), REQUEST_ID_DETECTION_TIMEOUT_MS);
+    try {
+      const response = await globalThis.fetch(this.podUrl, {
+        method: 'OPTIONS',
+        signal: controller.signal,
+      });
 
-    const allowedHeaders = response.headers.get('Access-Control-Allow-Headers') || '';
-    const supported = allowedHeaders.toLowerCase().includes('x-request-id');
-    return supported;
+      const allowedHeaders = response.headers.get('Access-Control-Allow-Headers') || '';
+      const supported = allowedHeaders.toLowerCase().includes('x-request-id');
+      return supported;
+    } catch {
+      return false;
+    } finally {
+      clearTimeout(timer);
+    }
   }
 
   /**
@@ -128,6 +139,12 @@ export class PodRuntime {
    * 用于 storage 配置变更后的场景
    */
   async refreshStorage(): Promise<string | null> {
+    if (this.explicitPodUrl) {
+      this.storageUrl = this.podUrl;
+      this.storageResolvedAt = Date.now();
+      return this.storageUrl;
+    }
+
     // 清除 webIdResolver 的缓存
     webIdResolver.clearCache();
 
@@ -159,6 +176,16 @@ export class PodRuntime {
       console.log(`Connecting to Solid Pod: ${this.podUrl}`);
       console.log(`Using WebID: ${this.webId}`);
 
+      if (this.explicitPodUrl) {
+        this.requestIdSupported = false;
+        this.wrappedFetch = this.createWrappedFetch();
+        this.storageUrl = this.podUrl;
+        this.storageResolvedAt = Date.now();
+        this.connected = true;
+        console.log('Using explicit Pod URL; skipping Pod root probe');
+        return;
+      }
+
       // 检测是否支持 X-Request-ID
       this.requestIdSupported = await this.detectRequestIdSupport();
 
@@ -171,8 +198,7 @@ export class PodRuntime {
       if (resolvedStorage) {
         this.storageUrl = resolvedStorage;
         this.storageResolvedAt = Date.now();
-        // 如果 storage URL 与当前 podUrl 不同，更新 podUrl
-        if (!this.explicitPodUrl && resolvedStorage !== this.podUrl) {
+        if (resolvedStorage !== this.podUrl) {
           console.log(`[PodRuntime] IdP-SP separation detected: storage at ${resolvedStorage}`);
           this.podUrl = resolvedStorage;
         }

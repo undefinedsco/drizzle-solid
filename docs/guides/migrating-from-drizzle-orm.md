@@ -72,11 +72,11 @@ In `drizzle-orm`, `id` often feels like the final identity.
 
 In `drizzle-solid`, a better rule is:
 
-- `id` is often only one variable used to build the subject IRI
-- the real final identity is `@id`
+- public `id` means the base-relative resource id for exact operations
+- `@id` is the full subject IRI
 
 ```ts
-const row = await db.findByLocator(posts, { id: 'post-1' });
+const row = await db.findById(posts, 'post-1.ttl');
 const iri = row?.['@id'];
 ```
 
@@ -120,13 +120,14 @@ await client.collection(posts).list({ where: { title: 'Hello Solid' } });
 When you mean one concrete entity, switch to exact-target APIs:
 
 ```ts
-await db.findByLocator(posts, { id: 'post-1' });
+await db.findById(posts, 'post-1.ttl');
 await db.findByIri(posts, iri);
 
-await db.updateByLocator(posts, { id: 'post-1' }, {
+await db.updateById(posts, 'post-1.ttl', {
   title: 'Updated title',
 });
 
+await db.deleteById(posts, 'post-1.ttl');
 await db.deleteByIri(posts, iri);
 ```
 
@@ -147,7 +148,7 @@ Do not keep relying on:
 
 Those are no longer exact-target shortcuts.
 
-## Step 5: complete the locator for multi-variable templates
+## Step 5: pass the base-relative id for multi-variable templates
 
 If your layout looks like this:
 
@@ -160,7 +161,7 @@ then `id` alone is not enough.
 You need:
 
 - a full IRI, or
-- a complete locator such as `{ chatId, id }`
+- a base-relative resource id such as `chat-1/messages.ttl#msg-123`
 
 ## Step 6: joins are not automatically SQL primary-key joins
 
@@ -217,7 +218,7 @@ If migration cost matters more, staying on `drizzle()` is fine.
 | row primary key | `@id` / subject IRI |
 | table location | `base` + `subjectTemplate` |
 | foreign key | RDF link / IRI link |
-| update one row by `where(id=...)` | `updateByLocator` / `updateByIri` |
+| update one row by `where(id=...)` | `updateById` / `updateByIri` |
 | raw SQL | raw SPARQL |
 | `toSQL()` | `toSPARQL()` / `toSparql()` |
 
@@ -227,6 +228,6 @@ If migration cost matters more, staying on `drizzle()` is fine.
 - [ ] every model has `subjectTemplate`
 - [ ] the team knows which fields are links / IRIs
 - [ ] writes moved to exact-target APIs
-- [ ] multi-variable templates have complete locator rules
+- [ ] multi-variable templates use base-relative ids for exact operations
 - [ ] raw SQL dependencies were evaluated
 - [ ] examples and real Pod flows were verified
