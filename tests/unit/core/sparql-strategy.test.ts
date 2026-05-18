@@ -5,6 +5,27 @@ import { podTable, id, string, uri } from '../../../src/core/schema';
 import { UriResolverImpl } from '../../../src/core/uri';
 
 describe('SparqlStrategy document-mode sidecar select', () => {
+  it('resolves root-relative fragment graph IRIs against the Pod root', () => {
+    const podUrl = 'https://id.undefineds.co/ganbb/';
+    const strategy = new SparqlStrategy({
+      sparqlExecutor: {} as any,
+      sparqlConverter: {} as any,
+      sessionFetch: vi.fn() as any,
+      podUrl,
+      uriResolver: {
+        getResourceMode: () => 'fragment',
+      } as any,
+    });
+
+    const graph = (strategy as any).resolveTargetGraph({
+      config: {
+        base: '/settings/credentials.ttl',
+      },
+    });
+
+    expect(graph).toBe('https://id.undefineds.co/ganbb/settings/credentials.ttl');
+  });
+
   it('routes sidecar selects through the executor without forcing GRAPH ?g', async () => {
     const podUrl = 'http://localhost/test/';
     const fetchMock = vi.fn();

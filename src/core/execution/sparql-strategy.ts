@@ -36,6 +36,25 @@ export class SparqlStrategy implements ExecutionStrategy {
     this.podUrl = podUrl;
   }
 
+  private resolvePodResourceIri(value?: string): string | undefined {
+    if (!value) return value;
+    if (/^[a-z][a-z0-9+.-]*:/i.test(value)) return value;
+
+    const podRoot = this.podUrl?.trim();
+    if (!podRoot) return value;
+
+    const normalizedPodRoot = podRoot.endsWith('/') ? podRoot : `${podRoot}/`;
+    if (value.startsWith('/')) {
+      return `${normalizedPodRoot.replace(/\/+$/, '')}${value}`;
+    }
+
+    try {
+      return new URL(value, normalizedPodRoot).toString();
+    } catch {
+      return value;
+    }
+  }
+
   private resolveTargetGraph(table?: { config?: { base?: string; containerPath?: string }; getContainerPath?: () => string }, forSelect = false): string | undefined {
     if (!table) return undefined;
 
@@ -45,10 +64,10 @@ export class SparqlStrategy implements ExecutionStrategy {
       if (forSelect) {
         return undefined;
       }
-      return table.config?.containerPath ?? table.getContainerPath?.();
+      return this.resolvePodResourceIri(table.config?.containerPath ?? table.getContainerPath?.());
     }
 
-    return table.config?.base;
+    return this.resolvePodResourceIri(table.config?.base);
   }
 
   async executeSelect(
