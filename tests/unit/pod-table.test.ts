@@ -80,15 +80,10 @@ describe('PodTable Tests', () => {
     }).toThrow(/must have exactly one primary key/);
   });
 
-  test('should have default generator for id() helper', () => {
+  test('should not have default generator for id() helper', () => {
     // We use the imported id function from top of file
     const idCol = id('uuid_test');
-    expect(idCol.options.defaultValue).toBeDefined();
-    expect(typeof idCol.options.defaultValue).toBe('function');
-    
-    const generated = (idCol.options.defaultValue as () => string)();
-    expect(typeof generated).toBe('string');
-    expect(generated.length).toBeGreaterThan(10); // NanoID is usually ~21 chars
+    expect(idCol.options.defaultValue).toBeUndefined();
   });
 
   test('setSubjectTemplate should update template and mark as custom', () => {
@@ -100,13 +95,15 @@ describe('PodTable Tests', () => {
       type: 'http://schema.org/Product'
     });
 
-    // Initial template is auto-generated
+    // No implicit subjectTemplate is installed in exact-id mode.
     const initialTemplate = table.getSubjectTemplate();
-    expect(initialTemplate).toBe('{id}.ttl'); // Document mode default
+    expect(initialTemplate).toBeUndefined();
+    expect(table.hasCustomTemplate()).toBe(false);
 
     // Set custom template
     table.setSubjectTemplate('product-{id}.ttl');
     expect(table.getSubjectTemplate()).toBe('product-{id}.ttl');
+    expect(table.hasCustomTemplate()).toBe(true);
     
     // Verify setBase doesn't override custom template
     table.setBase('/data/new-products/');

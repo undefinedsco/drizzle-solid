@@ -6,9 +6,9 @@
  * 
  * 设计原则：
  * - base = containerPath (如 http://pod/.data/items/)
- * - 默认模板: {id}.ttl#it
- * - 写入: id = "alice" → relativePath = "alice.ttl#it" → uri = base + relativePath
- * - 读取: uri - base = "alice.ttl#it" → 反向解析模板 → id = "alice"
+ * - 默认模板: {id}
+ * - 写入: id = "alice.ttl#it" → relativePath = "alice.ttl#it" → uri = base + relativePath
+ * - 读取: uri - base = "alice.ttl#it" → id = "alice.ttl#it"
  */
 
 import type { PodTable } from '../schema';
@@ -19,7 +19,7 @@ import { getGlobalDebugLogger } from '../utils/debug-logger';
 /**
  * 默认的 document 模板
  */
-const DEFAULT_TEMPLATE = '{id}.ttl#it';
+const DEFAULT_TEMPLATE = '{id}';
 
 export class DocumentResourceResolver extends BaseResourceResolver {
   readonly mode = 'document' as const;

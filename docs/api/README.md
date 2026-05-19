@@ -57,10 +57,12 @@ The main modeling entrypoint.
 Key config fields:
 
 - `base`
-- `subjectTemplate`
+- `id` as a base-relative resource id
 - `type`
 - `namespace`
 - `sparqlEndpoint`
+
+`subjectTemplate` is deprecated. It remains available only for legacy or explicitly templated layouts; new models should omit it and store the exact base-relative path in the `id` column.
 
 ### `solidSchema(...)`
 
@@ -201,7 +203,7 @@ Do not treat these as exact single-entity APIs:
 
 Use exact-target helpers instead.
 
-### 3. multi-variable templates require a base-relative id for `*ById`
+### 3. legacy multi-variable templates require a base-relative id for `*ById`
 
 For example:
 

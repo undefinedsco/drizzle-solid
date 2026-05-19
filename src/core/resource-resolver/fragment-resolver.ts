@@ -6,9 +6,9 @@
  * 
  * 设计原则：
  * - base = resourcePath (如 http://pod/.data/tags.ttl)
- * - 默认模板: #{id}
- * - 写入: id = "tag-1" → relativePath = "#tag-1" → uri = base + relativePath
- * - 读取: uri - base = "#tag-1" → 反向解析模板 → id = "tag-1"
+ * - 默认模板: {id}
+ * - 写入: id = "tags.ttl#tag-1" → relativePath = "tags.ttl#tag-1" → uri = base container + relativePath
+ * - 读取: uri - base container = "tags.ttl#tag-1" → id = "tags.ttl#tag-1"
  */
 
 import type { PodTable } from '../schema';
@@ -18,7 +18,7 @@ import { BaseResourceResolver } from './base-resolver';
 /**
  * 默认的 fragment 模板
  */
-const DEFAULT_TEMPLATE = '#{id}';
+const DEFAULT_TEMPLATE = '{id}';
 
 export class FragmentResourceResolver extends BaseResourceResolver {
   readonly mode = 'fragment' as const;

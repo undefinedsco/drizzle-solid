@@ -1,5 +1,5 @@
 import { describe, it, expect } from 'vitest';
-import { podTable, string } from '../../../../src/core/schema';
+import { podTable, string, uri } from '../../../../src/core/schema';
 import { UriResolverImpl } from '../../../../src/core/uri';
 
 const ns = { prefix: 'test', uri: 'https://test.example/' };
@@ -45,7 +45,7 @@ describe('UriResolver ID extraction', () => {
     expect(parsed?.id).toBe('tag-456');
   });
 
-  it('should extract ID from simple document mode URI with default template', () => {
+  it('should extract exact resource ID from simple document mode URI by default', () => {
     const Items = podTable('Items', {
       id: string('id').primaryKey().predicate('https://test.example/id'),
       name: string('name').predicate('https://test.example/name'),
@@ -53,7 +53,6 @@ describe('UriResolver ID extraction', () => {
       base: '/.data/items/',
       type: 'https://schema.org/Thing',
       namespace: ns,
-      // default template: {id}.ttl (no fragment)
     });
 
     const resolver = new UriResolverImpl('http://localhost:4020/pod');
@@ -62,7 +61,33 @@ describe('UriResolver ID extraction', () => {
     const parsed = resolver.parseSubject(uri, Items);
     console.log('Parsed:', parsed);
 
-    expect(parsed?.id).toBe('item-789');
+    expect(parsed?.id).toBe('item-789.ttl');
+  });
+
+  it('should resolve and extract linked exact-id resources without a subjectTemplate', () => {
+    const Chat = podTable('Chat', {
+      id: string('id').primaryKey().predicate('https://test.example/id'),
+      title: string('title').predicate('https://test.example/title'),
+    }, {
+      base: '/.data/chat/',
+      type: 'http://www.w3.org/ns/pim/meeting#LongChat',
+      namespace: ns,
+    });
+    const Thread = podTable('Thread', {
+      id: string('id').primaryKey().predicate('https://test.example/id'),
+      chat: uri('chat').predicate('https://test.example/chat').link(Chat),
+    }, {
+      base: '/.data/',
+      type: 'http://rdfs.org/sioc/ns#Thread',
+      namespace: ns,
+    });
+
+    const resolver = new UriResolverImpl('http://localhost:4020/pod');
+    const chatId = 'chat/default/index.ttl#this';
+    const chatIri = resolver.resolveLink(chatId, (Thread as any).chat, {});
+
+    expect(chatIri).toBe('http://localhost:4020/pod/.data/chat/chat/default/index.ttl#this');
+    expect(resolver.extractLinkId(chatIri, (Thread as any).chat, {})).toBe(chatId);
   });
 
   it('should extract ID from URI with different host but same path structure', () => {

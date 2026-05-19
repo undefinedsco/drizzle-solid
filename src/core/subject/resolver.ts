@@ -45,9 +45,10 @@ export class SubjectResolverImpl implements SubjectResolver {
       if (explicitId.startsWith('http://') || explicitId.startsWith('https://')) {
         return explicitId;
       }
-      // Check if it's a relative URI with fragment (e.g. "file.ttl#id") that matches our resource mode
+      // Check if it's a templated relative URI with fragment (e.g. "file.ttl#id").
+      // Default exact-id mode keeps fragment ids intact.
       const hashIndex = explicitId.indexOf('#');
-      if (hashIndex > 0) {
+      if (hashIndex > 0 && (table.hasCustomTemplate?.() ?? false)) {
          const mode = this.getResourceMode(table);
          if (mode === 'fragment') {
              record = { ...record, id: explicitId.slice(hashIndex + 1) };
@@ -58,6 +59,19 @@ export class SubjectResolverImpl implements SubjectResolver {
     const pattern = this.getEffectivePattern(table);
     const mode = this.getResourceMode(table);
     const base = this.getBaseUrl(table);
+    if (
+      pattern === '{id}'
+      && typeof explicitId === 'string'
+      && !explicitId.startsWith('http://')
+      && !explicitId.startsWith('https://')
+      && (
+        explicitId.startsWith('#')
+        || explicitId.includes('/')
+        || /\.(ttl|jsonld|json)(?:#|$)/i.test(explicitId)
+      )
+    ) {
+      return this.combineBaseAndPattern(base, explicitId);
+    }
 
     // 单例模式 - 直接返回 base + pattern
     if (this.isSingleton(table)) {
@@ -67,10 +81,8 @@ export class SubjectResolverImpl implements SubjectResolver {
     // 应用模板变量
     const applied = this.applyTemplate(pattern, record, index, table);
 
-    if (applied) {
-      if (applied.startsWith('http://') || applied.startsWith('https://')) {
-        return applied;
-      }
+    if (applied?.startsWith('http://') || applied?.startsWith('https://')) {
+      return applied;
     }
 
     if (!applied) {
@@ -181,17 +193,11 @@ export class SubjectResolverImpl implements SubjectResolver {
 
   /**
    * 获取默认的 subjectPattern
-   * 与 PodTable.buildDefaultSubjectTemplate 保持一致
+   * 与 PodTable.buildDefaultSubjectTemplate 保持一致。
+   * 默认 `id` 是 base-relative resource id，不追加 `.ttl` 或抽 fragment。
    */
-  getDefaultPattern(table: PodTable): string {
-    const mode = this.getResourceMode(table);
-
-    if (mode === 'fragment') {
-      return '#{id}';
-    }
-
-    // document 模式默认不带 fragment
-    return '{id}.ttl';
+  getDefaultPattern(_table: PodTable): string {
+    return '{id}';
   }
 
   /**
@@ -497,6 +503,10 @@ export class SubjectResolverImpl implements SubjectResolver {
     let relativePath: string;
     if (uri.startsWith(baseUrl)) {
       relativePath = uri.substring(baseUrl.length);
+      if (relativePath.startsWith('#') && !(table.hasCustomTemplate?.() ?? false)) {
+        const resourceName = baseUrl.split('/').filter(Boolean).pop() ?? '';
+        relativePath = `${resourceName}${relativePath}`;
+      }
     } else {
       // Fallback: 尝试其他方式
       const mode = this.getResourceMode(table);
@@ -515,6 +525,14 @@ export class SubjectResolverImpl implements SubjectResolver {
     if (template) {
       const extractedId = this.extractIdFromTemplate(relativePath, template);
       if (extractedId !== null) {
+        if (
+          template === '{id}'
+          && relativePath.startsWith('#')
+          && !(table.hasCustomTemplate?.() ?? false)
+        ) {
+          const resourceName = baseUrl.split('/').filter(Boolean).pop() ?? '';
+          return `${resourceName}${extractedId}`;
+        }
         return extractedId;
       }
     }

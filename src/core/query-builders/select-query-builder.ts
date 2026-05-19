@@ -1822,7 +1822,7 @@ export class SelectQueryBuilder<TTable extends PodTable<any> = PodTable<any>> {
     join: { table: PodTable<any> },
     missingVariables: string[],
   ): string {
-    const template = join.table.getSubjectTemplate?.() ?? join.table.config?.subjectTemplate ?? '{id}';
+    const template = join.table.getSubjectTemplate?.() ?? join.table.config?.subjectTemplate ?? '<exact-id>';
     const uniqueMissingVariables = Array.from(new Set(missingVariables));
     const exampleVariable = uniqueMissingVariables[0] ?? '...';
 

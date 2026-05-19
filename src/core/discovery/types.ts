@@ -47,7 +47,9 @@ export interface DataLocation {
   /** 主体 URI 模式 (可选) - deprecated, use subjectTemplate */
   subjectPattern?: string;
 
-  /** Subject URI 模板 (e.g., "{id}.ttl" for document mode, "#{id}" for fragment mode) */
+  /**
+   * @deprecated Legacy/explicit Subject URI template. Prefer exact base-relative ids.
+   */
   subjectTemplate?: string;
 
   /** 可用的 Shape 列表（按注册顺序） */
@@ -106,7 +108,9 @@ export interface DataRegistrationInfo {
   /** Shape URL - 实际的 SHACL Shape 定义 */
   shape?: string;
 
-  /** Subject URI 模板 (e.g., "{id}.ttl" for document mode, "#{id}" for fragment mode) */
+  /**
+   * @deprecated Legacy/explicit Subject URI template. Prefer exact base-relative ids.
+   */
   subjectTemplate?: string;
 
   /** 注册此数据的应用/代理 */

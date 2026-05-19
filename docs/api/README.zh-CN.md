@@ -90,10 +90,12 @@ const client = pod(session);
 关键配置：
 
 - `base`: 文档或容器位置
-- `subjectTemplate`: 行身份如何映射成 IRI
+- `id`: base-relative resource id
 - `type`: 主持久化 `rdf:type`
 - `namespace`: 可选命名空间
 - `sparqlEndpoint`: 显式 sidecar / endpoint
+
+`subjectTemplate` 已废弃，只为旧布局或显式模板布局保留。新模型应省略它，把精确资源路径放在 `id` 列里。
 
 ```ts
 const posts = podTable('posts', {
@@ -101,7 +103,6 @@ const posts = podTable('posts', {
   title: string('title').predicate('http://schema.org/headline'),
 }, {
   base: 'https://alice.example/data/posts/',
-  subjectTemplate: '{id}.ttl',
   type: 'http://schema.org/CreativeWork',
 });
 ```
@@ -273,7 +274,7 @@ await db.executeSPARQL(`
 
 正确做法是改用 exact-target helper。
 
-### 3. 多变量模板的 `*ById` 必须传 base-relative id
+### 3. 旧多变量模板的 `*ById` 必须传 base-relative id
 
 例如：
 

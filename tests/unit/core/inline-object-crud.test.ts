@@ -28,8 +28,8 @@ describe('inline object CRUD SPARQL generation', () => {
       ]
     }], threadsTable);
 
-    expect(query.query).toContain('schema:hasPart <https://pod.example/threads.ttl#participants-1>');
-    expect(query.query).toContain('<https://pod.example/threads.ttl#participants-1> schema:name "Alice"');
+    expect(query.query).toContain('schema:hasPart <https://pod.example/threads.ttl/thread-1#participants-1>');
+    expect(query.query).toContain('<https://pod.example/threads.ttl/thread-1#participants-1> schema:name "Alice"');
     expect(query.query).toContain('schema:role "owner"');
     expect(query.query).toContain('<#custom-participant>');
     expect(query.query).toContain('schema:name "Bob"');

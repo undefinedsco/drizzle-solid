@@ -1,5 +1,5 @@
 import { entityKind, SQL } from 'drizzle-orm';
-import { PodTable, PodColumnBase, InferInsertData, HookContext } from '../schema';
+import { PodTable, PodColumnBase, InferInsertData, HookContext, generateNanoId } from '../schema';
 import { PodAsyncSession, PodOperation } from '../pod-session';
 import { generateSubjectUri } from '../sparql/helpers';
 import { InsertQueryPlan, type SelectFieldMap } from './types';
@@ -183,16 +183,51 @@ export class InsertQueryBuilder<TTable extends PodTable<any> = PodTable<any>> {
   private applyDefaultValues(row: InferInsertData<TTable>): InferInsertData<TTable> {
     const normalized: Record<string, any> = { ...(row as Record<string, any>) };
     const columns = (this.table?.columns ?? {}) as Record<string, PodColumnBase>;
-    for (const [columnName, column] of Object.entries(columns)) {
-      if (normalized[columnName] === undefined) {
-        const defaultValue = column.options?.defaultValue;
-        if (defaultValue !== undefined) {
-          normalized[columnName] = typeof defaultValue === 'function'
-            ? (defaultValue as () => unknown)()
-            : defaultValue;
-        }
+
+    const entries = Object.entries(columns);
+    for (const [columnName, column] of entries.filter(([, column]) => !this.isPrimaryKeyColumn(column))) {
+      this.applyDefaultValue(normalized, columnName, column);
+    }
+
+    for (const [columnName, column] of entries.filter(([, column]) => this.isPrimaryKeyColumn(column))) {
+      this.applyDefaultValue(normalized, columnName, column);
+    }
+
+    return normalized as InferInsertData<TTable>;
+  }
+
+  private applyDefaultValue(
+    normalized: Record<string, any>,
+    columnName: string,
+    column: PodColumnBase
+  ): void {
+    if (normalized[columnName] === undefined) {
+      const defaultValue = column.options?.defaultValue;
+      if (defaultValue !== undefined) {
+        normalized[columnName] = this.resolveDefaultValue(defaultValue, column, normalized);
       }
     }
-    return normalized as InferInsertData<TTable>;
+  }
+
+  private resolveDefaultValue(
+    defaultValue: unknown,
+    column: PodColumnBase,
+    normalized: Record<string, any>
+  ): unknown {
+    if (typeof defaultValue !== 'function') {
+      return defaultValue;
+    }
+
+    const defaultFn = defaultValue as (key?: string, row?: Record<string, unknown>) => unknown;
+    if (defaultFn.length === 0) {
+      return defaultFn();
+    }
+
+    const key = this.isPrimaryKeyColumn(column) ? generateNanoId() : undefined;
+    return defaultFn(key, normalized);
+  }
+
+  private isPrimaryKeyColumn(column: PodColumnBase): boolean {
+    return column.options?.primaryKey === true || column.options?.predicate === '@id';
   }
 }

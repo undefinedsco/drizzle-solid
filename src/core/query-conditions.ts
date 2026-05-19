@@ -16,8 +16,8 @@ export type PublicWhereObject = Omit<Record<string, unknown>, 'id' | '@id'> & {
 export type PublicWhereInput = PublicWhereObject | PublicQueryCondition;
 
 // 定义一个宽松的列类型，接受任何 PodColumnBase 变体
-type AnyColumn = PodColumnBase;
-type ConditionOperand = AnyColumn | SPARQLExpression | string;
+export type AnyColumnOperand = PodColumnBase<any, any, any, any>;
+type ConditionOperand = AnyColumnOperand | SPARQLExpression | string;
 type ConditionValue = unknown;
 
 // 等于条件

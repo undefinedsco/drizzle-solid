@@ -48,7 +48,7 @@ export const resolveTermIri = (input: RdfTermInput): string => {
 export interface PodColumnOptions {
   primaryKey?: boolean;
   required?: boolean;
-  defaultValue?: unknown;
+  defaultValue?: unknown | ((key?: string, row?: Record<string, unknown>) => unknown);
   predicate?: string;
   linkTarget?: string;
   linkTableName?: string;
@@ -88,6 +88,11 @@ export interface PodTableOptions {
   typeIndex?: 'private' | 'public';
   saiRegistryPath?: string;
   subClassOf?: RdfTermInput | RdfTermInput[];
+  /**
+   * @deprecated Prefer exact-id mode: omit this field and use base-relative
+   * resource ids such as "post-1.ttl" or "chat/messages.ttl#msg-1".
+   * Keep subjectTemplate only for legacy layouts or explicit compatibility.
+   */
   subjectTemplate?: string;
   resourceMode?: 'ldp' | 'sparql';
   autoRegister?: boolean;
@@ -113,7 +118,11 @@ export interface PodColumnMapping {
 export interface PodTableMapping {
   name: string;
   type: string;
-  subjectTemplate: string;
+  /**
+   * @deprecated Present only for legacy/explicit template layouts.
+   * New resources should use exact base-relative ids.
+   */
+  subjectTemplate?: string;
   namespace?: NamespaceConfig;
   subClassOf?: string[];
   columns: Record<string, PodColumnMapping>;

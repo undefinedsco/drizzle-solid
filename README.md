@@ -7,7 +7,7 @@ Chinese version: [`README.zh-CN.md`](README.zh-CN.md)
 Use it when you want:
 
 - TypeScript schemas for Pod data
-- explicit Pod layout through `base` and `subjectTemplate`
+- explicit Pod layout through `base` and base-relative resource ids
 - a choice between a Solid-first API (`pod()`) and a Drizzle-shaped API (`drizzle()`)
 - exact resource reads and writes by base-relative id or IRI
 - SPARQL-backed reads when your backend exposes query capability
@@ -84,7 +84,6 @@ const posts = podTable('posts', {
   createdAt: datetime('createdAt').predicate('http://schema.org/dateCreated'),
 }, {
   base: 'https://alice.example/data/posts/',
-  subjectTemplate: '{id}.ttl',
   type: 'http://schema.org/CreativeWork',
 });
 
@@ -92,7 +91,7 @@ const client = pod(session);
 await client.init(posts);
 
 const created = await client.collection(posts).create({
-  id: 'post-1',
+  id: 'post-1.ttl',
   title: 'Hello Solid',
   content: 'Stored as RDF in a Pod document.',
   createdAt: new Date(),
@@ -119,7 +118,6 @@ const posts = podTable('posts', {
   title: string('title').predicate('http://schema.org/headline'),
 }, {
   base: 'https://alice.example/data/posts/',
-  subjectTemplate: '{id}.ttl',
   type: 'http://schema.org/CreativeWork',
 });
 
@@ -127,7 +125,7 @@ const db = drizzle(session);
 await db.init(posts);
 
 await db.insert(posts).values({
-  id: 'post-1',
+  id: 'post-1.ttl',
   title: 'Hello Solid',
 });
 
@@ -145,17 +143,19 @@ await db.deleteById(posts, 'post-1.ttl');
 Every model describes both shape and placement.
 
 - `base` defines where documents live
-- `subjectTemplate` defines how business fields map to an IRI
+- `id` is a base-relative resource id, such as `post-1.ttl` or `chat-1/messages.ttl#msg-1`
 - `type` is the primary persisted `rdf:type`
 
-Common `subjectTemplate` patterns:
+`subjectTemplate` is deprecated and kept only for legacy or explicit compatibility layouts. New schemas should omit it and store the exact resource path in the `id` column.
+
+Legacy `subjectTemplate` patterns still supported for compatibility:
 
 - `#{id}` — many entities in one document
 - `{id}.ttl` — one document per entity
 - `{id}.ttl#it` — one document per entity with a stable fragment
 - `{chatId}/messages.ttl#{id}` — partitioned layout with multiple locator variables
 
-If your template uses multiple variables, exact lookup requires either:
+If a legacy template uses multiple variables, exact lookup requires either:
 
 - the full IRI, or
 - the base-relative resource id, for example `chat-1/messages.ttl#msg-1`

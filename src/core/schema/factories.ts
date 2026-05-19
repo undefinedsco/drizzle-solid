@@ -1,4 +1,4 @@
-import { PodColumnOptions, generateNanoId } from './defs';
+import { PodColumnOptions } from './defs';
 import { ColumnBuilder, PodStringColumn } from './columns';
 
 export function boolean(name: string, options: PodColumnOptions = {}): ColumnBuilder<'boolean'> {
@@ -26,12 +26,14 @@ export function iri(name: string, options: PodColumnOptions = {}): ColumnBuilder
 }
 
 export function id(name = 'id', options: PodColumnOptions = {}): PodStringColumn {
+  // id() represents the RDF subject IRI. It intentionally does not install a
+  // default generator because exact-id mode needs application-defined paths.
   const col = new PodStringColumn(name, { 
     ...options, 
     predicate: '@id', 
     primaryKey: true, 
     required: true,
-    defaultValue: options.defaultValue ?? generateNanoId 
+    ...(options.defaultValue !== undefined ? { defaultValue: options.defaultValue } : {}),
   });
   (col as any)._virtualId = true;
   return col;

@@ -237,7 +237,7 @@ describe('ASTToSPARQLConverter', () => {
     it('inverse 列写入时应交换三元组主体和客体', () => {
       const values = [{ id: 'foo', organization: 'https://org.example/foo' }];
       const result = converter.convertInsert(values, mockTable);
-      expect(result.query).toContain('<https://org.example/foo> schema:member <https://example.com/users/index.ttl#foo>');
+      expect(result.query).toContain('<https://org.example/foo> schema:member <https://example.com/users/index.ttl/foo>');
     });
 
     it('应该支持 IR plan 输入', () => {
@@ -286,8 +286,8 @@ describe('ASTToSPARQLConverter', () => {
       const result = converter.convertUpdate(data, where, mockTable);
       // Inverse columns should swap subject/object: ?var <pred> <subject> instead of <subject> <pred> ?var
       // sparqljs generator will use prefixes if available
-      expect(result.query).toContain('?old_organization_0 schema:member <https://example.com/users/index.ttl#2>');
-      expect(result.query).toContain('<https://org.example/new> schema:member <https://example.com/users/index.ttl#2>');
+      expect(result.query).toContain('?old_organization_0 schema:member <https://example.com/users/index.ttl/2>');
+      expect(result.query).toContain('<https://org.example/new> schema:member <https://example.com/users/index.ttl/2>');
     });
   });
 
@@ -298,8 +298,8 @@ describe('ASTToSPARQLConverter', () => {
       
       expect(result).toBeDefined();
       expect(result.type).toBe('DELETE');
-      expect(result.query).toContain('DELETE { GRAPH <https://example.com/users/index.ttl> { <https://example.com/users/index.ttl#1> ?p ?o. } }');
-      expect(result.query).toContain('WHERE { GRAPH <https://example.com/users/index.ttl> { <https://example.com/users/index.ttl#1> ?p ?o. } }');
+      expect(result.query).toContain('DELETE { GRAPH <https://example.com/users/index.ttl/1> { <https://example.com/users/index.ttl/1> ?p ?o. } }');
+      expect(result.query).toContain('WHERE { GRAPH <https://example.com/users/index.ttl/1> { <https://example.com/users/index.ttl/1> ?p ?o. } }');
     });
   });
 
@@ -460,7 +460,7 @@ describe('ASTToSPARQLConverter', () => {
 
     it('should resolve simple identifiers against table base', () => {
       const subject = converter.generateSubjectUri({ id: 'profile' }, mockTable);
-      expect(subject).toBe('https://example.com/users/index.ttl#profile');
+      expect(subject).toBe('https://example.com/users/index.ttl/profile');
     });
 
     it('should preserve absolute ids', () => {
@@ -494,7 +494,7 @@ describe('ASTToSPARQLConverter', () => {
         subject: 'Thread Subject'
       }] }, threadTable);
 
-      expect(insert.query).toContain('#thread-abc');
+      expect(insert.query).toContain('/thread-abc');
       expect(insert.query).not.toContain('<Thread Subject>');
     });
   });

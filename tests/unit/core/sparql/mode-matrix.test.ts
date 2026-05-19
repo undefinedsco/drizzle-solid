@@ -2,7 +2,7 @@
  * Mode Matrix Tests - 验证所有模式组合
  *
  * 维度:
- * 1. Resource Mode: fragment (.ttl) vs document (/)
+ * 1. Resource Mode: file base (.ttl) vs container base (/)
  * 2. ID Predicate: @id (virtual) vs custom predicate
  * 3. Operation: SELECT, INSERT, UPDATE, DELETE
  * 4. WHERE: none, id=, id IN
@@ -28,9 +28,9 @@ describe('Mode Matrix - Complete Coverage', () => {
   });
 
   // ==========================================
-  // Fragment Mode + @id Predicate
+  // File Base + @id Predicate
   // ==========================================
-  describe('Fragment Mode + @id Predicate', () => {
+  describe('File Base + @id Predicate', () => {
     const table = podTable('tags', {
       id: id(),
       name: string('name').predicate('https://schema.org/name'),
@@ -48,7 +48,7 @@ describe('Mode Matrix - Complete Coverage', () => {
         expect(result.query).toContain('?subject');
       });
 
-      it('should convert id = to subject URI comparison', () => {
+      it('should convert exact id = to subject URI comparison', () => {
         const ast = {
           type: 'select',
           columns: [{ name: 'name' }],
@@ -56,12 +56,12 @@ describe('Mode Matrix - Complete Coverage', () => {
         };
         const result = selectBuilder.convertSelect(ast, table);
         expect(result.query).toContain('?subject');
-        expect(result.query).toContain('https://pod.example/data/tags.ttl#tag-1');
+        expect(result.query).toContain('https://pod.example/data/tags.ttl/tag-1');
         expect(result.query).toContain('FILTER(?subject =');
         expect(result.query).not.toContain('VALUES ?subject');
       });
 
-      it('should convert id IN to subject URIs', () => {
+      it('should convert exact id IN to subject URIs', () => {
         const ast = {
           type: 'select',
           columns: [{ name: 'name' }],
@@ -69,34 +69,34 @@ describe('Mode Matrix - Complete Coverage', () => {
         };
         const result = selectBuilder.convertSelect(ast, table);
         expect(result.query).toContain('VALUES ?subject');
-        expect(result.query).toContain('tags.ttl#a');
-        expect(result.query).toContain('tags.ttl#b');
+        expect(result.query).toContain('tags.ttl/a');
+        expect(result.query).toContain('tags.ttl/b');
       });
     });
 
     describe('UPDATE', () => {
-      it('should generate correct subject URI for fragment', () => {
+      it('should generate correct subject URI for exact id', () => {
         const result = updateBuilder.convertUpdate(
           { name: 'Updated' },
           { id: 'tag-1' },
           table
         );
-        expect(result.query).toContain('https://pod.example/data/tags.ttl#tag-1');
+        expect(result.query).toContain('https://pod.example/data/tags.ttl/tag-1');
       });
     });
 
     describe('DELETE', () => {
-      it('should generate correct subject URI for fragment', () => {
+      it('should generate correct subject URI for exact id', () => {
         const result = updateBuilder.convertDelete({ id: 'tag-1' }, table);
-        expect(result.query).toContain('https://pod.example/data/tags.ttl#tag-1');
+        expect(result.query).toContain('https://pod.example/data/tags.ttl/tag-1');
       });
     });
   });
 
   // ==========================================
-  // Document Mode + @id Predicate
+  // Container Base + @id Predicate
   // ==========================================
-  describe('Document Mode + @id Predicate', () => {
+  describe('Container Base + @id Predicate', () => {
     const table = podTable('users', {
       id: id(),
       name: string('name').predicate('https://schema.org/name'),
@@ -113,7 +113,7 @@ describe('Mode Matrix - Complete Coverage', () => {
         expect(result.query).not.toContain('STRAFTER');
       });
 
-      it('should convert id = to document URI comparison', () => {
+      it('should convert exact id = to subject URI comparison', () => {
         const ast = {
           type: 'select',
           columns: [{ name: 'name' }],
@@ -121,12 +121,12 @@ describe('Mode Matrix - Complete Coverage', () => {
         };
         const result = selectBuilder.convertSelect(ast, table);
         expect(result.query).toContain('?subject');
-        expect(result.query).toContain('https://pod.example/data/users/alice.ttl');
+        expect(result.query).toContain('https://pod.example/data/users/alice');
         expect(result.query).toContain('FILTER(?subject =');
         expect(result.query).not.toContain('VALUES ?subject');
       });
 
-      it('should convert id IN to document URIs', () => {
+      it('should convert exact id IN to subject URIs', () => {
         const ast = {
           type: 'select',
           columns: [{ name: 'name' }],
@@ -134,26 +134,26 @@ describe('Mode Matrix - Complete Coverage', () => {
         };
         const result = selectBuilder.convertSelect(ast, table);
         expect(result.query).toContain('VALUES ?subject');
-        expect(result.query).toContain('users/alice.ttl');
-        expect(result.query).toContain('users/bob.ttl');
+        expect(result.query).toContain('users/alice');
+        expect(result.query).toContain('users/bob');
       });
     });
 
     describe('UPDATE', () => {
-      it('should generate correct subject URI for document', () => {
+      it('should generate correct subject URI for exact id', () => {
         const result = updateBuilder.convertUpdate(
           { name: 'Updated' },
           { id: 'alice' },
           table
         );
-        expect(result.query).toContain('https://pod.example/data/users/alice.ttl');
+        expect(result.query).toContain('https://pod.example/data/users/alice');
       });
     });
 
     describe('DELETE', () => {
-      it('should generate correct subject URI for document', () => {
+      it('should generate correct subject URI for exact id', () => {
         const result = updateBuilder.convertDelete({ id: 'alice' }, table);
-        expect(result.query).toContain('https://pod.example/data/users/alice.ttl');
+        expect(result.query).toContain('https://pod.example/data/users/alice');
       });
     });
   });

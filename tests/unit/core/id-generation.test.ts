@@ -18,7 +18,7 @@ describe('ID Generation', () => {
     type: 'http://schema.org/Person'
   });
 
-  it('should automatically generate ID if not provided', async () => {
+  it('should not automatically generate bare ID if not provided', async () => {
     const insertBuilder = new InsertQueryBuilder(session, users);
     insertBuilder.values({ name: 'Alice' });
     
@@ -30,9 +30,7 @@ describe('ID Generation', () => {
     const row = plan.rows[0];
     
     expect(row.name).toBe('Alice');
-    expect(row.id).toBeDefined();
-    expect(typeof row.id).toBe('string');
-    expect((row.id as string).length).toBeGreaterThan(10); // Check for NanoID length
+    expect(row.id).toBeUndefined();
   });
 
   it('should respect provided ID', async () => {

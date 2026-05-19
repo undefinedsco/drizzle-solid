@@ -7,7 +7,7 @@ English version: [`README.md`](README.md)
 适合在你需要下面这些能力时使用：
 
 - 用 TypeScript schema 描述 Pod 数据
-- 用 `base` 和 `subjectTemplate` 明确声明数据布局
+- 用 `base` 和 base-relative resource id 明确声明数据布局
 - 在 `pod()` 和 `drizzle()` 两种 API 风格之间选择
 - 通过 base-relative id 或 IRI 精确读写单个资源
 - 在后端提供查询能力时走 SPARQL 读取
@@ -84,7 +84,6 @@ const posts = podTable('posts', {
   createdAt: datetime('createdAt').predicate('http://schema.org/dateCreated'),
 }, {
   base: 'https://alice.example/data/posts/',
-  subjectTemplate: '{id}.ttl',
   type: 'http://schema.org/CreativeWork',
 });
 
@@ -92,7 +91,7 @@ const client = pod(session);
 await client.init(posts);
 
 const created = await client.collection(posts).create({
-  id: 'post-1',
+  id: 'post-1.ttl',
   title: 'Hello Solid',
   content: 'Stored as RDF in a Pod document.',
   createdAt: new Date(),
@@ -119,7 +118,6 @@ const posts = podTable('posts', {
   title: string('title').predicate('http://schema.org/headline'),
 }, {
   base: 'https://alice.example/data/posts/',
-  subjectTemplate: '{id}.ttl',
   type: 'http://schema.org/CreativeWork',
 });
 
@@ -127,7 +125,7 @@ const db = drizzle(session);
 await db.init(posts);
 
 await db.insert(posts).values({
-  id: 'post-1',
+  id: 'post-1.ttl',
   title: 'Hello Solid',
 });
 
@@ -145,17 +143,19 @@ await db.deleteById(posts, 'post-1.ttl');
 每个模型不仅描述字段，也描述落点。
 
 - `base` 决定文档位置
-- `subjectTemplate` 决定业务字段如何映射成 IRI
+- `id` 是 base-relative resource id，例如 `post-1.ttl` 或 `chat-1/messages.ttl#msg-1`
 - `type` 是主持久化 `rdf:type`
 
-常见 `subjectTemplate`：
+`subjectTemplate` 已废弃，只为旧布局或显式兼容保留。新 schema 应该省略它，把精确资源路径放在 `id` 列里。
+
+旧 `subjectTemplate` 模式仍兼容：
 
 - `#{id}`：一个文档里多个实体
 - `{id}.ttl`：一个实体一个文档
 - `{id}.ttl#it`：一个实体一个文档，并带稳定 fragment
 - `{chatId}/messages.ttl#{id}`：多变量分区布局
 
-如果模板用了多个变量，精确定位就必须提供：
+如果旧模板用了多个变量，精确定位就必须提供：
 
 - 完整 IRI，或
 - base-relative resource id，例如 `chat-1/messages.ttl#msg-1`

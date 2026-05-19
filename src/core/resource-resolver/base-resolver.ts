@@ -87,14 +87,9 @@ export abstract class BaseResourceResolver implements ResourceResolver {
       if (subjectFromRelativeId) {
         return subjectFromRelativeId;
       }
-      if (id.startsWith('#')) {
+      if (id.startsWith('#') && this.acceptsFragmentOnlyResourceId(table)) {
         id = id.slice(1);
       }
-    }
-
-    // 如果没有 id，生成 UUID
-    if (id === undefined || id === null) {
-      id = this.generateUuid();
     }
 
     // 应用模板生成相对路径
@@ -130,7 +125,12 @@ export abstract class BaseResourceResolver implements ResourceResolver {
       return subjectUri.substring(containerUrl.length);
     }
 
-    return this.extractRelativeSubjectId(table, subjectUri);
+    const fallback = this.extractRelativeSubjectId(table, subjectUri);
+    if (fallback.startsWith('#') && !(table.hasCustomTemplate?.() ?? false)) {
+      const resourceName = this.getResourceUrl(table).split('/').filter(Boolean).pop() ?? '';
+      return `${resourceName}${fallback}`;
+    }
+    return fallback;
   }
 
   private extractTemplateRelativeSubjectId(table: PodTable, subjectUri: string): string {

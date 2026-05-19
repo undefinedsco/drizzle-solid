@@ -38,7 +38,11 @@ export class PodTable<TColumns extends Record<string, PodColumnBase<any, any, an
     typeIndex?: 'private' | 'public';
     saiRegistryPath?: string;
     subClassOf?: string[];
-    subjectTemplate: string;
+    /**
+     * @deprecated Present only when a legacy/explicit subjectTemplate is set.
+     * Omitted means exact-id mode.
+     */
+    subjectTemplate?: string;
     containerPath?: string;
     resourcePath?: string;
     autoRegister?: boolean;
@@ -50,7 +54,7 @@ export class PodTable<TColumns extends Record<string, PodColumnBase<any, any, an
   private resourcePath: string;
   private containerPath: string;
   private initialized = false;
-  private subjectTemplate: string;
+  private subjectTemplate?: string;
   private hasCustomSubjectTemplate: boolean;
   private resourceMode?: 'ldp' | 'sparql';
   private sparqlEndpoint?: string;
@@ -108,11 +112,13 @@ export class PodTable<TColumns extends Record<string, PodColumnBase<any, any, an
       namespace: options.namespace,
       typeIndex: validTypeIndex ? typeIndexOption : undefined,
       saiRegistryPath: options.saiRegistryPath,
-      subjectTemplate: this.subjectTemplate,
       autoRegister: options.autoRegister,
       containerPath: baseConfig.containerPath,
       hooks: options.hooks,
     };
+    if (this.subjectTemplate) {
+      this.config.subjectTemplate = this.subjectTemplate;
+    }
     this.parentClasses = this.normalizeParents(options.subClassOf ?? []);
     if (this.parentClasses.length > 0) {
       this.config.subClassOf = [...this.parentClasses];
@@ -158,7 +164,10 @@ export class PodTable<TColumns extends Record<string, PodColumnBase<any, any, an
   getType(): string { return this.config.type; }
   getRdfClass(): string { return this.getType(); }
   getNamespace(): NamespaceConfig | undefined { return this.config.namespace; }
-  getSubjectTemplate(): string { return this.subjectTemplate; }
+  /**
+   * @deprecated subjectTemplate is compatibility-only. Omitted means exact-id mode.
+   */
+  getSubjectTemplate(): string | undefined { return this.subjectTemplate; }
   hasCustomTemplate(): boolean { return this.hasCustomSubjectTemplate; }
   getSubClassOf(): string[] { return [...this.parentClasses]; }
   getMapping(): PodTableMapping { return this.mapping; }
@@ -174,6 +183,16 @@ export class PodTable<TColumns extends Record<string, PodColumnBase<any, any, an
 
   resolveUri(id: string): string {
     const template = this.subjectTemplate;
+    if (!template) {
+      if (/^https?:\/\//.test(id)) {
+        return id;
+      }
+      if (id.startsWith('/')) {
+        return id;
+      }
+      const base = this.config.base.endsWith('/') ? this.config.base : `${this.config.base}/`;
+      return `${base}${id}`;
+    }
     const resolved = template.replace(/\{id\}/g, id);
     if (resolved.startsWith('#')) {
       return `${this.resourcePath}${resolved}`;
@@ -251,10 +270,10 @@ export class PodTable<TColumns extends Record<string, PodColumnBase<any, any, an
       (this as any)._!.config.containerPath = this.config.containerPath;
     }
     if (!this.hasCustomSubjectTemplate) {
-      this.subjectTemplate = this.buildDefaultSubjectTemplate(this.config.base);
-      this.config.subjectTemplate = this.subjectTemplate;
+      this.subjectTemplate = undefined;
+      delete this.config.subjectTemplate;
       if ((this as any)._?.config) {
-        (this as any)._!.config.subjectTemplate = this.subjectTemplate;
+        delete (this as any)._!.config.subjectTemplate;
       }
     }
     this.mapping = this.buildTableMapping();
@@ -281,30 +300,16 @@ export class PodTable<TColumns extends Record<string, PodColumnBase<any, any, an
   getColumn(name: string): PodColumnBase | undefined { return this.columns[name as keyof TColumns]; }
   hasColumn(name: string): boolean { return name in this.columns; }
 
-  private resolveSubjectTemplate(template: string | undefined, resourcePath: string, _containerPath: string, _tableName: string): { template: string; isCustom: boolean } {
+  private resolveSubjectTemplate(template: string | undefined, _resourcePath: string, _containerPath: string, _tableName: string): { template?: string; isCustom: boolean } {
     if (template && template.trim().length > 0) return { template: template.trim(), isCustom: true };
-    return { template: this.buildDefaultSubjectTemplate(resourcePath), isCustom: false };
+    return { template: undefined, isCustom: false };
   }
 
   /**
-   * 构建默认的 subjectTemplate
-   * 根据 base 路径判断
-   * - base 以 / 结尾 → document 模式 → {id}.ttl
-   * - base 是文件路径 → fragment 模式 → #{id}
+   * No subjectTemplate means exact-id mode: public id is already a
+   * base-relative resource id. Callers must pass subjectTemplate explicitly
+   * for document/fragment template behavior.
    */
-  private buildDefaultSubjectTemplate(base: string): string {
-    // base 以 / 结尾表示容器 → document 模式
-    if (base.endsWith('/')) {
-      return '{id}.ttl';
-    }
-    // base 包含模板变量，直接使用
-    if (base.includes('{')) {
-      return base;
-    }
-    // base 是文件路径 → fragment 模式
-    return '#{id}';
-  }
-
   private buildTableMapping(): PodTableMapping {
     const mappedColumns: Record<string, PodColumnMapping> = {};
     for (const column of Object.values(this.columns)) {

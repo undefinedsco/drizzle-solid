@@ -6,8 +6,8 @@
  * 
  * 设计原则：
  * - 无状态，所有需要的上下文都通过参数传入
- * - 统一使用 base + subjectTemplate 来生成和解析 URI
- * - 不再区分 document/fragment 模式，模式由 template 自然表达
+ * - 显式 subjectTemplate 定义 local key 如何映射到 URI
+ * - 省略 subjectTemplate 时进入 exact-id 模式：id 已经是 base-relative resource id
  */
 
 import type { PodTable, PodColumnBase } from '../schema';
@@ -80,7 +80,7 @@ export class UriResolverImpl implements UriResolver {
       if (resolvedRelativeId) {
         return resolvedRelativeId;
       }
-      if (explicitId.startsWith('#')) {
+      if (explicitId.startsWith('#') && this.acceptsFragmentOnlyResourceId(table)) {
         record = { ...record, id: explicitId.slice(1) };
       }
     }
@@ -137,9 +137,14 @@ export class UriResolverImpl implements UriResolver {
 
   /**
    * 判断资源模式
-   * 简化版：直接从 subjectTemplate 判断
    */
   getResourceMode(table: PodTable): ResourceMode {
+    const hasCustomTemplate = table.hasCustomTemplate?.() ?? false;
+    if (!hasCustomTemplate) {
+      const base = table.config?.base ?? '';
+      return /\.(ttl|jsonld|json)$/i.test(base) ? 'fragment' : 'document';
+    }
+
     const template = table.config?.subjectTemplate ?? this.getDefaultPattern(table);
     
     // 以 # 开头是 fragment 模式
@@ -152,18 +157,11 @@ export class UriResolverImpl implements UriResolver {
   }
 
   /**
-   * 获取默认模板
-   * 根据 base 是否以 / 结尾判断
-   * 与 PodTable.buildDefaultSubjectTemplate 保持一致
+   * 获取 exact-id 模式下的内部恒等模板。
+   * 该值不写回 table.config.subjectTemplate，也不代表业务 schema 显式声明了模板。
    */
-  getDefaultPattern(table: PodTable): string {
-    const base = table.config?.base ?? '';
-    // base 以 / 结尾表示容器 → document 模式 → {id}.ttl
-    // base 是文件路径 → fragment 模式 → #{id}
-    if (base.endsWith('/')) {
-      return '{id}.ttl';
-    }
-    return '#{id}';
+  getDefaultPattern(_table: PodTable): string {
+    return '{id}';
   }
 
   resolveInlineChild(
@@ -410,14 +408,14 @@ export class UriResolverImpl implements UriResolver {
   // ================= Private Helpers =================
 
   /**
-   * 从表获取基础 URL 和 subject template 信息
-   * 简化版：统一使用 base + subjectTemplate
+   * 从表获取基础 URL 和可选 subjectTemplate 信息。
+   * 没有 subjectTemplate 时，调用方应按 exact-id 直接拼接 base-relative id。
    */
-  private getTableUriInfo(table: PodTable): { baseUrl: string; subjectTemplate: string } | undefined {
+  private getTableUriInfo(table: PodTable): { baseUrl: string; subjectTemplate?: string } | undefined {
     const base = table.config?.base;
     if (!base) return undefined;
 
-    const subjectTemplate = table.config?.subjectTemplate || this.getDefaultPattern(table);
+    const subjectTemplate = table.config?.subjectTemplate;
     const baseUrl = this.toAbsoluteUrl(base);
 
     return { baseUrl, subjectTemplate };
@@ -429,12 +427,18 @@ export class UriResolverImpl implements UriResolver {
   private buildFullUri(
     value: string,
     baseUrl: string,
-    subjectTemplate: string = '{id}.ttl',
+    subjectTemplate?: string,
     targetTable?: PodTable,
     context?: UriContext,
     record?: Record<string, unknown>,
   ): string {
     const rawValue = String(value ?? '');
+
+    if (!subjectTemplate) {
+      const resolved = this.combineBaseAndResourceId(baseUrl, rawValue);
+      this.assertNoUnresolvedTemplate(resolved, undefined, targetTable);
+      return resolved;
+    }
 
     // 如果不是 UUID/ID 格式，直接拼接相对路径。模板路径变量只适用于短 id。
     if (!UUID_REGEX.test(rawValue) && rawValue.includes('/') && !rawValue.includes('{')) {
@@ -534,12 +538,12 @@ export class UriResolverImpl implements UriResolver {
     return undefined;
   }
 
-  private assertNoUnresolvedTemplate(value: string, template: string, table?: PodTable): void {
+  private assertNoUnresolvedTemplate(value: string, template: string | undefined, table?: PodTable): void {
     if (/\{[^}]+\}/.test(value)) {
       const tableName = table?.config?.name || 'unknown';
       throw new Error(
         `[UriResolver] Unresolved URI template variable while resolving table "${tableName}" ` +
-        `with template "${template}": ${value}`
+        `with template "${template ?? '<exact-id>'}": ${value}`
       );
     }
   }
@@ -582,7 +586,10 @@ export class UriResolverImpl implements UriResolver {
   }
 
   private acceptsFragmentOnlyResourceId(table: PodTable): boolean {
-    const template = table.config?.subjectTemplate || this.getDefaultPattern(table);
+    const template = table.config?.subjectTemplate;
+    if (!template) {
+      return false;
+    }
     const variables = Array.from(template.matchAll(/\{([^}]+)\}/g))
       .map((match) => this.parseTemplateVariable(match[1]).field);
     return template === '#{id}'
@@ -649,6 +656,16 @@ export class UriResolverImpl implements UriResolver {
     }
 
     return `${base}/${pattern}`;
+  }
+
+  private combineBaseAndResourceId(base: string, resourceId: string): string {
+    if (resourceId.startsWith('#')) {
+      const cleanBase = base.endsWith('/') ? base.slice(0, -1) : base;
+      return `${cleanBase}${resourceId}`;
+    }
+
+    const cleanBase = base.endsWith('/') ? base : `${base}/`;
+    return `${cleanBase}${resourceId}`;
   }
 
   /**
@@ -856,6 +873,10 @@ export class UriResolverImpl implements UriResolver {
       // 找到 base 在 URI 中的位置，提取之后的部分
       const index = uri.indexOf(tableBase);
       relativePath = uri.substring(index + tableBase.length);
+      if (relativePath.startsWith('#') && !(table.hasCustomTemplate?.() ?? false)) {
+        const resourceName = tableBase.split('/').filter(Boolean).pop() ?? '';
+        relativePath = `${resourceName}${relativePath}`;
+      }
       // 移除开头的 / (如果 base 不以 / 结尾)
       if (relativePath.startsWith('/')) {
         relativePath = relativePath.substring(1);
@@ -879,8 +900,10 @@ export class UriResolverImpl implements UriResolver {
 
   private extractTemplateIdFromSubject(uri: string, table: PodTable): string | null {
     const relativePath = this.extractRelativeSubjectId(uri, table);
-    const template = table.config?.subjectTemplate || this.getDefaultPattern(table);
-    return template ? this.extractIdFromTemplate(relativePath, template) : null;
+    const template = table.config?.subjectTemplate;
+    return template
+      ? this.extractIdFromTemplate(relativePath, template)
+      : relativePath;
   }
 
   /**

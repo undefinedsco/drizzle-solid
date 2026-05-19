@@ -1,6 +1,11 @@
 # drizzle-solid Skills
 
-This directory contains the first public skill pack for `drizzle-solid`.
+This directory contains the public skill pack for `drizzle-solid`.
+
+Shared Solid/RDF product-model guidance lives in `@undefineds.co/models` under
+`skills/solid-modeling`. Keep that copy as the source of truth for cross-product
+schemas such as Chat, Task, Thread, Message, Run, and Workspace. This repository
+keeps only drizzle-solid ORM, migration, layout, and testing guidance.
 
 These skills are meant to complement:
 
@@ -19,7 +24,6 @@ Testing-specific rule:
 
 ## Included skills
 
-- `solid-modeling` — model Solid/RDF concepts, classes, predicates, links, and ownership boundaries
 - `drizzle-solid-migration` — migrate Drizzle-style code and SQL habits to the `drizzle-solid` surface
 - `pod-layout-design` — choose `base`, `subjectTemplate`, IRI layout, and document/container organization
 - `drizzle-solid-testing` — place tests correctly across unit, integration, examples, and issue regressions

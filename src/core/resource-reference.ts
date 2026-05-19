@@ -2,7 +2,7 @@ import type { PodTable } from './schema';
 
 type AnyPodResource = PodTable<any> & {
   getResourcePath?: () => string;
-  getSubjectTemplate?: () => string;
+  getSubjectTemplate?: () => string | undefined;
 };
 
 export interface PodResourceReference {
@@ -22,8 +22,8 @@ function podResourcePath(resource: AnyPodResource): string {
   return normalizeResourcePath(resource.getResourcePath?.() ?? resource.config?.base ?? '');
 }
 
-function podResourceSubjectTemplate(resource: AnyPodResource): string {
-  return resource.getSubjectTemplate?.() ?? resource.config?.subjectTemplate ?? '{id}';
+function podResourceSubjectTemplate(resource: AnyPodResource): string | undefined {
+  return resource.getSubjectTemplate?.() ?? resource.config?.subjectTemplate;
 }
 
 function resourceRelativePrefix(resource: AnyPodResource): string {
@@ -52,7 +52,7 @@ function qualifyFragmentResourceId(resource: AnyPodResource, relativeSubject: st
 
 function templateRelativeSubject(resource: AnyPodResource, resourceId: string): string {
   const template = podResourceSubjectTemplate(resource);
-  if (template.startsWith('#') && !resourceId.startsWith('#')) {
+  if (template?.startsWith('#') && !resourceId.startsWith('#')) {
     const hashIndex = resourceId.indexOf('#');
     if (hashIndex >= 0) {
       return resourceId.slice(hashIndex);
@@ -139,7 +139,10 @@ export function parsePodResourceRef(resource: AnyPodResource, ref: string | null
   if (!relativeSubject) return null;
 
   const resourceId = qualifyFragmentResourceId(resource, relativeSubject);
-  const templateValues = extractTemplateValues(templateRelativeSubject(resource, resourceId), podResourceSubjectTemplate(resource));
+  const template = podResourceSubjectTemplate(resource);
+  const templateValues = template
+    ? extractTemplateValues(templateRelativeSubject(resource, resourceId), template)
+    : { id: decodeURIComponent(resourceId) };
   if (!templateValues) return null;
 
   return {

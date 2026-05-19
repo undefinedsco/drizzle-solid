@@ -1,5 +1,5 @@
 /**
- * Tests for SelectBuilder handling document vs fragment modes
+ * Tests for SelectBuilder handling exact-id tables and explicit custom predicates.
  */
 import { describe, it, expect, beforeEach } from 'vitest';
 import { SelectBuilder } from '../../../../src/core/sparql/builder/select-builder';
@@ -17,12 +17,12 @@ describe('SelectBuilder mode handling', () => {
     builder = new SelectBuilder({ schema: 'https://schema.org/' }, resolver);
   });
 
-  describe('fragment mode', () => {
+  describe('file base exact-id mode', () => {
     const fragmentTable = podTable('tags', {
       id: id(),
       name: string('name').predicate('https://schema.org/name'),
     }, {
-      base: '/data/tags.ttl',  // ends with .ttl -> fragment mode
+      base: '/data/tags.ttl',
       type: 'https://schema.org/Tag',
       namespace: ns,
     });
@@ -41,12 +41,12 @@ describe('SelectBuilder mode handling', () => {
     });
   });
 
-  describe('document mode', () => {
+  describe('container base exact-id mode', () => {
     const documentTable = podTable('users', {
       id: id(),
       name: string('name').predicate('https://schema.org/name'),
     }, {
-      base: '/data/users/',  // ends with / -> document mode
+      base: '/data/users/',
       type: 'https://schema.org/Person',
       namespace: ns,
     });
@@ -59,7 +59,7 @@ describe('SelectBuilder mode handling', () => {
 
       const result = builder.convertSelect(ast, documentTable);
 
-      // document mode: id is extracted in JS, not via SPARQL STRAFTER
+      // id is extracted in JS, not via SPARQL STRAFTER
       expect(result.query).not.toContain('STRAFTER');
     });
 
@@ -100,7 +100,7 @@ describe('SelectBuilder mode handling', () => {
   });
 
   describe('WHERE clause with id', () => {
-    it('should convert @id column to full URI in WHERE (fragment mode)', () => {
+    it('should convert @id column to full URI in WHERE for a file base', () => {
       const fragmentTable = podTable('tags', {
         id: id(),
         name: string('name').predicate('https://schema.org/name'),
@@ -125,11 +125,11 @@ describe('SelectBuilder mode handling', () => {
 
       // Should compare ?subject with full URI, not ?id with "tag-1"
       expect(result.query).toContain('?subject');
-      expect(result.query).toContain('https://pod.example/data/tags.ttl#tag-1');
+      expect(result.query).toContain('https://pod.example/data/tags.ttl/tag-1');
       expect(result.query).not.toContain('?id');
     });
 
-    it('should convert @id column to full URI in WHERE (document mode)', () => {
+    it('should convert @id column to full URI in WHERE for a container base', () => {
       const documentTable = podTable('users', {
         id: id(),
         name: string('name').predicate('https://schema.org/name'),
@@ -154,7 +154,7 @@ describe('SelectBuilder mode handling', () => {
 
       // Should compare ?subject with full URI
       expect(result.query).toContain('?subject');
-      expect(result.query).toContain('https://pod.example/data/users/alice.ttl');
+      expect(result.query).toContain('https://pod.example/data/users/alice');
     });
 
     it('should use ?id variable for custom predicate id in WHERE', () => {
@@ -210,8 +210,8 @@ describe('SelectBuilder mode handling', () => {
 
       // Should convert all values to full URIs via VALUES
       expect(result.query).toContain('VALUES ?subject');
-      expect(result.query).toContain('https://pod.example/data/tags.ttl#tag-1');
-      expect(result.query).toContain('https://pod.example/data/tags.ttl#tag-2');
+      expect(result.query).toContain('https://pod.example/data/tags.ttl/tag-1');
+      expect(result.query).toContain('https://pod.example/data/tags.ttl/tag-2');
     });
   });
 });

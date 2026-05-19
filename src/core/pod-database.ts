@@ -329,12 +329,15 @@ export class PodDatabase<TSchema extends Record<string, unknown> = Record<string
     return rows.length > 0 ? rows[0] : null;
   }
 
-  private getLocatorTemplate(table: PodTable): string {
-    return table.getSubjectTemplate?.() ?? table.config?.subjectTemplate ?? '{id}';
+  private getLocatorTemplate(table: PodTable): string | undefined {
+    return table.getSubjectTemplate?.() ?? table.config?.subjectTemplate;
   }
 
   private getRequiredLocatorKeys(table: PodTable): string[] {
     const template = this.getLocatorTemplate(table);
+    if (!template) {
+      return ['id'];
+    }
     const keys = Array.from(template.matchAll(/\{([^}]+)\}/g))
       .map((match) => parseTemplateVariableField(match[1]))
       .filter((key) => key !== 'index');
@@ -396,7 +399,7 @@ export class PodDatabase<TSchema extends Record<string, unknown> = Record<string
     if (typeof idValue === 'string' && isBaseRelativeSubjectId(idValue)) {
       const nonIdRequiredKeys = requiredKeys.filter((key) => key !== 'id');
       if (idValue.startsWith('#') && nonIdRequiredKeys.length > 0) {
-        const template = this.getLocatorTemplate(resource);
+        const template = this.getLocatorTemplate(resource) ?? '<exact-id>';
         throw new Error(
           `${methodName} requires a complete locator for subjectTemplate '${template}'. ` +
           `Missing [${nonIdRequiredKeys.join(', ')}]. ` +
@@ -407,7 +410,7 @@ export class PodDatabase<TSchema extends Record<string, unknown> = Record<string
     }
 
     if (missingKeys.length > 0) {
-      const template = this.getLocatorTemplate(resource);
+      const template = this.getLocatorTemplate(resource) ?? '<exact-id>';
       throw new Error(
         `${methodName} requires a complete locator for subjectTemplate '${template}'. ` +
         `Missing [${missingKeys.join(', ')}]. ` +
@@ -430,7 +433,7 @@ export class PodDatabase<TSchema extends Record<string, unknown> = Record<string
       throw new Error(`${methodName} requires a base-relative resource id. Use ${this.getIriAlternative(methodName)} for full IRIs.`);
     }
 
-    const template = this.getLocatorTemplate(resource);
+    const template = this.getLocatorTemplate(resource) ?? '<exact-id>';
     const missingNonIdKeys = this.getRequiredLocatorKeys(resource).filter((key) => key !== 'id');
     const resolver = this.dialect.getResolver(resource);
     if (isBaseRelativeSubjectId(id)) {
@@ -556,7 +559,7 @@ export class PodDatabase<TSchema extends Record<string, unknown> = Record<string
   }
 
   private buildShortIdSubjectSuffix(resource: GenericPodResource, id: string): string {
-    const template = this.getLocatorTemplate(resource);
+    const template = this.getLocatorTemplate(resource) ?? '<exact-id>';
     const matches = Array.from(template.matchAll(/\{([^}]+)\}/g));
     let idMatchIndex = -1;
     for (let index = matches.length - 1; index >= 0; index--) {
@@ -643,7 +646,7 @@ export class PodDatabase<TSchema extends Record<string, unknown> = Record<string
   ): Promise<string | null> {
     const source = this.resolveShortIdLookupSource(resource);
     if (!source) {
-      const template = this.getLocatorTemplate(resource);
+      const template = this.getLocatorTemplate(resource) ?? '<exact-id>';
       throw new Error(
         `${methodName} cannot resolve short id '${id}' for subjectTemplate '${template}' ` +
         `because no resource query source is available.`

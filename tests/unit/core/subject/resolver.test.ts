@@ -42,7 +42,7 @@ describe('SubjectResolver', () => {
       expect(resolver.getResourceMode(table)).toBe('fragment');
     });
 
-    it('should set default subjectTemplate for document mode tables', () => {
+    it('should leave subjectTemplate undefined for document exact-id tables', () => {
       const table = podTable('users', {
         id: id(),
         name: string('name').predicate('https://schema.org/name'),
@@ -52,11 +52,11 @@ describe('SubjectResolver', () => {
         namespace: ns,
       });
 
-      // Document mode 默认模板
-      expect(table.getSubjectTemplate()).toBe('{id}.ttl');
+      expect(table.getSubjectTemplate()).toBeUndefined();
+      expect(table.hasCustomTemplate()).toBe(false);
     });
 
-    it('should set default subjectTemplate for fragment mode tables', () => {
+    it('should leave subjectTemplate undefined for fragment exact-id tables', () => {
       const table = podTable('tags', {
         id: id(),
         name: string('name').predicate('https://schema.org/name'),
@@ -66,7 +66,8 @@ describe('SubjectResolver', () => {
         namespace: ns,
       });
 
-      expect(table.getSubjectTemplate()).toBe('#{id}');
+      expect(table.getSubjectTemplate()).toBeUndefined();
+      expect(table.hasCustomTemplate()).toBe(false);
     });
 
     it('should respect explicit pattern starting with #', () => {
@@ -99,7 +100,7 @@ describe('SubjectResolver', () => {
   });
 
   describe('getDefaultPattern', () => {
-    it('should return {id}.ttl for document mode', () => {
+    it('should return {id} by default for document mode', () => {
       const table = podTable('users', {
         id: id(),
       }, {
@@ -108,10 +109,10 @@ describe('SubjectResolver', () => {
         namespace: ns,
       });
 
-      expect(resolver.getDefaultPattern(table)).toBe('{id}.ttl');
+      expect(resolver.getDefaultPattern(table)).toBe('{id}');
     });
 
-    it('should return #{id} for fragment mode', () => {
+    it('should return {id} by default for fragment mode', () => {
       const table = podTable('tags', {
         id: id(),
       }, {
@@ -120,12 +121,12 @@ describe('SubjectResolver', () => {
         namespace: ns,
       });
 
-      expect(resolver.getDefaultPattern(table)).toBe('#{id}');
+      expect(resolver.getDefaultPattern(table)).toBe('{id}');
     });
   });
 
   describe('resolve - document mode', () => {
-    it('should generate document URI with {id}.ttl pattern', () => {
+    it('should generate document URI from exact id by default', () => {
       const table = podTable('users', {
         id: id(),
         name: string('name').predicate('https://schema.org/name'),
@@ -135,7 +136,7 @@ describe('SubjectResolver', () => {
         namespace: ns,
       });
 
-      const uri = resolver.resolve(table, { id: 'alice', name: 'Alice' });
+      const uri = resolver.resolve(table, { id: 'alice.ttl', name: 'Alice' });
 
       expect(uri).toBe('https://pod.example/data/users/alice.ttl');
     });
@@ -233,7 +234,7 @@ describe('SubjectResolver', () => {
         namespace: ns,
       });
 
-      const uri = resolver.resolve(table, { id: 'tag-1', name: 'Tech' });
+      const uri = resolver.resolve(table, { id: '#tag-1', name: 'Tech' });
 
       expect(uri).toBe('https://pod.example/data/tags.ttl#tag-1');
     });
@@ -338,14 +339,13 @@ describe('SubjectResolver', () => {
         namespace: ns,
       });
 
-      // 默认模板 {id}.ttl，URI 不带 fragment
       const result = resolver.parse('https://pod.example/data/users/alice.ttl', table);
 
       expect(result).not.toBeNull();
       expect(result!.uri).toBe('https://pod.example/data/users/alice.ttl');
       expect(result!.resourceUrl).toBe('https://pod.example/data/users/alice.ttl');
       expect(result!.fragment).toBeUndefined();
-      expect(result!.id).toBe('alice');
+      expect(result!.id).toBe('alice.ttl');
       expect(result!.mode).toBe('document');
     });
 
@@ -364,8 +364,7 @@ describe('SubjectResolver', () => {
       expect(result!.uri).toBe('https://pod.example/data/tags.ttl#tag-1');
       expect(result!.resourceUrl).toBe('https://pod.example/data/tags.ttl');
       expect(result!.fragment).toBe('tag-1');
-      // 默认模板 #{id}，所以 id = tag-1
-      expect(result!.id).toBe('tag-1');
+      expect(result!.id).toBe('tags.ttl#tag-1');
       expect(result!.mode).toBe('fragment');
     });
 
@@ -500,7 +499,7 @@ describe('SubjectResolver', () => {
         namespace: ns,
       });
 
-      const uri = resolver.resolve(table, { id: 'bob' });
+      const uri = resolver.resolve(table, { id: 'bob.ttl' });
 
       expect(uri).toBe('https://other-pod.example/data/users/bob.ttl');
     });

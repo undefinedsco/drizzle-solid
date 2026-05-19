@@ -11,6 +11,9 @@ export class SolidSchema<TColumns extends Record<string, PodColumnBase<any, any,
   readonly $kind = 'SolidSchema' as const;
   
   readonly namespace?: NamespaceConfig;
+  /**
+   * @deprecated subjectTemplate is compatibility-only. Prefer exact-id layouts.
+   */
   readonly subjectTemplate?: string;
   readonly subClassOf?: string[];
   

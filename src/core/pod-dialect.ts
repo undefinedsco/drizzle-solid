@@ -227,7 +227,7 @@ export class PodDialect {
 
   private buildShortIdSubjectIndexKey(table: PodTable, id: string): string {
     const base = table.config?.base ?? table.getResourcePath?.() ?? table.getContainerPath?.() ?? '';
-    const template = table.getSubjectTemplate?.() ?? table.config?.subjectTemplate ?? '{id}';
+    const template = table.getSubjectTemplate?.() ?? table.config?.subjectTemplate ?? '<exact-id>';
     const type = table.getType?.() ?? table.config?.type ?? '';
     const name = table.config?.name ?? '';
     return `${name}|${base}|${template}|${type}|${id}`;
@@ -1074,7 +1074,7 @@ export class PodDialect {
       );
       return this.buildIdInConditionFromSubjects(subjects);
     } catch (error) {
-      const template = table.getSubjectTemplate?.() ?? table.config?.subjectTemplate ?? '{id}';
+      const template = table.getSubjectTemplate?.() ?? table.config?.subjectTemplate ?? '<exact-id>';
       const message = error instanceof Error ? error.message : String(error);
 
       if (message.includes('missing required variable')) {

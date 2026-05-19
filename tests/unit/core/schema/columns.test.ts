@@ -63,10 +63,9 @@ describe('ColumnBuilder', () => {
       expect(stringCol.options.required).toBe(true);
     });
 
-    it('id() should have defaultValue generator', () => {
+    it('id() should not install an implicit default generator', () => {
       const idCol = id('id');
-      expect(idCol.options.defaultValue).toBeDefined();
-      expect(typeof idCol.options.defaultValue).toBe('function');
+      expect(idCol.options.defaultValue).toBeUndefined();
     });
   });
 

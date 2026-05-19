@@ -96,7 +96,7 @@ describe('DocumentResourceResolver', () => {
 
   describe('resolveSubject()', () => {
     it('should generate correct subject URI with user path', () => {
-      // 用户传入简单 id: 'provider-123'，系统根据模板生成完整 URI
+      // 用户传入完整 base-relative id，默认模板原样展开。
       const resolver = new DocumentResourceResolver('http://localhost:3000/test/');
       const table = podTable('providers', {
         id: id(),
@@ -106,8 +106,7 @@ describe('DocumentResourceResolver', () => {
         namespace: ns,
       });
 
-      // 默认模板 {id}.ttl
-      const subject = resolver.resolveSubject(table, { id: 'provider-123' });
+      const subject = resolver.resolveSubject(table, { id: 'provider-123.ttl' });
       expect(subject).toBe('http://localhost:3000/test/.data/model-providers/provider-123.ttl');
     });
 
@@ -121,13 +120,12 @@ describe('DocumentResourceResolver', () => {
         namespace: ns,
       });
 
-      // 传入简单 id（UUID）
       const uuid = 'eda10d06-179e-47e9-9423-2db84542a097';
-      const subject = resolver.resolveSubject(table, { id: uuid });
+      const subject = resolver.resolveSubject(table, { id: `${uuid}.ttl` });
       expect(subject).toBe(`http://localhost:3000/alice/.data/items/${uuid}.ttl`);
     });
 
-    it('should generate UUID when id is not provided', () => {
+    it('should preserve unresolved id placeholder when no id/default is provided', () => {
       const resolver = new DocumentResourceResolver('http://localhost:3000/test/');
       const table = podTable('items', {
         id: id(),
@@ -137,9 +135,8 @@ describe('DocumentResourceResolver', () => {
         namespace: ns,
       });
 
-      // 默认生成 {uuid}.ttl 格式
       const subject = resolver.resolveSubject(table, {});
-      expect(subject).toMatch(/^http:\/\/localhost:3000\/test\/\.data\/items\/[a-f0-9-]+\.ttl$/);
+      expect(subject).toBe('http://localhost:3000/test/.data/items/{id}');
     });
   });
 
@@ -295,7 +292,6 @@ describe('FragmentResourceResolver', () => {
 
   describe('resolveSubject()', () => {
     it('should generate fragment URI with correct base', () => {
-      // 用户传入 id: 'tag-123' (不带#)，系统自动加上
       const resolver = new FragmentResourceResolver('http://localhost:3000/test/');
       const table = podTable('tags', {
         id: id(),
@@ -305,11 +301,11 @@ describe('FragmentResourceResolver', () => {
         namespace: ns,
       });
 
-      const subject = resolver.resolveSubject(table, { id: 'tag-123' });
+      const subject = resolver.resolveSubject(table, { id: '#tag-123' });
       expect(subject).toBe('http://localhost:3000/test/.data/tags.ttl#tag-123');
     });
 
-    it('should generate UUID fragment when id is not provided', () => {
+    it('should preserve unresolved id placeholder when no id/default is provided', () => {
       const resolver = new FragmentResourceResolver('http://localhost:3000/test/');
       const table = podTable('tags', {
         id: id(),
@@ -319,9 +315,8 @@ describe('FragmentResourceResolver', () => {
         namespace: ns,
       });
 
-      // 默认生成 #{uuid} 格式
       const subject = resolver.resolveSubject(table, {});
-      expect(subject).toMatch(/^http:\/\/localhost:3000\/test\/\.data\/tags\.ttl#[a-f0-9-]+$/);
+      expect(subject).toBe('http://localhost:3000/test/.data/tags.ttl{id}');
     });
 
     it('should apply fragment templates to slash-qualified business ids', () => {
