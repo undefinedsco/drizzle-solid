@@ -4,6 +4,7 @@ import { PodAsyncSession, PodOperation } from '../pod-session';
 import { generateSubjectUri } from '../sparql/helpers';
 import { InsertQueryPlan, type SelectFieldMap } from './types';
 import { inferSPARQLQueryType, orderRowsBySubjects, projectReturningRows } from './helpers';
+import { renderDefaultIdTemplate } from './default-id-template';
 
 export class InsertQueryBuilder<TTable extends PodTable<any> = PodTable<any>> {
   static readonly [entityKind] = 'InsertQueryBuilder';
@@ -214,6 +215,11 @@ export class InsertQueryBuilder<TTable extends PodTable<any> = PodTable<any>> {
     column: PodColumnBase,
     normalized: Record<string, any>
   ): unknown {
+    const key = this.isPrimaryKeyColumn(column) ? generateNanoId() : undefined;
+    if (typeof defaultValue === 'string' && key) {
+      return renderDefaultIdTemplate(defaultValue, { key, row: normalized });
+    }
+
     if (typeof defaultValue !== 'function') {
       return defaultValue;
     }
@@ -223,7 +229,6 @@ export class InsertQueryBuilder<TTable extends PodTable<any> = PodTable<any>> {
       return defaultFn();
     }
 
-    const key = this.isPrimaryKeyColumn(column) ? generateNanoId() : undefined;
     return defaultFn(key, normalized);
   }
 

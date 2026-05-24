@@ -97,6 +97,8 @@ export {
   InsertQueryBuilder,
   UpdateQueryBuilder,
   DeleteQueryBuilder,
+  renderDefaultIdTemplate,
+  type DefaultIdTemplateOptions,
 } from './core/query-builders';
 export type { SelectFieldMap, InsertQueryPlan, UpdateQueryPlan, DeleteQueryPlan } from './core/query-builders/types';
 
