@@ -217,7 +217,7 @@ export class InsertQueryBuilder<TTable extends PodTable<any> = PodTable<any>> {
   ): unknown {
     const key = this.isPrimaryKeyColumn(column) ? generateNanoId() : undefined;
     if (typeof defaultValue === 'string' && key) {
-      return renderDefaultIdTemplate(defaultValue, { key, row: normalized });
+      return renderDefaultIdTemplate(defaultValue, { key, row: normalized, resource: this.table });
     }
 
     if (typeof defaultValue !== 'function') {

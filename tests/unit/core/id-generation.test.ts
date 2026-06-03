@@ -113,6 +113,41 @@ describe('ID Generation', () => {
     })).toBe('task/secretary/task_1');
   });
 
+  it('should render link-aware id path selectors from strings', () => {
+    const chat = podTable('chat', {
+      id: id('id').default('{key}/index.ttl#this'),
+      title: string('title').predicate('http://schema.org/name'),
+    }, {
+      base: '/.data/chat/',
+      type: 'http://example.org/Chat',
+    });
+    const thread = podTable('thread', {
+      id: id('id').default('chat/{chat.id[0]}/index.ttl#{key}'),
+      chat: uri('chat').predicate('http://example.org/chat').link(chat),
+    }, {
+      base: '/.data/',
+      type: 'http://example.org/Thread',
+    });
+
+    expect(renderDefaultIdTemplate('chat/{chat.id[0]}/index.ttl#{key}', {
+      key: 'thread_1',
+      row: { chat: 'secretary' },
+      resource: thread,
+    })).toBe('chat/secretary/index.ttl#thread_1');
+
+    expect(renderDefaultIdTemplate('chat/{chat.id[0]}/index.ttl#{key}', {
+      key: 'thread_1',
+      row: { chat: '/.data/chat/secretary/index.ttl#this' },
+      resource: thread,
+    })).toBe('chat/secretary/index.ttl#thread_1');
+
+    expect(renderDefaultIdTemplate('chat/{chat.id[0]}/index.ttl#{key}', {
+      key: 'thread_1',
+      row: { chat: 'https://pod.example/.data/chat/secretary/index.ttl#this' },
+      resource: thread,
+    })).toBe('chat/secretary/index.ttl#thread_1');
+  });
+
   it('should reject {id} inside id default templates', () => {
     expect(() => renderDefaultIdTemplate('{yyyy}/{MM}/{dd}.ttl#{id}', {
       key: 'x',

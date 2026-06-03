@@ -8,7 +8,26 @@ import { DeleteQueryBuilder } from '@src/core/query-builders/delete-query-builde
 import { eq } from '@src/core/query-conditions';
 import { object, podTable, string, id, uri } from '@src/core/schema';
 import { UriResolverImpl } from '@src/core/uri/resolver';
-import { extractPodResourceTemplateValue, parsePodResourceRef } from '@src/core/resource-reference';
+import {
+  buildPodResourceIri,
+  buildPodResourceIriForDatabase,
+  buildPodResourceIriForResource,
+  extractPodResourceTemplateValue,
+  normalizePodDataResourceId,
+  parsePodResourceRef,
+  resolvePodBaseUrl,
+  resolvePodBaseUrlFromDatabase,
+  resolvePodResourceIriForDatabase,
+  resolvePodResourceId,
+  resolvePodResourceTemplateValue,
+} from '@src/core/resource-reference';
+import {
+  deleteExactRecord,
+  findExactRecord,
+  insertExactRecordOnce,
+  updateExactRecord,
+  upsertExactRecord,
+} from '@src/core/exact-records';
 
 const exactSparqlRows = vi.fn();
 
@@ -611,6 +630,159 @@ describe('IRI API', () => {
       deleteSpy.mockRestore();
     });
 
+    it('exact record helpers should route through resource APIs and strip identity fields from updates', async () => {
+      const approvalTable = podTable('approvals', {
+        id: id(),
+        name: string('name').predicate('https://schema.org/name'),
+      }, {
+        base: 'https://example.com/.data/approvals/',
+        type: 'https://example.org/Approval',
+        subjectTemplate: '{yyyy}/{MM}/{dd}.ttl#{id}',
+      });
+      const calls: Array<Record<string, unknown>> = [];
+      const resourceDb = {
+        async findByResource(resource: unknown, target: unknown) {
+          calls.push({ op: 'find', resource, target });
+          return { id: 'approval_123', name: 'Pending' };
+        },
+        async updateByResource(resource: unknown, target: unknown, data: Record<string, unknown>) {
+          calls.push({ op: 'update', resource, target, data });
+          return { id: 'approval_123', ...data };
+        },
+        async deleteByResource(resource: unknown, target: unknown) {
+          calls.push({ op: 'delete', resource, target });
+          return true;
+        },
+      };
+      const target = {
+        '@id': 'https://example.com/.data/approvals/2026/05/07.ttl#approval_123',
+        id: '2026/05/07.ttl#approval_123',
+      };
+
+      await expect(findExactRecord(resourceDb as any, approvalTable, target)).resolves.toMatchObject({
+        id: 'approval_123',
+      });
+      await updateExactRecord(resourceDb as any, approvalTable, target, {
+        id: 'should-not-update',
+        '@id': 'https://example.com/other#id',
+        subject: 'https://example.com/other#subject',
+        uri: 'https://example.com/other#uri',
+        name: 'Approved',
+        ignored: undefined,
+      });
+      await deleteExactRecord(resourceDb as any, approvalTable, target);
+
+      expect(calls).toEqual([
+        { op: 'find', resource: approvalTable, target },
+        { op: 'update', resource: approvalTable, target, data: { name: 'Approved' } },
+        { op: 'delete', resource: approvalTable, target },
+      ]);
+    });
+
+    it('upsertExactRecord should insert missing exact records and update existing records', async () => {
+      const approvalTable = podTable('approvals', {
+        id: id(),
+        name: string('name').predicate('https://schema.org/name'),
+      }, {
+        base: 'https://example.com/.data/approvals/',
+        type: 'https://example.org/Approval',
+        subjectTemplate: '{yyyy}/{MM}/{dd}.ttl#{id}',
+      });
+      const calls: Array<Record<string, unknown>> = [];
+      const existingTargets = new Set<string>(['existing']);
+      const resourceDb = {
+        async findByResource(resource: unknown, target: unknown) {
+          calls.push({ op: 'find', resource, target });
+          return existingTargets.has(String(target)) ? { id: target, name: 'Pending' } : null;
+        },
+        async updateByResource(resource: unknown, target: unknown, data: Record<string, unknown>) {
+          calls.push({ op: 'update', resource, target, data });
+          return { id: target, ...data };
+        },
+        insert(resource: unknown) {
+          return {
+            values(value: Record<string, unknown>) {
+              calls.push({ op: 'insert', resource, value });
+              return {
+                async execute() {
+                  return value;
+                },
+              };
+            },
+          };
+        },
+      };
+
+      await expect(upsertExactRecord(resourceDb as any, approvalTable, 'missing', {
+        id: 'missing',
+        name: 'Created',
+      }, {
+        id: 'ignored',
+        name: 'Updated',
+      })).resolves.toBe('inserted');
+      await expect(upsertExactRecord(resourceDb as any, approvalTable, 'existing', {
+        id: 'existing',
+        name: 'Created',
+      }, {
+        id: 'ignored',
+        '@id': 'https://example.com/ignored',
+        name: 'Updated',
+        ignored: undefined,
+      })).resolves.toBe('updated');
+
+      expect(calls).toEqual([
+        { op: 'find', resource: approvalTable, target: 'missing' },
+        { op: 'insert', resource: approvalTable, value: { id: 'missing', name: 'Created' } },
+        { op: 'find', resource: approvalTable, target: 'existing' },
+        { op: 'update', resource: approvalTable, target: 'existing', data: { name: 'Updated' } },
+      ]);
+    });
+
+    it('insertExactRecordOnce should skip existing exact records', async () => {
+      const approvalTable = podTable('approvals', {
+        id: id(),
+        name: string('name').predicate('https://schema.org/name'),
+      }, {
+        base: 'https://example.com/.data/approvals/',
+        type: 'https://example.org/Approval',
+        subjectTemplate: '{yyyy}/{MM}/{dd}.ttl#{id}',
+      });
+      const calls: Array<Record<string, unknown>> = [];
+      const resourceDb = {
+        async findByResource(resource: unknown, target: unknown) {
+          calls.push({ op: 'find', resource, target });
+          return target === 'existing' ? { id: target } : null;
+        },
+        insert(resource: unknown) {
+          return {
+            values(value: Record<string, unknown>) {
+              calls.push({ op: 'insert', resource, value });
+              return {
+                async execute() {
+                  return value;
+                },
+              };
+            },
+          };
+        },
+      };
+
+      await expect(insertExactRecordOnce(resourceDb as any, approvalTable, 'existing', {
+        id: 'existing',
+        name: 'Already there',
+      })).resolves.toBe(false);
+      await expect(insertExactRecordOnce(resourceDb as any, approvalTable, 'missing', {
+        id: 'missing',
+        name: 'Created',
+      })).resolves.toBe(true);
+
+      expect(calls).toEqual([
+        { op: 'find', resource: approvalTable, target: 'existing' },
+        { op: 'find', resource: approvalTable, target: 'missing' },
+        { op: 'insert', resource: approvalTable, value: { id: 'missing', name: 'Created' } },
+      ]);
+    });
+
     it('*ByResource methods should resolve naked short ids through the subject index', async () => {
       const approvalTable = podTable('approvals', {
         id: id(),
@@ -726,6 +898,135 @@ describe('IRI API', () => {
       });
       expect(parsePodResourceRef(approvalTable, 'approval-1')).toBeNull();
       expect(parsePodResourceRef(approvalTable, 'https://alice.example/.data/audits/2026/05/07.ttl#audit-1')).toBeNull();
+    });
+
+    it('Pod resource reference helpers should normalize ids and build full IRIs through ORM resource metadata', () => {
+      const chatTable = podTable('chat', {
+        id: id(),
+        title: string('title').predicate('https://schema.org/name'),
+      }, {
+        base: '/.data/chat/',
+        type: 'https://example.org/Chat',
+        subjectTemplate: '{id}/index.ttl#this',
+      });
+      const issueTable = podTable('issue', {
+        id: id(),
+      }, {
+        base: '/.data/issues/',
+        type: 'https://example.org/Issue',
+        subjectTemplate: '{id}.ttl',
+      });
+
+      expect(resolvePodBaseUrl('https://alice.example/profile/card#me')).toBe('https://alice.example');
+      expect(normalizePodDataResourceId('https://alice.example/.data/task/t1/2026/05/18/runs.ttl#run-1'))
+        .toBe('task/t1/2026/05/18/runs.ttl#run-1');
+      expect(resolvePodResourceId(issueTable, 'https://alice.example/.data/issues/issue-1.ttl'))
+        .toBe('issue-1.ttl');
+      expect(resolvePodResourceTemplateValue(issueTable, 'https://alice.example/.data/issues/issue-1.ttl'))
+        .toBe('issue-1');
+      expect(buildPodResourceIri('https://alice.example/profile/card#me', 'task/index.ttl#task-1'))
+        .toBe('https://alice.example/.data/task/index.ttl#task-1');
+      expect(buildPodResourceIri('https://alice.example/profile/card#me', '/settings/autonomy/grants/grant-1.ttl'))
+        .toBe('https://alice.example/settings/autonomy/grants/grant-1.ttl');
+      expect(buildPodResourceIriForResource('https://alice.example/profile/card#me', chatTable, 'chat-1/index.ttl#this'))
+        .toBe('https://alice.example/.data/chat/chat-1/index.ttl#this');
+      expect(buildPodResourceIriForResource('https://alice.example/profile/card#me', chatTable, 'https://bob.example/.data/chat/chat-2/index.ttl#this'))
+        .toBe('https://bob.example/.data/chat/chat-2/index.ttl#this');
+      expect(buildPodResourceIriForResource('https://alice.example/profile/card#me', chatTable, '/.data/chat/chat-3/index.ttl#this'))
+        .toBe('https://alice.example/.data/chat/chat-3/index.ttl#this');
+    });
+
+    it('Pod base helper should resolve database runtime shapes without app-local introspection', () => {
+      expect(resolvePodBaseUrlFromDatabase({
+        getDialect: () => ({
+          getPodUrl: () => 'https://alice.example/',
+        }),
+      })).toBe('https://alice.example');
+
+      expect(resolvePodBaseUrlFromDatabase({
+        getSession: () => ({
+          info: { podUrl: 'https://bob.example/' },
+        }),
+      })).toBe('https://bob.example');
+
+      expect(resolvePodBaseUrlFromDatabase({
+        session: {
+          info: { webId: 'https://carol.example/profile/card#me' },
+        },
+      })).toBe('https://carol.example');
+
+      expect(resolvePodBaseUrlFromDatabase({})).toBeNull();
+    });
+
+    it('database resource IRI helper should combine runtime Pod base with resource metadata', () => {
+      const chatTable = podTable('chat', {
+        id: id(),
+        title: string('title').predicate('https://schema.org/name'),
+      }, {
+        base: '/.data/chat/',
+        type: 'https://example.org/Chat',
+        subjectTemplate: '{id}/index.ttl#this',
+      });
+
+      const database = {
+        getSession: () => ({
+          info: { webId: 'https://alice.example/profile/card#me' },
+        }),
+      };
+
+      expect(buildPodResourceIriForDatabase(database, chatTable, { id: 'chat-1' }))
+        .toBe('https://alice.example/.data/chat/chat-1/index.ttl#this');
+      expect(resolvePodResourceIriForDatabase(database, chatTable, { id: 'chat-2' }))
+        .toBe('https://alice.example/.data/chat/chat-2/index.ttl#this');
+      expect(resolvePodResourceIriForDatabase({}, chatTable, { id: 'chat-3' }))
+        .toBeNull();
+    });
+
+    it('resource class helpers should expose schema-bound id and IRI operations', () => {
+      const chatTable = podTable('chat', {
+        id: id('id').default('{key}/index.ttl#this'),
+        title: string('title').predicate('https://schema.org/name'),
+      }, {
+        base: '/.data/chat/',
+        type: 'https://example.org/Chat',
+      });
+      const threadTable = podTable('thread', {
+        id: id('id').default('chat/{chat.id[0]}/index.ttl#{key}'),
+        chat: uri('chat').predicate('https://example.org/chat').link(chatTable),
+      }, {
+        base: '/.data/',
+        type: 'https://example.org/Thread',
+      });
+      const database = {
+        getSession: () => ({
+          info: { webId: 'https://alice.example/profile/card#me' },
+        }),
+      };
+
+      expect(chatTable.buildId({ id: 'chat-1' })).toBe('chat-1/index.ttl#this');
+      expect(threadTable.buildId({
+        id: 'thread-1',
+        chat: 'chat-1',
+      })).toBe('chat/chat-1/index.ttl#thread-1');
+      expect(threadTable.buildIri('https://alice.example/profile/card#me', {
+        id: 'thread-1',
+        chat: 'chat-1',
+      })).toBe('https://alice.example/.data/chat/chat-1/index.ttl#thread-1');
+      expect(threadTable.buildIriForDatabase(database, {
+        id: 'thread-2',
+        chat: 'chat-1',
+      })).toBe('https://alice.example/.data/chat/chat-1/index.ttl#thread-2');
+      expect(threadTable.resolveIriForDatabase({}, {
+        id: 'thread-3',
+        chat: 'chat-1',
+      })).toBeNull();
+      expect(threadTable.parseRef('https://alice.example/.data/chat/chat-1/index.ttl#thread-1'))
+        .toEqual({
+          resourceId: 'chat/chat-1/index.ttl#thread-1',
+          templateValues: { chat: 'chat-1', key: 'thread-1' },
+        });
+      expect(threadTable.extractTemplateValue('https://alice.example/.data/chat/chat-1/index.ttl#thread-1', 'chat'))
+        .toBe('chat-1');
     });
 
     it('findByIri should prefer exact subject reads before whereByIri fallback', async () => {

@@ -7,16 +7,37 @@ export * from './solid';
 export { findByIRI } from './utils/find-by-iri';
 export { resolveRowSubject } from './core/query-builders/helpers';
 export {
+  deleteExactRecord,
+  findExactRecord,
+  insertExactRecordOnce,
+  updateExactRecord,
+  upsertExactRecord,
+  type ExactRecordDatabase,
+} from './core/exact-records';
+export {
+  buildPodResourceIri,
+  buildPodResourceIriForDatabase,
+  buildPodResourceIriForResource,
   parsePodResourceRef,
   extractPodResourceTemplateValue,
+  normalizePodDataResourceId,
+  resolvePodBaseUrl,
+  resolvePodBaseUrlFromDatabase,
+  resolvePodResourceIriForDatabase,
+  resolvePodResourceId,
+  resolvePodResourceTemplateValue,
   type PodResourceReference,
+  type PodResourceTarget,
 } from './core/resource-reference';
 export {
   createRepositoryDescriptor,
   definePodRepository,
+  initSolidResources,
   initSolidTables,
+  type AnyPodResource,
   type AnyPodTable,
   type PodRepositoryDescriptor,
+  type PodRepositoryOptions,
   type RepositoryCacheOptions,
   type RepositoryInvalidations,
   type RepositoryScope,
@@ -62,6 +83,8 @@ export {
   isSolidSchema,
   // 类型
   type PodColumnBase as PodColumn,
+  type PodResource,
+  type PodResourceWithColumns,
   type PodTable,
   type SolidSchemaOptions,
   type NamespaceConfig,

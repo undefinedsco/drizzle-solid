@@ -10,6 +10,7 @@ import type { SolidDatabase } from '../driver';
 
 type RepositoryTable = PodTable<any>;
 export type AnyPodTable = RepositoryTable;
+export type AnyPodResource = RepositoryTable;
 
 export interface PodExecutableQuery<TRow = unknown> {
   where(condition: unknown): PodExecutableQuery<TRow>;
@@ -38,6 +39,8 @@ export async function initSolidTables(
 ): Promise<void> {
   await db.init?.(tables as RepositoryTable[]);
 }
+
+export const initSolidResources = initSolidTables;
 
 export interface RepositoryCacheOptions {
   staleTime?: number;

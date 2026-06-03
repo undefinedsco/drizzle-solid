@@ -1,7 +1,11 @@
+import type { PodTable } from '../schema';
+
 export interface DefaultIdTemplateOptions {
   key: string;
   row?: Record<string, unknown>;
   now?: Date;
+  resource?: PodTable<any>;
+  links?: Record<string, PodTable<any>>;
 }
 
 export function renderDefaultIdTemplate(
@@ -30,7 +34,7 @@ export function renderDefaultIdTemplate(
     if (expression === 'MM') return dateParts.MM;
     if (expression === 'dd') return dateParts.dd;
 
-    const value = resolveExpression(expression, row);
+    const value = resolveExpression(expression, row, options);
     return value === null || value === undefined ? '' : String(value);
   });
 }
@@ -43,21 +47,241 @@ function resolveDate(row: Record<string, unknown>, now = new Date()): Date {
   return Number.isFinite(date.getTime()) ? date : now;
 }
 
-function resolveExpression(expression: string, row: Record<string, unknown>): unknown {
-  const match = expression.match(/^(.+?)\[(.*)\]$/);
-  if (!match) {
-    return resolvePath(expression, row);
+function resolveExpression(
+  expression: string,
+  row: Record<string, unknown>,
+  options: DefaultIdTemplateOptions,
+): unknown {
+  const parsed = parseExpression(expression);
+  let value = resolveTemplatePath(parsed.path, row, options);
+
+  for (const transform of parsed.transforms) {
+    value = applyTransform(value, transform, parsed.path, options);
   }
 
-  const value = resolvePath(match[1].trim(), row);
-  return applyPathSelector(value, match[2].trim());
+  return parsed.selector
+    ? applyPathSelector(value, parsed.selector)
+    : value;
 }
 
-function resolvePath(path: string, row: Record<string, unknown>): unknown {
-  return path.split('.').reduce<unknown>((current, part) => {
+function parseExpression(expression: string): {
+  path: string;
+  transforms: string[];
+  selector?: string;
+} {
+  const selectorMatch = expression.match(/^(.+?)\[(.*)\]$/);
+  const source = selectorMatch ? selectorMatch[1].trim() : expression;
+  const [path, ...transforms] = source
+    .split('|')
+    .map((part) => part.trim())
+    .filter(Boolean);
+
+  return {
+    path: path ?? expression,
+    transforms,
+    selector: selectorMatch?.[2]?.trim(),
+  };
+}
+
+function resolveTemplatePath(
+  path: string,
+  row: Record<string, unknown>,
+  options: DefaultIdTemplateOptions,
+): unknown {
+  const parts = path.split('.');
+  const root = parts[0];
+
+  return parts.reduce<unknown>((current, part, index) => {
+    if (typeof current === 'string') {
+      return part === 'id' && root
+        ? extractResourceId(current, root, options)
+        : undefined;
+    }
     if (!current || typeof current !== 'object') return undefined;
+    if (part === 'id' && root && !('id' in current)) {
+      return extractResourceId(current, root, options);
+    }
+    if (index > 0 && part === 'id') {
+      const ref = readRef(current);
+      if (ref) return extractResourceId(current, root ?? '', options);
+    }
     return (current as Record<string, unknown>)[part];
   }, row);
+}
+
+function applyTransform(
+  value: unknown,
+  transform: string,
+  field: string,
+  options: DefaultIdTemplateOptions,
+): unknown {
+  if (transform === 'slug') {
+    return slugifyValue(String(value ?? ''));
+  }
+
+  const resourceId = extractResourceId(value, field, options);
+
+  if (transform === 'resource') {
+    return resourceId;
+  }
+
+  if (transform === 'document') {
+    return resourceId?.split('#')[0] ?? '';
+  }
+
+  if (transform === 'owner') {
+    return resourceId ? deriveOwnerDir(resourceId) : '';
+  }
+
+  const values = extractTemplateValuesForField(value, field, options);
+  if (transform === 'id') {
+    return values?.id ?? values?.key ?? resourceId ?? '';
+  }
+
+  return values?.[transform] ?? '';
+}
+
+function extractResourceId(
+  value: unknown,
+  field: string,
+  options: DefaultIdTemplateOptions,
+): string | null {
+  const ref = readRef(value);
+  if (!ref) return null;
+  const resource = resolveLinkedResource(field, options);
+  if (!resource) return normalizePodDataResourceId(ref);
+
+  if (!isCompleteResourceId(ref)) {
+    return renderLinkedResourceId(resource, ref);
+  }
+
+  const relative = relativeSubjectFromRef(resource, ref);
+  return normalizePodDataResourceId(relative ?? ref);
+}
+
+function extractTemplateValuesForField(
+  value: unknown,
+  field: string,
+  options: DefaultIdTemplateOptions,
+): Record<string, string> | null {
+  const ref = readRef(value);
+  if (!ref) return null;
+  const resource = resolveLinkedResource(field, options);
+  if (!resource) return null;
+
+  const relative = relativeSubjectFromRef(resource, ref);
+  if (!relative) return null;
+
+  const template = resourceTemplate(resource);
+  if (!template) {
+    return { id: normalizePodDataResourceId(relative) };
+  }
+
+  return extractVarsFromTemplate(normalizePodDataResourceId(relative), template);
+}
+
+function resolveLinkedResource(field: string, options: DefaultIdTemplateOptions): PodTable<any> | null {
+  const direct = options.links?.[field];
+  if (direct) return direct;
+
+  const column = options.resource?.columns?.[field] as any;
+  return column?.getLinkTable?.() ?? column?.options?.linkTable ?? null;
+}
+
+function resourceTemplate(resource: PodTable<any>): string | null {
+  const subjectTemplate = resource.getSubjectTemplate?.() ?? resource.config?.subjectTemplate;
+  if (subjectTemplate) return subjectTemplate;
+
+  const defaultValue = (resource.columns?.id as any)?.options?.defaultValue;
+  return typeof defaultValue === 'string' ? defaultValue : null;
+}
+
+function renderLinkedResourceId(resource: PodTable<any>, localId: string): string {
+  const template = resourceTemplate(resource);
+  if (!template) return localId;
+
+  const defaultValue = (resource.columns?.id as any)?.options?.defaultValue;
+  if (typeof defaultValue === 'function') {
+    return String(defaultValue(localId, {}));
+  }
+
+  return template.replace(/\{([^}]+)\}/g, (_match, token) => {
+    const field = parseTemplateField(token);
+    return field === 'id' || field === 'key' ? localId : '';
+  });
+}
+
+function readRef(value: unknown): string | null {
+  if (typeof value === 'string' && value.length > 0) return value;
+  if (!value || typeof value !== 'object') return null;
+  const record = value as Record<string, unknown>;
+  const ref = record['@id'] ?? record.subject ?? record.id;
+  return typeof ref === 'string' && ref.length > 0 ? ref : null;
+}
+
+function resourcePath(resource: PodTable<any>): string {
+  return normalizeResourcePath(resource.getResourcePath?.() ?? resource.config?.base ?? '');
+}
+
+function relativeSubjectFromRef(resource: PodTable<any>, ref: string): string | null {
+  const path = resourcePath(resource);
+  if (!path) return normalizePodDataResourceId(ref);
+
+  const candidates = Array.from(new Set([
+    path,
+    path.replace(/^\/+/, ''),
+    path.endsWith('/') ? path.slice(0, -1) : path,
+  ].filter(Boolean)));
+
+  for (const candidate of candidates) {
+    const index = ref.indexOf(candidate);
+    if (index < 0) continue;
+    let relative = ref.slice(index + candidate.length);
+    if (relative.startsWith('/')) relative = relative.slice(1);
+    return relative.length > 0 ? relative : null;
+  }
+
+  return normalizePodDataResourceId(ref);
+}
+
+function extractVarsFromTemplate(relativePath: string, template: string): Record<string, string> | null {
+  let groupIndex = 0;
+  const groupToField = new Map<string, string>();
+  const parts: string[] = [];
+  let cursor = 0;
+  for (const match of template.matchAll(/\{([^}]+)\}/g)) {
+    parts.push(escapeRegExp(template.slice(cursor, match.index)));
+    const groupName = `var${groupIndex++}`;
+    groupToField.set(groupName, parseTemplateField(match[1] ?? ''));
+    parts.push(`(?<${groupName}>.+?)`);
+    cursor = match.index + match[0].length;
+  }
+  parts.push(escapeRegExp(template.slice(cursor)));
+  const regex = parts.join('');
+
+  try {
+    const match = relativePath.match(new RegExp(`^${regex}$`));
+    if (!match?.groups) return null;
+    const values: Record<string, string> = {};
+    for (const [groupName, value] of Object.entries(match.groups)) {
+      const field = groupToField.get(groupName);
+      if (!field || value === undefined) continue;
+      values[field] = decodeURIComponent(value);
+    }
+    return values;
+  } catch {
+    return null;
+  }
+}
+
+function parseTemplateField(token: string): string {
+  const expression = token.split('|').map((part) => part.trim()).filter(Boolean)[0] ?? token;
+  const withoutSelector = expression.replace(/\[[^\]]*\]$/u, '').trim();
+  return withoutSelector.split('.')[0]?.trim() || withoutSelector || expression;
+}
+
+function escapeRegExp(value: string): string {
+  return value.replace(/[.*+?^${}()|[\]\\]/gu, '\\$&');
 }
 
 function applyPathSelector(value: unknown, selector: string): unknown {
@@ -79,9 +303,73 @@ function applyPathSelector(value: unknown, selector: string): unknown {
 }
 
 function splitResourcePath(value: unknown): string[] | null {
-  if (typeof value !== 'string' || value.length === 0) return null;
-  const withoutHash = value.split('#')[0] ?? value;
-  return withoutHash.split('/').filter(Boolean);
+  const ref = readRef(value);
+  if (!ref) return null;
+  const normalized = normalizePodDataResourceId(ref);
+  const [document, fragment] = normalized.split('#');
+  const parts = (document ?? normalized).split('/').filter(Boolean);
+  if (fragment) parts.push(fragment);
+  return parts;
+}
+
+function normalizePodDataResourceId(ref: string): string {
+  const hashIndex = ref.indexOf('#');
+  const [documentRef, fragment = ''] = hashIndex >= 0
+    ? [ref.slice(0, hashIndex), ref.slice(hashIndex)]
+    : [ref, ''];
+  const dataIndex = documentRef.indexOf('/.data/');
+  const relative = dataIndex >= 0
+    ? documentRef.slice(dataIndex + '/.data/'.length)
+    : documentRef.replace(/^\/?\.data\//u, '').replace(/^\/+/u, '');
+  return `${relative}${fragment}`;
+}
+
+function normalizeResourcePath(path: string): string {
+  return path.trim().replace(/^(\.\/)+/, '');
+}
+
+function isCompleteResourceId(value: string): boolean {
+  return (
+    /^https?:\/\//u.test(value)
+    || value.startsWith('/')
+    || value.startsWith('#')
+    || value.includes('#')
+    || /\.(ttl|jsonld|json)(?:$|[?#])/iu.test(value)
+  );
+}
+
+function deriveOwnerDir(resourceId: string): string {
+  const normalized = normalizePodDataResourceId(resourceId);
+  const hashIndex = normalized.indexOf('#');
+  const document = hashIndex >= 0 ? normalized.slice(0, hashIndex) : normalized;
+  const fragment = hashIndex >= 0 ? normalized.slice(hashIndex + 1) : '';
+
+  const dated = document.match(/^(.+)\/\d{4}\/\d{2}\/\d{2}\/[^/]+\.(?:ttl|jsonld|json)$/i);
+  if (dated?.[1]) return dated[1];
+
+  if (document === 'task/index.ttl' && fragment && fragment !== 'this') {
+    return `task/${fragment}`;
+  }
+
+  const index = document.match(/^(.+)\/index\.(?:ttl|jsonld|json)$/i);
+  if (index?.[1]) return index[1];
+
+  const doc = document.match(/^(.+)\.(?:ttl|jsonld|json)$/i);
+  if (doc?.[1]) return doc[1];
+
+  const parts = document.split('/').filter(Boolean);
+  return parts.length > 1 ? parts.slice(0, -1).join('/') : document;
+}
+
+function slugifyValue(value: string): string {
+  return value
+    .normalize('NFKC')
+    .toLowerCase()
+    .trim()
+    .replace(/[\s_]+/g, '-')
+    .replace(/[^\p{Letter}\p{Number}.-]+/gu, '-')
+    .replace(/-+/g, '-')
+    .replace(/^-|-$/g, '');
 }
 
 function normalizeIndex(index: number, length: number): number {

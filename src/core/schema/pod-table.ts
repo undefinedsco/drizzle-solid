@@ -15,6 +15,16 @@ import {
 } from './types';
 import { SolidSchema } from './solid-schema';
 import { deepClone } from '../../utils/helpers';
+import {
+  buildPodResourceIriForDatabase,
+  buildPodResourceIriForResource,
+  extractPodResourceTemplateValue,
+  parsePodResourceRef,
+  resolvePodResourceId,
+  resolvePodResourceIriForDatabase,
+  type PodResourceReference,
+  type PodResourceTarget,
+} from '../resource-reference';
 
 /**
  * PodTable with columns accessible as direct properties.
@@ -22,6 +32,16 @@ import { deepClone } from '../../utils/helpers';
  */
 export type PodTableWithColumns<TColumns extends Record<string, PodColumnBase<any, any, any, any>>> = 
   PodTable<TColumns> & TColumns;
+
+/**
+ * Resource-narrative alias for shared models. Table naming remains for
+ * drizzle-compatible internals; model packages should expose resources.
+ */
+export type PodResource<TColumns extends Record<string, PodColumnBase<any, any, any, any>> = Record<string, PodColumnBase<any, any, any, any>>> =
+  PodTable<TColumns>;
+
+export type PodResourceWithColumns<TColumns extends Record<string, PodColumnBase<any, any, any, any>>> =
+  PodTableWithColumns<TColumns>;
 
 export interface PodTableInitializer {
   registerTable(table: PodTable<any>): Promise<void>;
@@ -168,6 +188,30 @@ export class PodTable<TColumns extends Record<string, PodColumnBase<any, any, an
    * @deprecated subjectTemplate is compatibility-only. Omitted means exact-id mode.
    */
   getSubjectTemplate(): string | undefined { return this.subjectTemplate; }
+
+  buildId(target: PodResourceTarget): string {
+    return resolvePodResourceId(this, target);
+  }
+
+  buildIri(webIdOrPodUrl: string, target: PodResourceTarget): string {
+    return buildPodResourceIriForResource(webIdOrPodUrl, this, target);
+  }
+
+  buildIriForDatabase(database: unknown, target: PodResourceTarget): string {
+    return buildPodResourceIriForDatabase(database, this, target);
+  }
+
+  resolveIriForDatabase(database: unknown, target: PodResourceTarget | null | undefined): string | null {
+    return resolvePodResourceIriForDatabase(database, this, target);
+  }
+
+  parseRef(ref: string | null | undefined): PodResourceReference | null {
+    return parsePodResourceRef(this, ref);
+  }
+
+  extractTemplateValue(ref: string | null | undefined, field = 'id'): string | null {
+    return extractPodResourceTemplateValue(this, ref, field);
+  }
   hasCustomTemplate(): boolean { return this.hasCustomSubjectTemplate; }
   getSubClassOf(): string[] { return [...this.parentClasses]; }
   getMapping(): PodTableMapping { return this.mapping; }
