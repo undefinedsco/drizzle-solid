@@ -936,6 +936,52 @@ describe('IRI API', () => {
         .toBe('https://alice.example/.data/chat/chat-3/index.ttl#this');
     });
 
+    it('Pod resource helpers should treat template-matching container ids as exact ids', () => {
+      const agentTable = podTable('agent', {
+        id: id('id').default('{key}/'),
+        name: string('name').predicate('https://schema.org/name'),
+      }, {
+        base: '/agents/',
+        type: 'https://example.org/Agent',
+      });
+      const skillTable = podTable('skill', {
+        id: id('id').default('{agent.id[0]}/skills/{key}/'),
+        agent: uri('agent').predicate('https://example.org/agent').link(agentTable),
+        name: string('name').predicate('https://schema.org/name'),
+      }, {
+        base: '/agents/',
+        type: 'https://example.org/Skill',
+      });
+
+      expect(resolvePodResourceId(agentTable, { id: '__secretary__' }))
+        .toBe('__secretary__/');
+      expect(resolvePodResourceId(agentTable, { id: '__secretary__/' }))
+        .toBe('__secretary__/');
+      expect(resolvePodResourceId(agentTable, '__secretary__/'))
+        .toBe('__secretary__/');
+      expect(buildPodResourceIriForResource('https://alice.example/profile/card#me', agentTable, { id: '__secretary__/' }))
+        .toBe('https://alice.example/agents/__secretary__/');
+      expect(parsePodResourceRef(agentTable, '__secretary__/')).toEqual({
+        resourceId: '__secretary__/',
+        templateValues: { key: '__secretary__' },
+      });
+
+      expect(resolvePodResourceId(agentTable, { id: 'openai/gpt-4o' }))
+        .toBe('openai/gpt-4o/');
+      expect(resolvePodResourceId(skillTable, {
+        id: 'symphony',
+        agent: 'https://alice.example/agents/__secretary__/',
+      })).toBe('__secretary__/skills/symphony/');
+      expect(resolvePodResourceId(skillTable, {
+        id: '__secretary__/skills/symphony/',
+        agent: 'https://alice.example/agents/__secretary__/',
+      })).toBe('__secretary__/skills/symphony/');
+      expect(buildPodResourceIriForResource('https://alice.example/profile/card#me', skillTable, {
+        id: '__secretary__/skills/symphony/',
+        agent: 'https://alice.example/agents/__secretary__/',
+      })).toBe('https://alice.example/agents/__secretary__/skills/symphony/');
+    });
+
     it('Pod base helper should resolve database runtime shapes without app-local introspection', () => {
       expect(resolvePodBaseUrlFromDatabase({
         getDialect: () => ({

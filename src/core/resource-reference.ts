@@ -91,6 +91,23 @@ function isBaseRelativeSubjectId(value: string): boolean {
   );
 }
 
+function isTemplateCompleteResourceId(resource: AnyPodResource, value: string): boolean {
+  if (!value || /^https?:\/\//.test(value) || value.startsWith('/')) {
+    return false;
+  }
+
+  const template = podResourceSubjectTemplate(resource) ?? podResourceIdDefaultTemplate(resource);
+  if (!template) {
+    return false;
+  }
+
+  return extractTemplateValues(templateRelativeSubject(resource, value), template) !== null;
+}
+
+function isResourceRelativeSubjectId(resource: AnyPodResource, value: string): boolean {
+  return isBaseRelativeSubjectId(value) || isTemplateCompleteResourceId(resource, value);
+}
+
 function relativeSubjectFromRef(resource: AnyPodResource, ref: string): string | null {
   const resourcePath = podResourcePath(resource);
   if (!resourcePath) return null;
@@ -110,6 +127,10 @@ function relativeSubjectFromRef(resource: AnyPodResource, ref: string): string |
   }
 
   if (isBaseRelativeSubjectId(ref)) {
+    return normalizeResourcePath(ref);
+  }
+
+  if (isTemplateCompleteResourceId(resource, ref)) {
     return normalizeResourcePath(ref);
   }
 
@@ -246,6 +267,9 @@ export function resolvePodResourceId(resource: AnyPodResource, target: PodResour
   if (isCompleteResourceId(id)) {
     return normalizePodDataResourceId(id);
   }
+  if (isTemplateCompleteResourceId(resource, id)) {
+    return normalizePodDataResourceId(id);
+  }
 
   const defaultId = resolveDefaultResourceId(resource, id, target);
   if (defaultId) {
@@ -293,7 +317,7 @@ export function buildPodResourceIriForResource(
   }
 
   const id = resolvePodResourceId(resource, target);
-  const relative = isBaseRelativeSubjectId(id)
+  const relative = isResourceRelativeSubjectId(resource, id)
     ? `${podResourcePath(resource).replace(/\/+$/u, '')}/${normalizeResourcePath(id)}`
     : resource.resolveUri?.(id) ?? `/.data/${normalizePodDataResourceId(id)}`;
   return buildPodResourceIri(webIdOrPodUrl, relative);
@@ -352,6 +376,7 @@ function isCompleteResourceId(value: string): boolean {
 
 function assertCompleteStringResourceId(resource: AnyPodResource, id: string): void {
   if (isCompleteResourceId(id)) return;
+  if (isTemplateCompleteResourceId(resource, id)) return;
 
   const hasDefault = resource.columns?.id?.options?.defaultValue !== undefined;
   const template = podResourceSubjectTemplate(resource);
