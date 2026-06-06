@@ -93,13 +93,11 @@ function resolveTemplatePath(
 
   return parts.reduce<unknown>((current, part, index) => {
     if (typeof current === 'string') {
-      return part === 'id' && root
-        ? extractResourceId(current, root, options)
-        : undefined;
+      return root ? resolveResourceProperty(current, root, part, options) : undefined;
     }
     if (!current || typeof current !== 'object') return undefined;
-    if (part === 'id' && root && !('id' in current)) {
-      return extractResourceId(current, root, options);
+    if (root && isResourceProperty(part) && !((part === 'id' || part === 'key') && part in current)) {
+      return resolveResourceProperty(current, root, part, options);
     }
     if (index > 0 && part === 'id') {
       const ref = readRef(current);
@@ -107,6 +105,44 @@ function resolveTemplatePath(
     }
     return (current as Record<string, unknown>)[part];
   }, row);
+}
+
+function isResourceProperty(part: string): boolean {
+  return part === 'id'
+    || part === 'key'
+    || part === 'doc'
+    || part === 'document'
+    || part === 'dir'
+    || part === 'owner';
+}
+
+function resolveResourceProperty(
+  value: unknown,
+  field: string,
+  property: string,
+  options: DefaultIdTemplateOptions,
+): unknown {
+  if (property === 'id') {
+    return extractResourceId(value, field, options);
+  }
+
+  const resourceId = extractResourceId(value, field, options);
+  if (!resourceId) return undefined;
+
+  if (property === 'key') {
+    const values = extractTemplateValuesForField(value, field, options);
+    return values?.key ?? values?.id ?? deriveResourceKey(resourceId);
+  }
+
+  if (property === 'doc' || property === 'document') {
+    return resourceDocument(resourceId);
+  }
+
+  if (property === 'dir' || property === 'owner') {
+    return deriveOwnerDir(resourceId);
+  }
+
+  return undefined;
 }
 
 function applyTransform(
@@ -126,7 +162,7 @@ function applyTransform(
   }
 
   if (transform === 'document') {
-    return resourceId?.split('#')[0] ?? '';
+    return resourceId ? resourceDocument(resourceId) : '';
   }
 
   if (transform === 'owner') {
@@ -169,7 +205,8 @@ function extractTemplateValuesForField(
   const resource = resolveLinkedResource(field, options);
   if (!resource) return null;
 
-  const relative = relativeSubjectFromRef(resource, ref);
+  const relative = relativeSubjectFromRef(resource, ref)
+    ?? (!isCompleteResourceId(ref) ? renderLinkedResourceId(resource, ref) : null);
   if (!relative) return null;
 
   const template = resourceTemplate(resource);
@@ -359,6 +396,33 @@ function deriveOwnerDir(resourceId: string): string {
 
   const parts = document.split('/').filter(Boolean);
   return parts.length > 1 ? parts.slice(0, -1).join('/') : document;
+}
+
+function resourceDocument(resourceId: string): string {
+  const normalized = normalizePodDataResourceId(resourceId);
+  const hashIndex = normalized.indexOf('#');
+  return hashIndex >= 0 ? normalized.slice(0, hashIndex) : normalized;
+}
+
+function deriveResourceKey(resourceId: string): string {
+  const normalized = normalizePodDataResourceId(resourceId);
+  const hashIndex = normalized.indexOf('#');
+  if (hashIndex >= 0) {
+    const fragment = normalized.slice(hashIndex + 1);
+    if (fragment && fragment !== 'this' && fragment !== 'me' && fragment !== 'it') {
+      return fragment;
+    }
+  }
+
+  const document = resourceDocument(normalized).replace(/\/+$/u, '');
+  const index = document.match(/(?:^|\/)([^/]+)\/index\.(?:ttl|jsonld|json)$/iu);
+  if (index?.[1]) return index[1];
+
+  const file = document.match(/(?:^|\/)([^/]+)\.(?:ttl|jsonld|json)$/iu);
+  if (file?.[1]) return file[1];
+
+  const parts = document.split('/').filter(Boolean);
+  return parts.length > 0 ? parts[parts.length - 1] : normalized;
 }
 
 function slugifyValue(value: string): string {

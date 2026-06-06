@@ -148,6 +148,76 @@ describe('ID Generation', () => {
     })).toBe('chat/secretary/index.ttl#thread_1');
   });
 
+  it('should render semantic resource properties for linked id defaults', () => {
+    const chat = podTable('chat', {
+      id: id('id').default('{key}/index.ttl#this'),
+      title: string('title').predicate('http://schema.org/name'),
+    }, {
+      base: '/.data/chat/',
+      type: 'http://example.org/Chat',
+    });
+    const task = podTable('task', {
+      id: id('id').default('index.ttl#{key}'),
+      title: string('title').predicate('http://schema.org/name'),
+    }, {
+      base: '/.data/task/',
+      type: 'http://example.org/Task',
+    });
+    const thread = podTable('thread', {
+      id: id('id').default('chat/{chat.key}/index.ttl#{key}'),
+      chat: uri('chat').predicate('http://example.org/chat').link(chat),
+      task: uri('task').predicate('http://example.org/task').link(task),
+    }, {
+      base: '/.data/',
+      type: 'http://example.org/Thread',
+    });
+    const run = podTable('run', {
+      id: id('id').default('{thread.dir}/{yyyy}/{MM}/{dd}/runs.ttl#{key}'),
+      thread: uri('thread').predicate('http://example.org/thread').link(thread),
+      createdAt: timestamp('createdAt').predicate('http://schema.org/dateCreated'),
+    }, {
+      base: '/.data/',
+      type: 'http://example.org/Run',
+    });
+    const step = podTable('step', {
+      id: id('id').default('{run.doc}#{key}'),
+      run: uri('run').predicate('http://example.org/run').link(run),
+    }, {
+      base: '/.data/',
+      type: 'http://example.org/RunStep',
+    });
+
+    expect(renderDefaultIdTemplate('chat/{chat.key}/index.ttl#{key}', {
+      key: 'thread_1',
+      row: { chat: 'secretary' },
+      resource: thread,
+    })).toBe('chat/secretary/index.ttl#thread_1');
+
+    expect(renderDefaultIdTemplate('chat/{chat.key}/index.ttl#{key}', {
+      key: 'thread_1',
+      row: { chat: 'https://pod.example/.data/chat/secretary/index.ttl#this' },
+      resource: thread,
+    })).toBe('chat/secretary/index.ttl#thread_1');
+
+    expect(renderDefaultIdTemplate('task/{task.key}/index.ttl#{key}', {
+      key: 'thread_1',
+      row: { task: 'https://pod.example/.data/task/index.ttl#task_1' },
+      resource: thread,
+    })).toBe('task/task_1/index.ttl#thread_1');
+
+    expect(renderDefaultIdTemplate('{thread.dir}/2026/05/25/runs.ttl#{key}', {
+      key: 'run_1',
+      row: { thread: 'https://pod.example/.data/task/task_1/index.ttl#thread_1' },
+      resource: run,
+    })).toBe('task/task_1/2026/05/25/runs.ttl#run_1');
+
+    expect(renderDefaultIdTemplate('{run.doc}#{key}', {
+      key: 'step_1',
+      row: { run: 'https://pod.example/.data/task/task_1/2026/05/25/runs.ttl#run_1' },
+      resource: step,
+    })).toBe('task/task_1/2026/05/25/runs.ttl#step_1');
+  });
+
   it('should reject {id} inside id default templates', () => {
     expect(() => renderDefaultIdTemplate('{yyyy}/{MM}/{dd}.ttl#{id}', {
       key: 'x',
