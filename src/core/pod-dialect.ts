@@ -57,8 +57,8 @@ export interface PodDialectConfig {
   /**
    * Controls implicit LDP container/resource probes before ORM operations.
    *
+   * - best-effort: register schema metadata, but defer LDP preparation to write time. This is the default.
    * - strict: fail when preparation fails.
-   * - best-effort: register schema metadata, but defer LDP preparation to write time.
    * - off: do not preflight resource preparation; let direct LDP reads/writes surface real failures.
    */
   resourcePreparation?: 'strict' | 'best-effort' | 'off';
@@ -1379,7 +1379,7 @@ export class PodDialect {
   // ========== TypeIndex 相关方法 ==========
 
   getResourcePreparationMode(): NonNullable<PodDialectConfig['resourcePreparation']> {
-    return this.config.resourcePreparation ?? 'strict';
+    return this.config.resourcePreparation ?? 'best-effort';
   }
 
   shouldSkipResourcePreparation(): boolean {

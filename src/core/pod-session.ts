@@ -60,7 +60,7 @@ export class PodAsyncSession {
     const preparationMode: ResourcePreparationMode =
       typeof (this.dialect as unknown as { getResourcePreparationMode?: () => ResourcePreparationMode }).getResourcePreparationMode === 'function'
         ? (this.dialect as unknown as { getResourcePreparationMode: () => ResourcePreparationMode }).getResourcePreparationMode()
-        : 'strict';
+        : 'best-effort';
 
     if (preparationMode === 'off') {
       if (table && typeof table.markInitialized === 'function') {

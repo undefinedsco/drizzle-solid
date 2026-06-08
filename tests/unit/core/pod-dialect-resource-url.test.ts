@@ -147,6 +147,23 @@ const table = new PodTable('profile', {
     expect(dialect.shouldUseWriteTimeResourcePreparation()).toBe(true);
   });
 
+  it('defaults resource preparation to best-effort write-time preparation', () => {
+    const dialect = new PodDialect({
+      session: {
+        info: {
+          isLoggedIn: true,
+          webId: 'https://pod.example/ganbb/profile/card#me'
+        },
+        fetch: fetchMock,
+      } as any,
+    });
+
+    expect(dialect.getResourcePreparationMode()).toBe('best-effort');
+    expect(dialect.shouldSkipResourcePreparation()).toBe(false);
+    expect(dialect.shouldUseWriteTimeResourcePreparation()).toBe(true);
+    expect(dialect.shouldContinueAfterResourcePreparationError()).toBe(true);
+  });
+
   it('treats the Pod storage root as the container preparation boundary', async () => {
     const dialect = new PodDialect({
       session: {
