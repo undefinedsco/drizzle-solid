@@ -12,7 +12,9 @@ This document describes the automated release process for drizzle-solid.
 
 2. **Permissions**: Ensure you have push access to the repository and npm publish rights
 
-## Automated Release (Recommended)
+## Automated Release
+
+Normal releases are tag-driven. Do not run `npm publish` or `yarn publish` from a local checkout for routine releases; pushing a version tag triggers GitHub Actions, and the workflow publishes the package with `secrets.NPM_TOKEN`.
 
 ### Using the release script
 
@@ -97,7 +99,8 @@ If npm publish fails but the tag was created:
 
 1. Check npm token is valid and has publish permissions
 2. Verify package name is available on npm
-3. Manually publish: `yarn build && yarn publish`
+3. Fix the workflow or package metadata, then re-run the GitHub Actions release job when possible
+4. Local publish is an emergency maintainer-only recovery path; do not use it as part of the standard LinX dependency upgrade flow
 
 ## CI/CD Workflows
 
