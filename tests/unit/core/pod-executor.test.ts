@@ -37,6 +37,7 @@ function createDeps() {
       ensureContainerExists: vi.fn(),
       ensureResourceExists: vi.fn(),
       shouldSkipResourcePreparation: vi.fn(() => false),
+      shouldUseWriteTimeResourcePreparation: vi.fn(() => false),
       shouldContinueAfterResourcePreparationError: vi.fn(() => false),
       ensureIdentifierCondition: vi.fn(),
       resourceExists: vi.fn(),
@@ -106,6 +107,7 @@ describe('PodExecutor', () => {
     deps.sparqlExecutor.executeQueryWithSource = vi.fn();
     deps.sparqlExecutor.invalidateHttpCache = vi.fn();
     deps.shouldSkipResourcePreparation.mockReturnValue(true);
+    deps.shouldUseWriteTimeResourcePreparation.mockReturnValue(true);
 
     await new PodExecutor(deps).query({
       type: 'insert',
@@ -119,10 +121,49 @@ describe('PodExecutor', () => {
     expect(executeInsert).toHaveBeenCalledWith(
       expect.objectContaining({
         ensureContainerExists: undefined,
+        repairContainerOnWriteFailure: undefined,
         skipResourceExistenceCheck: true,
       }),
       'https://example.com/',
       'https://example.com/users.ttl',
     );
+  });
+
+  it('defers LDP resource preparation to write time in best-effort mode', async () => {
+    const { deps } = createDeps();
+    const executeInsert = vi.fn().mockResolvedValue([{ success: true, source: 'https://example.com/users.ttl', status: 200 }]);
+    deps.resolveTableResource.mockReturnValue({ mode: 'ldp', containerUrl: 'https://example.com/', resourceUrl: 'https://example.com/users.ttl' });
+    deps.getLdpStrategy.mockReturnValue({
+      mode: 'ldp',
+      executeInsert,
+    });
+    deps.sparqlConverter.generateSubjectUri = vi.fn(() => 'https://example.com/users.ttl#alice');
+    deps.sparqlExecutor.executeQueryWithSource = vi.fn();
+    deps.sparqlExecutor.invalidateHttpCache = vi.fn();
+    deps.shouldSkipResourcePreparation.mockReturnValue(false);
+    deps.shouldUseWriteTimeResourcePreparation.mockReturnValue(true);
+
+    await new PodExecutor(deps).query({
+      type: 'insert',
+      table,
+      values: { id: 'alice', name: 'Alice' },
+    });
+
+    expect(deps.ensureContainerExists).not.toHaveBeenCalled();
+    expect(deps.ensureResourceExists).not.toHaveBeenCalled();
+    expect(deps.sparqlExecutor.executeQueryWithSource).not.toHaveBeenCalled();
+    expect(executeInsert).toHaveBeenCalledWith(
+      expect.objectContaining({
+        ensureContainerExists: undefined,
+        repairContainerOnWriteFailure: expect.any(Function),
+        skipResourceExistenceCheck: true,
+      }),
+      'https://example.com/',
+      'https://example.com/users.ttl',
+    );
+
+    const plan = executeInsert.mock.calls[0][0];
+    await plan.repairContainerOnWriteFailure('https://example.com/users/');
+    expect(deps.ensureContainerExists).toHaveBeenCalledWith('https://example.com/users/');
   });
 });

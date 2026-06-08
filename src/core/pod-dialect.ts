@@ -58,11 +58,8 @@ export interface PodDialectConfig {
    * Controls implicit LDP container/resource probes before ORM operations.
    *
    * - strict: fail when preparation fails.
-   * - best-effort: attempt preparation but continue when probes fail.
+   * - best-effort: register schema metadata, but defer LDP preparation to write time.
    * - off: do not preflight resource preparation; let direct LDP reads/writes surface real failures.
-   *
-   * The default preserves legacy behavior: resource mapping registration is
-   * best-effort, while write-time preparation remains strict.
    */
   resourcePreparation?: 'strict' | 'best-effort' | 'off';
   /**
@@ -197,6 +194,7 @@ export class PodDialect {
       ensureContainerExists: (containerUrl) => this.ensureContainerExists(containerUrl),
       ensureResourceExists: (resourceUrl, options) => this.ensureResourceExists(resourceUrl, options),
       shouldSkipResourcePreparation: () => this.shouldSkipResourcePreparation(),
+      shouldUseWriteTimeResourcePreparation: () => this.shouldUseWriteTimeResourcePreparation(),
       shouldContinueAfterResourcePreparationError: () => this.shouldContinueAfterResourcePreparationError(),
       getTableRegistries: () => ({
         tableRegistry: this.currentTableRegistry,
@@ -1388,6 +1386,11 @@ export class PodDialect {
     return this.getResourcePreparationMode() === 'off';
   }
 
+  shouldUseWriteTimeResourcePreparation(): boolean {
+    const mode = this.getResourcePreparationMode();
+    return mode === 'best-effort' || mode === 'off';
+  }
+
   shouldContinueAfterResourcePreparationError(): boolean {
     return this.getResourcePreparationMode() === 'best-effort';
   }
@@ -1417,6 +1420,12 @@ export class PodDialect {
 
       if (descriptor.mode === 'sparql') {
         // No probe needed - if endpoint fails, the actual query will report the error
+      } else if (this.shouldUseWriteTimeResourcePreparation()) {
+        try {
+          table.setBase?.(descriptor.resourceUrl);
+        } catch (error) {
+          this.debugLogger.warn(`[registerTable] setBase failed for ${table.config.name}:`, error);
+        }
       } else {
         await this.ensureContainerExists(descriptor.containerUrl);
 
@@ -1445,10 +1454,12 @@ export class PodDialect {
 
     this.registeredTables.add(tableKey);
 
-    // 委托给 DataDiscovery 进行注册
-    await this.discovery.register(table, {
-      registryPath: table.config.saiRegistryPath,
-    });
+    if (!this.shouldUseWriteTimeResourcePreparation()) {
+      // 委托给 DataDiscovery 进行注册
+      await this.discovery.register(table, {
+        registryPath: table.config.saiRegistryPath,
+      });
+    }
     table.markInitialized?.(true);
   }
 

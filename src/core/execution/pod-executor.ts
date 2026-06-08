@@ -19,6 +19,7 @@ export interface PodExecutorDeps {
   ensureContainerExists: (containerUrl: string) => Promise<void>;
   ensureResourceExists: (resourceUrl: string, options?: { createIfMissing?: boolean }) => Promise<void>;
   shouldSkipResourcePreparation?: () => boolean;
+  shouldUseWriteTimeResourcePreparation?: () => boolean;
   shouldContinueAfterResourcePreparationError?: () => boolean;
   getTableRegistries?: () => {
     tableRegistry: Map<string, PodTable[]>;
@@ -105,6 +106,10 @@ export class PodExecutor {
 
   private shouldSkipResourcePreparation(): boolean {
     return this.deps.shouldSkipResourcePreparation?.() ?? false;
+  }
+
+  private shouldUseWriteTimeResourcePreparation(): boolean {
+    return this.deps.shouldUseWriteTimeResourcePreparation?.() ?? this.shouldSkipResourcePreparation();
   }
 
   private shouldContinueAfterResourcePreparationError(): boolean {
@@ -215,15 +220,18 @@ export class PodExecutor {
       throw new Error('INSERT operation requires at least one value');
     }
 
+    const useWriteTimePreparation = this.shouldUseWriteTimeResourcePreparation();
+    const repairOnWriteFailure = useWriteTimePreparation && !this.shouldSkipResourcePreparation();
+
     // Writes always go through LDP, even when SELECT uses a SPARQL endpoint.
-    if (!this.deps.preparedContainers.has(this.deps.normalizeContainerKey(containerUrl))) {
+    if (!useWriteTimePreparation && !this.deps.preparedContainers.has(this.deps.normalizeContainerKey(containerUrl))) {
       await this.prepareResource('INSERT', () => this.deps.ensureContainerExists(containerUrl));
     }
-    if (descriptor.mode === 'ldp' && !this.deps.preparedResources.has(this.deps.normalizeResourceKey(resourceUrl))) {
+    if (descriptor.mode === 'ldp' && !useWriteTimePreparation && !this.deps.preparedResources.has(this.deps.normalizeResourceKey(resourceUrl))) {
       await this.prepareResource('INSERT', () => this.deps.ensureResourceExists(resourceUrl, { createIfMissing: true }));
     }
 
-    if (descriptor.mode === 'ldp' && !this.shouldSkipResourcePreparation()) {
+    if (descriptor.mode === 'ldp' && !useWriteTimePreparation) {
       // Pre-flight check for duplicates (Strategy: INSERT means NEW)
       // 如果资源不存在（404），清除缓存以避免后续查询被缓存的 404 影响
       for (const row of values) {
@@ -247,12 +255,17 @@ export class PodExecutor {
       ...(this.deps.isInsertPlan(operation.plan)
         ? operation.plan
         : { table: operation.table, rows: values }),
-      ensureContainerExists: this.shouldSkipResourcePreparation()
+      ensureContainerExists: useWriteTimePreparation
         ? undefined
         : async (targetContainerUrl: string) => {
             await this.prepareResource('INSERT', () => this.deps.ensureContainerExists(targetContainerUrl));
           },
-      skipResourceExistenceCheck: this.shouldSkipResourcePreparation()
+      repairContainerOnWriteFailure: repairOnWriteFailure
+        ? async (targetContainerUrl: string) => {
+            await this.prepareResource('INSERT', () => this.deps.ensureContainerExists(targetContainerUrl));
+          }
+        : undefined,
+      skipResourceExistenceCheck: useWriteTimePreparation
         || (this.deps.isInsertPlan(operation.plan) && operation.plan.skipResourceExistenceCheck === true),
       tableRegistry: this.deps.getTableRegistries?.().tableRegistry,
       tableNameRegistry: this.deps.getTableRegistries?.().tableNameRegistry,
@@ -284,7 +297,7 @@ export class PodExecutor {
     }
 
     // LDP mode: ensure container and resource exist first
-    if (descriptor.mode === 'ldp') {
+    if (descriptor.mode === 'ldp' && !this.shouldUseWriteTimeResourcePreparation()) {
       if (!this.deps.preparedContainers.has(this.deps.normalizeContainerKey(containerUrl))) {
         try {
           await this.prepareResource('UPDATE', () => this.deps.ensureContainerExists(containerUrl));
@@ -345,7 +358,7 @@ export class PodExecutor {
     descriptor: TableResourceDescriptor
   ): Promise<unknown[]> {
     // LDP mode: ensure container and resource exist first
-    if (descriptor.mode === 'ldp') {
+    if (descriptor.mode === 'ldp' && !this.shouldUseWriteTimeResourcePreparation()) {
       if (!this.deps.preparedContainers.has(this.deps.normalizeContainerKey(containerUrl))) {
         await this.prepareResource('DELETE', () => this.deps.ensureContainerExists(containerUrl));
       }

@@ -77,6 +77,7 @@ export class LdpExecutor {
     resourceUrl: string,
     options: {
       ensureContainerExists?: (containerUrl: string) => Promise<void>;
+      repairContainerOnWriteFailure?: (containerUrl: string) => Promise<void>;
       skipResourceExistenceCheck?: boolean;
       tableRegistry?: Map<string, PodTable[]>;
       tableNameRegistry?: Map<string, PodTable>;
@@ -212,6 +213,14 @@ export class LdpExecutor {
               body
             });
             via = 'put';
+            response = await this.repairContainerAndRetryPutIfNeeded(
+              response,
+              containerUrl,
+              docResourceUrl,
+              body,
+              'text/turtle',
+              options.repairContainerOnWriteFailure,
+            );
           }
         } else if (resourceExists) {
           // 资源已存在，使用 SPARQL UPDATE 追加三元组
@@ -277,11 +286,19 @@ export class LdpExecutor {
         : await this.fetchFn(resourceUrl, { method: 'HEAD' }).then((checkRes) => !checkRes.ok && checkRes.status !== 405);
       if (needsCreate) {
         // 资源不存在，先创建
-        const createRes = await this.fetchFn(resourceUrl, {
+        let createRes = await this.fetchFn(resourceUrl, {
           method: 'PUT',
           headers: { 'Content-Type': 'text/turtle' },
           body: ''
         });
+        createRes = await this.repairContainerAndRetryPutIfNeeded(
+          createRes,
+          containerUrl,
+          resourceUrl,
+          '',
+          'text/turtle',
+          options.repairContainerOnWriteFailure,
+        );
         if (createRes.ok || createRes.status === 409 || createRes.status === 201) {
           // 重试 SPARQL UPDATE
           response = await this.fetchFn(resourceUrl, {
@@ -311,6 +328,30 @@ export class LdpExecutor {
     await this.sparqlExecutor.invalidateHttpCache(undefined as any).catch(() => undefined);
 
     return [{ success: true, source: resourceUrl, status: response.status, via: 'sparql-update' }];
+  }
+
+  private async repairContainerAndRetryPutIfNeeded(
+    response: Response,
+    containerUrl: string | null,
+    resourceUrl: string,
+    body: string,
+    contentType: string,
+    repairContainer?: (containerUrl: string) => Promise<void>,
+  ): Promise<Response> {
+    if (!repairContainer || !containerUrl || !this.isMissingParentContainerResponse(response)) {
+      return response;
+    }
+
+    await repairContainer(containerUrl);
+    return await this.fetchFn(resourceUrl, {
+      method: 'PUT',
+      headers: { 'Content-Type': contentType },
+      body,
+    });
+  }
+
+  private isMissingParentContainerResponse(response: Response): boolean {
+    return response.status === 404 || response.status === 409;
   }
 
   /**

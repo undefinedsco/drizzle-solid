@@ -144,6 +144,7 @@ const table = new PodTable('profile', {
 
     expect(dialect.getResourcePreparationMode()).toBe('off');
     expect(dialect.shouldSkipResourcePreparation()).toBe(true);
+    expect(dialect.shouldUseWriteTimeResourcePreparation()).toBe(true);
   });
 
   it('treats the Pod storage root as the container preparation boundary', async () => {
@@ -329,7 +330,7 @@ const table = new PodTable('profile', {
     }
   });
 
-  it('keeps registerTable resource-preparation failures quiet in best-effort mode', async () => {
+  it('does not perform network resource preparation during registerTable in best-effort mode', async () => {
     const previousDebug = process.env.LINX_DEBUG;
     delete process.env.LINX_DEBUG;
     const consoleError = vi.spyOn(console, 'error').mockImplementation(() => undefined);
@@ -355,16 +356,13 @@ const table = new PodTable('profile', {
     });
 
     try {
-      fetchMock
-        .mockResolvedValueOnce({ ok: false, status: 404, statusText: 'Not Found' } as Response)
-        .mockResolvedValueOnce({ ok: false, status: 500, statusText: 'Internal Server Error' } as Response)
-        .mockResolvedValueOnce({ ok: false, status: 500, statusText: 'Internal Server Error' } as Response)
-        .mockResolvedValueOnce({ ok: false, status: 500, statusText: 'Internal Server Error' } as Response);
-
       await expect(dialect.registerTable(noisyTable)).resolves.toBeUndefined();
 
+      expect(fetchMock).not.toHaveBeenCalled();
       expect(consoleError).not.toHaveBeenCalled();
       expect(consoleWarn).not.toHaveBeenCalled();
+      expect(noisyTable.isInitialized()).toBe(true);
+      expect(noisyTable.getResourcePath()).toBe('https://pod.example/ganbb/items/messages.ttl');
     } finally {
       consoleError.mockRestore();
       consoleWarn.mockRestore();
