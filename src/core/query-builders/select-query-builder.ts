@@ -1241,24 +1241,35 @@ export class SelectQueryBuilder<TTable extends PodTable<any> = PodTable<any>> {
       return rows;
     }
 
-    const parentClause = parentIris.map((iri) => `<${iri}>`).join(' ');
     const predicateClause = Array.from(predicateToColumn.keys())
       .map((p) => `<${p}>`)
       .join(' ');
-    const sourceUrl = this.inferSourceFromChild(parentIris[0], table);
-    const sparql = {
-      type: 'SELECT' as const,
-      query: `SELECT ?parent ?linkPred ?child ?pred ?obj WHERE {
+
+    const executor = this.session.getDialect().getSPARQLExecutor();
+    const resultBindings: any[] = [];
+    const parentIrisBySource = new Map<string, string[]>();
+    for (const parentIri of parentIris) {
+      const sourceUrl = this.inferSourceFromChild(parentIri, table);
+      const list = parentIrisBySource.get(sourceUrl) ?? [];
+      list.push(parentIri);
+      parentIrisBySource.set(sourceUrl, list);
+    }
+
+    for (const [sourceUrl, sourceParentIris] of parentIrisBySource.entries()) {
+      const parentClause = sourceParentIris.map((iri) => `<${iri}>`).join(' ');
+      const sparql = {
+        type: 'SELECT' as const,
+        query: `SELECT ?parent ?linkPred ?child ?pred ?obj WHERE {
   VALUES ?parent { ${parentClause} }
   VALUES ?linkPred { ${predicateClause} }
   ?parent ?linkPred ?child .
   OPTIONAL { ?child ?pred ?obj . }
 }`,
-      prefixes: {}
-    };
-
-    const executor = this.session.getDialect().getSPARQLExecutor();
-    const resultBindings = await executor.executeQueryWithSource(sparql, sourceUrl);
+        prefixes: {}
+      };
+      const bindings = await executor.executeQueryWithSource(sparql, sourceUrl);
+      resultBindings.push(...bindings);
+    }
 
     const inlineNamespace = table.config.namespace?.uri ?? (table.config.namespace as any);
     const parentMap = new Map<string, Map<string, string[]>>();
