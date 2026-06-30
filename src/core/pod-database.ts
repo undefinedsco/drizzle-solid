@@ -94,6 +94,56 @@ type QueryFindManyOptions = {
   orderBy?: QueryOrderBy[] | QueryOrderBy;
   with?: Record<string, boolean | { table?: GenericPodTable }>;
 };
+
+export type ResourceFileInput = {
+  path?: string;
+  url?: string;
+  content?: BodyInit | null;
+  contentType?: string;
+  relationField?: string;
+};
+
+export type ResourceWithDocumentInput = {
+  row: Record<string, unknown>;
+  document?: ResourceFileInput;
+  source?: ResourceFileInput;
+  files?: ResourceFileInput[];
+};
+
+export type PlannedResourceFileWrite = {
+  relationField: string;
+  url: string;
+  contentType?: string;
+};
+
+export type ResourceWithDocumentPlan = {
+  ok: true;
+  resourceId: string;
+  resourceIri: string;
+  row: Record<string, unknown>;
+  rdfMutations: Array<{ type: 'upsert'; subject: string; fields: string[] }>;
+  fileWrites: PlannedResourceFileWrite[];
+  warnings: string[];
+  errors: string[];
+};
+
+export type MoveDocumentInput = {
+  id: string;
+  relationField?: string;
+  fromPath?: string;
+  fromUrl?: string;
+  toPath?: string;
+  toUrl?: string;
+  content?: BodyInit | null;
+  contentType?: string;
+};
+
+export type DeleteResourceWithDocumentInput = {
+  id: string;
+  relationField?: string;
+  path?: string;
+  url?: string;
+};
 type QueryResourceHelper<TResource extends GenericPodResource = GenericPodResource> = {
   findMany<T = InferTableData<TResource>>(options?: QueryFindManyOptions): Promise<T[]>;
   findFirst<T = InferTableData<TResource>>(options?: QueryFindManyOptions): Promise<T | null>;
@@ -123,6 +173,29 @@ function hasStringValue(value: unknown): value is { value: string } {
 
 function isAbsoluteIri(value: string): boolean {
   return value.startsWith('http://') || value.startsWith('https://');
+}
+
+function normalizePodBase(value: string): string {
+  return value.endsWith('/') ? value : `${value}/`;
+}
+
+function normalizeBaseRelativePath(value: string): string {
+  return value.replace(/^\/+/u, '');
+}
+
+function hasDuplicatePathComposition(value: string): boolean {
+  const path = value.split('#')[0].replace(/^https?:\/\/[^/]+/u, '');
+  const segments = path.split('/').filter(Boolean);
+  for (let offset = 0; offset < segments.length; offset++) {
+    for (let length = 2; offset + (length * 2) <= segments.length; length++) {
+      const first = segments.slice(offset, offset + length).join('/');
+      const second = segments.slice(offset + length, offset + (length * 2)).join('/');
+      if (first === second) {
+        return true;
+      }
+    }
+  }
+  return false;
 }
 
 function isBaseRelativeSubjectId(value: string): boolean {
@@ -290,6 +363,207 @@ export class PodDatabase<TSchema extends Record<string, unknown> = Record<string
   // DELETE 查询
   delete<TTable extends GenericPodTable>(table: TTable): DeleteQueryBuilder<TTable> {
     return this.session.delete(table);
+  }
+
+  private resolvePodFileUrl(pathOrUrl: string): string {
+    if (!pathOrUrl || typeof pathOrUrl !== 'string') {
+      throw new Error('resource file path must be a non-empty string');
+    }
+    if (isAbsoluteIri(pathOrUrl)) {
+      return pathOrUrl;
+    }
+    const getPodUrl = (this.dialect as unknown as { getPodUrl?: () => string }).getPodUrl;
+    if (typeof getPodUrl !== 'function') {
+      throw new Error('Cannot resolve Pod file path because dialect.getPodUrl is not available');
+    }
+    return new URL(normalizeBaseRelativePath(pathOrUrl), normalizePodBase(getPodUrl.call(this.dialect))).toString();
+  }
+
+  private getResourceFileInputs(input: ResourceWithDocumentInput): Array<ResourceFileInput & { relationField: string }> {
+    const files: Array<ResourceFileInput & { relationField: string }> = [];
+    if (input.document) {
+      files.push({ ...input.document, relationField: input.document.relationField ?? 'document' });
+    }
+    if (input.source) {
+      files.push({ ...input.source, relationField: input.source.relationField ?? 'source' });
+    }
+    for (const file of input.files ?? []) {
+      files.push({ ...file, relationField: file.relationField ?? 'document' });
+    }
+    return files;
+  }
+
+  private validateNoDuplicatePathComposition(values: string[]): void {
+    const duplicate = values.find(hasDuplicatePathComposition);
+    if (duplicate) {
+      throw new Error(`duplicate path composition detected: ${duplicate}`);
+    }
+  }
+
+  async dryRunResourceWithDocument<TTable extends GenericPodTable>(
+    resource: TTable,
+    input: ResourceWithDocumentInput,
+  ): Promise<ResourceWithDocumentPlan> {
+    if (!isRecord(input.row) || Array.isArray(input.row)) {
+      throw new Error('dryRunResourceWithDocument requires a row object');
+    }
+
+    const resourceIri = this.resolveRowIri(resource, input.row);
+    const explicitId = input.row.id;
+    const resourceId = typeof explicitId === 'string' && !isAbsoluteIri(explicitId)
+      ? explicitId
+      : this.resolveRowId(resource, input.row);
+    const row = { ...input.row };
+    const fileWrites: PlannedResourceFileWrite[] = [];
+    const pathInputs: string[] = [resourceId];
+
+    for (const file of this.getResourceFileInputs(input)) {
+      const pathOrUrl = file.url ?? file.path;
+      if (!pathOrUrl) {
+        throw new Error(`resource file '${file.relationField}' requires path or url`);
+      }
+      pathInputs.push(pathOrUrl);
+      const url = this.resolvePodFileUrl(pathOrUrl);
+      row[file.relationField] = url;
+      fileWrites.push({
+        relationField: file.relationField,
+        url,
+        ...(file.contentType ? { contentType: file.contentType } : {}),
+      });
+    }
+
+    this.validateNoDuplicatePathComposition(pathInputs);
+
+    return {
+      ok: true,
+      resourceId,
+      resourceIri,
+      row,
+      rdfMutations: [{
+        type: 'upsert',
+        subject: resourceIri,
+        fields: Object.keys(row),
+      }],
+      fileWrites,
+      warnings: [],
+      errors: [],
+    };
+  }
+
+  async upsertResourceWithDocument<TTable extends GenericPodTable>(
+    resource: TTable,
+    input: ResourceWithDocumentInput,
+  ): Promise<ResourceWithDocumentPlan> {
+    const plan = await this.dryRunResourceWithDocument(resource, input);
+    const authenticatedFetch = this.dialect.getAuthenticatedFetch();
+    const writtenFiles: string[] = [];
+
+    try {
+      for (const file of this.getResourceFileInputs(input)) {
+        const pathOrUrl = file.url ?? file.path;
+        if (!pathOrUrl) {
+          throw new Error(`resource file '${file.relationField}' requires path or url`);
+        }
+        const url = this.resolvePodFileUrl(pathOrUrl);
+        const headers: HeadersInit = {};
+        if (file.contentType) {
+          headers['content-type'] = file.contentType;
+        }
+        const response = await authenticatedFetch(url, {
+          method: 'PUT',
+          headers,
+          body: file.content ?? '',
+        });
+        if (!response.ok) {
+          throw new Error(`Failed to write resource file ${url}: HTTP ${response.status}`);
+        }
+        writtenFiles.push(url);
+      }
+
+      await this.insert(resource).values(plan.row as never).execute();
+      return plan;
+    } catch (error) {
+      for (const url of writtenFiles.reverse()) {
+        try {
+          await authenticatedFetch(url, { method: 'DELETE' });
+        } catch {
+          // Best-effort compensating cleanup. Preserve the original failure.
+        }
+      }
+      throw error;
+    }
+  }
+
+  async moveDocumentAndRelink<TTable extends GenericPodTable>(
+    resource: TTable,
+    input: MoveDocumentInput,
+  ): Promise<{ fromUrl?: string; toUrl: string; resource: unknown | null }> {
+    const relationField = input.relationField ?? 'document';
+    const fromUrl = input.fromUrl ?? (input.fromPath ? this.resolvePodFileUrl(input.fromPath) : undefined);
+    const toPathOrUrl = input.toUrl ?? input.toPath;
+    if (!toPathOrUrl) {
+      throw new Error('moveDocumentAndRelink requires toPath or toUrl');
+    }
+    const toUrl = this.resolvePodFileUrl(toPathOrUrl);
+    this.validateNoDuplicatePathComposition([input.id, toPathOrUrl]);
+
+    const authenticatedFetch = this.dialect.getAuthenticatedFetch();
+    let body = input.content ?? null;
+    let contentType = input.contentType;
+    if (body === null && fromUrl) {
+      const response = await authenticatedFetch(fromUrl, { method: 'GET' });
+      if (!response.ok) {
+        throw new Error(`Failed to read source document ${fromUrl}: HTTP ${response.status}`);
+      }
+      body = await response.blob();
+      contentType = contentType ?? response.headers.get('content-type') ?? undefined;
+    }
+    if (body === null) {
+      throw new Error('moveDocumentAndRelink requires content when fromPath/fromUrl is not provided');
+    }
+
+    const headers: HeadersInit = {};
+    if (contentType) {
+      headers['content-type'] = contentType;
+    }
+    const writeResponse = await authenticatedFetch(toUrl, { method: 'PUT', headers, body });
+    if (!writeResponse.ok) {
+      throw new Error(`Failed to write destination document ${toUrl}: HTTP ${writeResponse.status}`);
+    }
+
+    try {
+      const updated = await this.updateById(resource, input.id, { [relationField]: toUrl });
+      if (fromUrl && fromUrl !== toUrl) {
+        await authenticatedFetch(fromUrl, { method: 'DELETE' });
+      }
+      return { fromUrl, toUrl, resource: updated };
+    } catch (error) {
+      try {
+        await authenticatedFetch(toUrl, { method: 'DELETE' });
+      } catch {
+        // Best-effort compensating cleanup. Preserve the original failure.
+      }
+      throw error;
+    }
+  }
+
+  async deleteResourceWithDocument<TTable extends GenericPodTable>(
+    resource: TTable,
+    input: DeleteResourceWithDocumentInput,
+  ): Promise<{ deleted: boolean; fileUrl?: string }> {
+    const relationField = input.relationField ?? 'document';
+    const existing = await this.findById<Record<string, unknown>>(resource, input.id);
+    const fileUrl = input.url ??
+      (input.path ? this.resolvePodFileUrl(input.path) : undefined) ??
+      (typeof existing?.[relationField] === 'string' ? existing[relationField] as string : undefined);
+    const deleted = await this.deleteById(resource, input.id);
+    if (deleted && fileUrl) {
+      const response = await this.dialect.getAuthenticatedFetch()(fileUrl, { method: 'DELETE' });
+      if (!response.ok && response.status !== 404) {
+        throw new Error(`Failed to delete resource file ${fileUrl}: HTTP ${response.status}`);
+      }
+    }
+    return { deleted, fileUrl };
   }
 
   // 直接执行 SPARQL 查询（高级 escape hatch）
