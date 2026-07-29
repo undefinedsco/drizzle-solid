@@ -88,32 +88,97 @@ describe('ComunicaSPARQLExecutor binding normalization', () => {
     ]);
   });
 
-  it('marks explicit endpoint sources as sparql', async () => {
-    const executor: any = new ComunicaSPARQLExecutor({
+  it('executes SELECT directly against explicit SPARQL endpoints', async () => {
+    const fetchMock = vi.fn().mockResolvedValue(new Response(JSON.stringify({
+      head: { vars: ['subject', 'name'] },
+      results: {
+        bindings: [{
+          subject: { type: 'uri', value: 'https://pod.example/profile/card#me' },
+          name: {
+            type: 'literal',
+            value: 'Alice',
+            datatype: 'http://www.w3.org/2001/XMLSchema#string',
+          },
+        }],
+      },
+    }), {
+      status: 200,
+      headers: { 'content-type': 'application/sparql-results+json' },
+    }));
+    const createQueryEngine = vi.fn();
+    const executor = new ComunicaSPARQLExecutor({
       sources: ['https://pod.example/profile/card'],
+      fetch: fetchMock,
+      createQueryEngine,
     });
 
-    const bindingsStream = {
-      toArray: vi.fn().mockResolvedValue([]),
-    };
-
-    const engine = {
-      queryBindings: vi.fn().mockResolvedValue(bindingsStream),
-    };
-
-    executor.initEngine = vi.fn().mockResolvedValue(engine);
-
-    await executor.executeQueryWithSource(
+    const results = await executor.executeQueryWithSource(
       { type: 'SELECT', query: 'SELECT * WHERE { ?s ?p ?o }' },
       'https://pod.example/-/sparql',
       'sparql'
     );
 
-    expect(engine.queryBindings).toHaveBeenCalledWith(
-      'SELECT * WHERE { ?s ?p ?o }',
-      expect.objectContaining({
-        sources: [{ type: 'sparql', value: 'https://pod.example/-/sparql' }],
-      })
+    expect(createQueryEngine).not.toHaveBeenCalled();
+    expect(fetchMock).toHaveBeenCalledOnce();
+    const [requestUrl, requestInit] = fetchMock.mock.calls[0];
+    expect(new URL(String(requestUrl)).searchParams.get('query')).toBe('SELECT * WHERE { ?s ?p ?o }');
+    expect(requestInit).toEqual({
+      headers: { Accept: 'application/sparql-results+json' },
+    });
+    expect(results).toEqual([{
+      subject: 'https://pod.example/profile/card#me',
+      name: 'Alice',
+    }]);
+  });
+
+  it('executes ASK directly against explicit SPARQL endpoints', async () => {
+    const fetchMock = vi.fn().mockResolvedValue(new Response(JSON.stringify({
+      head: {},
+      boolean: true,
+    }), {
+      status: 200,
+      headers: { 'content-type': 'application/sparql-results+json' },
+    }));
+    const createQueryEngine = vi.fn();
+    const executor = new ComunicaSPARQLExecutor({
+      sources: ['https://pod.example/profile/card'],
+      fetch: fetchMock,
+      createQueryEngine,
+    });
+
+    const results = await executor.executeQueryWithSource(
+      { type: 'ASK', query: 'ASK { ?s ?p ?o }' },
+      'https://pod.example/-/sparql',
+      'sparql'
     );
+
+    expect(createQueryEngine).not.toHaveBeenCalled();
+    expect(results).toEqual([{ result: true }]);
+  });
+
+  it('keeps update queries on the Comunica execution path', async () => {
+    const engine = { invalidateHttpCache: vi.fn().mockResolvedValue(undefined) };
+    const createQueryEngine = vi.fn().mockResolvedValue(engine);
+    const fetchMock = vi.fn()
+      .mockResolvedValueOnce(new Response(null, { status: 200, headers: { etag: '"v1"' } }))
+      .mockResolvedValueOnce(new Response(null, { status: 204 }));
+    const executor = new ComunicaSPARQLExecutor({
+      sources: ['https://pod.example/profile/card'],
+      fetch: fetchMock,
+      createQueryEngine,
+    });
+
+    await executor.executeQueryWithSource(
+      { type: 'UPDATE', query: 'INSERT DATA { <urn:s> <urn:p> <urn:o> }' },
+      'https://pod.example/-/sparql',
+      'sparql'
+    );
+
+    expect(createQueryEngine).toHaveBeenCalledOnce();
+    expect(fetchMock).toHaveBeenCalledTimes(2);
+    expect(fetchMock.mock.calls[1][1]).toEqual(expect.objectContaining({
+      method: 'PATCH',
+      body: 'INSERT DATA { <urn:s> <urn:p> <urn:o> }',
+    }));
   });
 });

@@ -28,6 +28,17 @@ type ComunicaTermLike = {
   value?: unknown;
   datatype?: { value?: unknown };
 };
+type SPARQLJSONBindingValue = {
+  type?: string;
+  value?: unknown;
+  datatype?: string;
+};
+type SPARQLJSONResult = {
+  boolean?: boolean;
+  results?: {
+    bindings?: Array<Record<string, SPARQLJSONBindingValue>>;
+  };
+};
 
 export class ComunicaSPARQLExecutor {
   protected sources: string[];
@@ -636,6 +647,13 @@ export class ComunicaSPARQLExecutor {
     sourceType: QuerySourceType = 'auto'
   ): Promise<unknown[]> {
     try {
+      if (
+        sourceType === 'sparql' &&
+        (sparqlQuery.type === 'SELECT' || sparqlQuery.type === 'ASK')
+      ) {
+        return await this.executeDirectSparqlQuery(sparqlQuery, sourceUrl);
+      }
+
       const engine = await this.initEngine();
       const sourceRef = this.createSourceRef(sourceUrl, sourceType);
       
@@ -772,6 +790,54 @@ export class ComunicaSPARQLExecutor {
       }
       throw error;
     }
+  }
+
+  private async executeDirectSparqlQuery(
+    sparqlQuery: SPARQLQuery,
+    sourceUrl: string
+  ): Promise<unknown[]> {
+    const endpoint = new URL(sourceUrl);
+    endpoint.searchParams.set('query', sparqlQuery.query);
+    const response = await this.fetchFn(endpoint, {
+      headers: {
+        Accept: 'application/sparql-results+json'
+      }
+    });
+
+    if (!response.ok) {
+      throw new Error(`SPARQL endpoint returned HTTP ${response.status}`);
+    }
+
+    const payload = await response.json() as SPARQLJSONResult;
+    if (sparqlQuery.type === 'ASK') {
+      return [{ result: payload.boolean === true }];
+    }
+
+    const bindings = payload.results?.bindings;
+    if (!Array.isArray(bindings)) {
+      return [];
+    }
+
+    return bindings.map((binding) => {
+      const result: QueryResultRow = {};
+      for (const [key, value] of Object.entries(binding)) {
+        if (!value || typeof value !== 'object') {
+          continue;
+        }
+
+        const term: ComunicaTermLike = value.type === 'uri'
+          ? { termType: 'NamedNode', value: value.value }
+          : value.type === 'bnode'
+            ? { termType: 'BlankNode', value: value.value }
+            : {
+                termType: 'Literal',
+                value: value.value,
+                datatype: value.datatype ? { value: value.datatype } : undefined
+              };
+        result[key] = this.convertComunicaTerm(term);
+      }
+      return result;
+    });
   }
 
   // Add data source
