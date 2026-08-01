@@ -11,7 +11,7 @@ import { createLiteralCondition, buildConditionTreeFromObject, inferSPARQLQueryT
 import { UriResolverImpl } from '../uri';
 import { isOrderByExpression, type OrderByExpression } from '../order-by';
 import { SelectionAliasExpression } from '../expressions';
-import { assertPublicWhereCondition, assertPublicWhereObject, conditionTargetsReservedIdentifier } from '../query-where-policy';
+import { assertPublicCursorCondition, assertPublicWhereCondition, assertPublicWhereObject, conditionTargetsReservedIdentifier } from '../query-where-policy';
 import { parsePodResourceRef } from '../resource-reference';
 
 export class SelectQueryBuilder<TTable extends PodTable<any> = PodTable<any>> {
@@ -78,6 +78,17 @@ export class SelectQueryBuilder<TTable extends PodTable<any> = PodTable<any>> {
       assertPublicWhereObject('select', conditions);
       this.processWhereObject(conditions);
     }
+    return this;
+  }
+
+  /**
+   * Add a stable cursor range that may use the virtual resource identifier as
+   * a tie-breaker. Exact identifier reads remain restricted to findById() and
+   * findByIri(); this API accepts only composite range cursors.
+   */
+  whereCursor(condition: PublicQueryCondition) {
+    assertPublicCursorCondition(condition);
+    this.processQueryCondition(condition);
     return this;
   }
 

@@ -99,3 +99,36 @@ export function assertPublicWhereCondition(
     throw new Error(createWhereIdentifierError(action));
   }
 }
+
+export function assertPublicCursorCondition(condition: QueryCondition): void {
+  let hasIdentifierRange = false;
+  let hasSortPredicate = false;
+
+  const inspect = (candidate: QueryCondition): void => {
+    if (candidate.type === 'binary_expr') {
+      const targetsIdentifier = isReservedIdentifierOperand(candidate.left)
+        || isReservedIdentifierOperand(candidate.right);
+      if (targetsIdentifier) {
+        if (!['>', '>=', '<', '<='].includes(candidate.operator)) {
+          throw new Error(`whereCursor() only supports range comparisons on 'id' or '@id'.`);
+        }
+        hasIdentifierRange = true;
+      } else {
+        hasSortPredicate = true;
+      }
+      return;
+    }
+    if (candidate.type === 'logical_expr') {
+      for (const expression of candidate.expressions) inspect(expression as QueryCondition);
+      return;
+    }
+    hasSortPredicate = true;
+  };
+
+  inspect(condition);
+  if (!hasIdentifierRange || !hasSortPredicate) {
+    throw new Error(
+      `whereCursor() requires a sort predicate plus an 'id' or '@id' range tie-breaker.`,
+    );
+  }
+}

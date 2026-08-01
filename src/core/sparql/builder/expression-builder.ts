@@ -576,6 +576,12 @@ export class ExpressionBuilder {
         formattedValue = formatValue(value, column, this.uriResolver, this.getUriContext());
     }
 
+    if (isSubject && ['<', '>', '<=', '>='].includes(condition.operator)) {
+      const subjectIri = String(formattedValue).replace(/^<|>$/g, '');
+      const escapedSubjectIri = subjectIri.replace(/\\/g, '\\\\').replace(/"/g, '\\"');
+      return `(STR(${variable}) ${condition.operator} "${escapedSubjectIri}")`;
+    }
+
     return `(${variable} ${condition.operator} ${formattedValue})`;
   }
 

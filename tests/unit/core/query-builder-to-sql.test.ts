@@ -4,7 +4,7 @@ import { SelectQueryBuilder } from '@src/core/query-builders/select-query-builde
 import { InsertQueryBuilder } from '@src/core/query-builders/insert-query-builder';
 import { UpdateQueryBuilder } from '@src/core/query-builders/update-query-builder';
 import { DeleteQueryBuilder } from '@src/core/query-builders/delete-query-builder';
-import { podTable, string, int, eq, gt, count, sum } from '@src/index';
+import { podTable, string, int, and, eq, gt, or, count, sum } from '@src/index';
 
 const Users = podTable('Users', {
   id: string('id').primaryKey().predicate('https://schema.org/identifier'),
@@ -197,5 +197,32 @@ describe('QueryBuilder toSPARQL()', () => {
         .from(DocumentUsers)
         .where(eq(DocumentUsers.id, 'alice'))
     ).toThrow("Using 'id' or '@id' in where() is not supported");
+  });
+
+  it('whereCursor() should allow a stable composite range over a sort column and resource id', () => {
+    const query = new SelectQueryBuilder(session)
+      .from(DocumentUsers)
+      .whereCursor(or(
+        gt(DocumentUsers.name, 'M'),
+        and(eq(DocumentUsers.name, 'M'), gt(DocumentUsers.id, 'alice')),
+      ))
+      .toSPARQL();
+
+    expect(query.query).toContain('FILTER')
+    expect(query.query).toContain('alice')
+    expect(query.query).toContain('schema:name')
+    expect(query.query).toMatch(/STR\(\?subject\)\)+ > "https:\/\/pod\.example\/users\/alice\/index\.ttl#this"/)
+  });
+
+  it('whereCursor() should reject exact or identifier-only filters', () => {
+    expect(() => new SelectQueryBuilder(session)
+      .from(DocumentUsers)
+      .whereCursor(eq(DocumentUsers.id, 'alice'))
+    ).toThrow("only supports range comparisons on 'id' or '@id'")
+
+    expect(() => new SelectQueryBuilder(session)
+      .from(DocumentUsers)
+      .whereCursor(gt(DocumentUsers.id, 'alice'))
+    ).toThrow('requires a sort predicate')
   });
 });
