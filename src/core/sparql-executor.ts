@@ -805,7 +805,9 @@ export class ComunicaSPARQLExecutor {
     });
 
     if (!response.ok) {
-      throw new Error(`SPARQL endpoint returned HTTP ${response.status}`);
+      const responseBody = (await response.text()).trim();
+      const detail = responseBody ? `: ${responseBody.slice(0, 500)}` : '';
+      throw new Error(`SPARQL endpoint returned HTTP ${response.status}${detail}`);
     }
 
     const payload = await response.json() as SPARQLJSONResult;

@@ -156,6 +156,23 @@ describe('ComunicaSPARQLExecutor binding normalization', () => {
     expect(results).toEqual([{ result: true }]);
   });
 
+  it('includes endpoint response details in direct SPARQL errors', async () => {
+    const fetchMock = vi.fn().mockResolvedValue(new Response('Invalid cursor filter', {
+      status: 400,
+    }));
+    const executor = new ComunicaSPARQLExecutor({
+      sources: ['https://pod.example/profile/card'],
+      fetch: fetchMock,
+      createQueryEngine: vi.fn(),
+    });
+
+    await expect(executor.executeQueryWithSource(
+      { type: 'SELECT', query: 'SELECT * WHERE { ?s ?p ?o }' },
+      'https://pod.example/-/sparql',
+      'sparql'
+    )).rejects.toThrow('SPARQL endpoint returned HTTP 400: Invalid cursor filter');
+  });
+
   it('keeps update queries on the Comunica execution path', async () => {
     const engine = { invalidateHttpCache: vi.fn().mockResolvedValue(undefined) };
     const createQueryEngine = vi.fn().mockResolvedValue(engine);
