@@ -63,7 +63,9 @@ describe('CSS integration: Notifications', () => {
         onNotification: (event) => {
           console.log('[WS] Received notification:', event.type, event.object);
           notifications.push(event);
-          resolveNotification(event);
+          if (event.object === resourceUrl && /Create|Update|Add/.test(event.type)) {
+            resolveNotification(event);
+          }
         },
         onError: (error) => {
           console.error('[WS] Error:', error);

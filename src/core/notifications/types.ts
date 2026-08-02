@@ -110,6 +110,10 @@ export interface SubscribeOptions {
    * 重连时的回调
    */
   onReconnect?: (attempt: number) => void;
+  /**
+   * xpod multiplex transport asks callers to resync a topic after replay gaps.
+   */
+  onResyncRequired?: (topic: string, reason: 'gap' | 'overflow' | 'expired') => void;
 }
 
 /**
@@ -150,6 +154,8 @@ export interface TableSubscribeOptions {
   onError?: (error: Error) => void;
   /** 连接关闭时的回调 */
   onClose?: () => void;
+  /** xpod multiplex transport requests a fresh read for this topic after replay gaps. */
+  onResyncRequired?: (topic: string, reason: 'gap' | 'overflow' | 'expired') => void;
 }
 
 /**

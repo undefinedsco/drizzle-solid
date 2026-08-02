@@ -1432,6 +1432,8 @@ LIMIT 50`,
       const authenticatedFetch = this.dialect.getAuthenticatedFetch();
       const config: NotificationsClientConfig = {
         preferredChannels: this.dialect.config.preferredChannels ?? ['streaming-http', 'websocket'],
+        sessionId: this.dialect.config.session.info.sessionId,
+        webId: this.dialect.getWebId(),
       };
       this.notificationsClient = new NotificationsClient(authenticatedFetch, config);
     }
@@ -1744,6 +1746,8 @@ LIMIT 50`,
       const authenticatedFetch = this.dialect.getAuthenticatedFetch();
       const config: NotificationsClientConfig = {
         preferredChannels: this.dialect.config.preferredChannels ?? ['streaming-http', 'websocket'],
+        sessionId: this.dialect.config.session.info.sessionId,
+        webId: this.dialect.getWebId(),
       };
       this.notificationsClient = new NotificationsClient(authenticatedFetch, config);
     }
@@ -1794,6 +1798,7 @@ LIMIT 50`,
       },
       onError: options.onError,
       onClose: options.onClose,
+      onResyncRequired: options.onResyncRequired,
     };
 
     return this.notificationsClient.subscribe(topic, subscribeOptions);
