@@ -65,60 +65,8 @@ jobs:
       - name: Build
         run: yarn build
 
-      - name: Install xpod
-        run: npm install -g xpod --legacy-peer-deps
-
-      - name: Start xpod on port 4000
-        run: xpod start --port 4000 &
-        env:
-          CSS_BASE_URL: http://localhost:4000/
-
-      - name: Wait for xpod to be ready
-        run: |
-          echo "Waiting for xpod..."
-          for i in $(seq 1 30); do
-            if curl -sf http://localhost:4000/.account/ > /dev/null 2>&1; then
-              echo "xpod is ready!"
-              break
-            fi
-            echo "Attempt $i/30..."
-            sleep 2
-          done
-
-      - name: Generate test credentials
-        id: creds
-        run: |
-          # Create test account and credentials via xpod CLI
-          cd $(npm root -g)/xpod
-
-          # Use xpod auth command to create credentials
-          CREDS=$(node dist/cli/index.js auth create-credentials \
-            --url http://localhost:4000 \
-            --email test@example.com \
-            --password test123456 \
-            --output 2>&1 || echo "FAILED")
-
-          echo "$CREDS"
-
-          if echo "$CREDS" | grep -q "FAILED"; then
-            echo "Failed to create credentials"
-            exit 1
-          fi
-
-          CLIENT_ID=$(echo "$CREDS" | grep "client_id:" | awk '{print $2}')
-          CLIENT_SECRET=$(echo "$CREDS" | grep "client_secret:" | awk '{print $2}')
-          WEBID=$(echo "$CREDS" | grep "webId:" | awk '{print $2}')
-
-          echo "client_id=$CLIENT_ID" >> $GITHUB_OUTPUT
-          echo "client_secret=$CLIENT_SECRET" >> $GITHUB_OUTPUT
-          echo "webid=$WEBID" >> $GITHUB_OUTPUT
-
       - name: Run integration tests
-        run: npx vitest --run tests/integration/
-        env:
-          SOLID_OIDC_ISSUER: http://localhost:4000/
-          SOLID_CLIENT_ID: ${{ steps.creds.outputs.client_id }}
-          SOLID_CLIENT_SECRET: ${{ steps.creds.outputs.client_secret }}
-          SOLID_WEBID: ${{ steps.creds.outputs.webid }}
-          SOLID_TEST_POD_BASE: http://localhost:4000/test/
-          SOLID_ENABLE_REAL_TESTS: true
+        # The release gate uses xpod's in-process real Pod runtime. Protocol
+        # notification compatibility is covered separately because this runtime
+        # does not expose the standard Solid notification transports.
+        run: yarn test:integration:smoke

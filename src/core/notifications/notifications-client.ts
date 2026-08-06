@@ -7,12 +7,6 @@ import type {
 } from './types';
 import { SSEChannel } from './channels/sse-channel';
 import { WebSocketChannel } from './channels/websocket-channel';
-import {
-  MultiplexNotificationsClient,
-  parseXpodDescriptor,
-  parseXpodDescriptorLink,
-  type XpodDiscovery,
-} from './multiplex-notifications-client';
 
 /**
  * Solid Notifications Protocol 通道类型 URI 映射
@@ -33,23 +27,11 @@ const CHANNEL_NAMES: Record<ChannelType, string> = {
 interface DiscoveredService {
   baseEndpoint: string;
   supportedChannels: ChannelType[];
-  xpod?: XpodDiscovery;
 }
-
-type LinkHeaderDiscovery = {
-  linkHeader: string | null;
-  xpod: XpodDiscovery | null;
-};
 
 export interface NotificationsClientConfig {
   /** 通道偏好顺序，默认 ['streaming-http', 'websocket'] */
   preferredChannels?: ChannelType[];
-  /** Authenticated session identifier used to isolate xpod multiplex transports. */
-  sessionId?: string;
-  /** WebID used to isolate xpod multiplex transports. */
-  webId?: string;
-  /** Default xpod reconnect delay. */
-  reconnectDelayMs?: number;
 }
 
 /**
@@ -67,9 +49,6 @@ export class NotificationsClient {
   private readonly fetch: typeof globalThis.fetch;
   private readonly subscriptions: Map<string, SubscriptionImpl> = new Map();
   private readonly preferredChannels: ChannelType[];
-  private readonly multiplexClient: MultiplexNotificationsClient;
-  private readonly xpodDiscoveryCache: Map<string, Promise<LinkHeaderDiscovery>> = new Map();
-  private readonly sessionCacheKey: string;
 
   constructor(
     authenticatedFetch: typeof globalThis.fetch,
@@ -77,12 +56,6 @@ export class NotificationsClient {
   ) {
     this.fetch = authenticatedFetch;
     this.preferredChannels = config?.preferredChannels ?? ['streaming-http', 'websocket'];
-    this.sessionCacheKey = `${config?.webId ?? 'anonymous'}|${config?.sessionId ?? 'session'}`;
-    this.multiplexClient = new MultiplexNotificationsClient(authenticatedFetch, {
-      sessionId: config?.sessionId,
-      webId: config?.webId,
-      reconnectDelayMs: config?.reconnectDelayMs,
-    });
   }
 
   /**
@@ -91,9 +64,6 @@ export class NotificationsClient {
   async subscribe(topic: string, options: SubscribeOptions): Promise<Subscription> {
     // 1. 发现 notifications 服务
     const discovery = await this.discoverNotificationService(topic);
-    if (discovery.xpod) {
-      return this.multiplexClient.subscribe(topic, discovery.xpod, options);
-    }
     
     // 2. 根据偏好和服务器支持选择通道
     const channelOrder = options.channel 
@@ -237,8 +207,6 @@ export class NotificationsClient {
       subscription.unsubscribe();
     }
     this.subscriptions.clear();
-    this.multiplexClient.close();
-    this.xpodDiscoveryCache.clear();
   }
 
   /**
@@ -282,16 +250,7 @@ export class NotificationsClient {
   private async discoverFromLinkHeader(resourceUrl: string): Promise<DiscoveredService | null> {
     try {
       const url = new URL(resourceUrl);
-      const discovery = await this.discoverLinkHeader(resourceUrl, url.origin);
-      const linkHeader = discovery.linkHeader;
-      const xpod = discovery.xpod;
-      if (xpod) {
-        return {
-          baseEndpoint: '',
-          supportedChannels: [],
-          xpod,
-        };
-      }
+      const linkHeader = await this.discoverLinkHeader(resourceUrl);
       
       if (!linkHeader) return null;
       
@@ -345,30 +304,9 @@ export class NotificationsClient {
     }
   }
 
-  private discoverLinkHeader(resourceUrl: string, origin: string): Promise<LinkHeaderDiscovery> {
-    const cacheKey = `${this.sessionCacheKey}|${origin}`;
-    const cached = this.xpodDiscoveryCache.get(cacheKey);
-    if (cached) {
-      return cached;
-    }
-
-    const discoveryPromise = this.fetch(resourceUrl, { method: 'HEAD' })
-      .then((response): LinkHeaderDiscovery => {
-        const linkHeader = response.headers.get('Link');
-        const xpod = parseXpodDescriptor(response.headers.get('X-Xpod-Notifications'), origin)
-          ?? parseXpodDescriptorLink(linkHeader, origin);
-        if (!xpod) {
-          this.xpodDiscoveryCache.delete(cacheKey);
-        }
-        return { linkHeader, xpod };
-      })
-      .catch((error) => {
-        this.xpodDiscoveryCache.delete(cacheKey);
-        throw error;
-      });
-
-    this.xpodDiscoveryCache.set(cacheKey, discoveryPromise);
-    return discoveryPromise;
+  private async discoverLinkHeader(resourceUrl: string): Promise<string | null> {
+    const response = await this.fetch(resourceUrl, { method: 'HEAD' });
+    return response.headers.get('Link');
   }
 
   /**
@@ -417,17 +355,6 @@ export class NotificationsClient {
 
     const body = await response.text();
     const supportedChannels: ChannelType[] = [];
-    const contentType = response.headers.get('content-type') ?? '';
-    if (contentType.includes('application/json')) {
-      const xpod = parseXpodDescriptor(body, new URL(storageRoot).origin);
-      if (xpod) {
-        return {
-          baseEndpoint: '',
-          supportedChannels: [],
-          xpod,
-        };
-      }
-    }
 
     // 从 storage description 中查找支持的通道
     // 查找 subscription 端点

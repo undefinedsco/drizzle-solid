@@ -2,6 +2,7 @@ import { describe, expect, it } from 'vitest';
 import { ASTToSPARQLConverter } from '@src/core/ast-to-sparql';
 import { and, eq, inArray } from '@src/core/query-conditions';
 import { podTable, string, uri } from '@src/core/schema';
+import { SelectQueryBuilder } from '@src/core/query-builders/select-query-builder';
 
 const podUrl = 'https://example.com';
 const converter = new ASTToSPARQLConverter(podUrl);
@@ -42,6 +43,31 @@ const Thread = podTable('ThreadExecutionPath', {
 });
 
 describe('select execution-path coverage', () => {
+  it('hydrates a template-scoped short id from the RDF subject', async () => {
+    const execute = async () => [{
+      subject: 'https://example.com/data/wide-execution/row-1.ttl',
+      name: 'Row One',
+    }];
+    const session = {
+      execute,
+      executeSql: execute,
+      getDialect: () => ({
+        getPodUrl: () => podUrl,
+        getAuthenticatedFetch: () => fetch,
+        getUriResolver: () => undefined,
+        getTableRegistry: () => new Map(),
+        getTableNameRegistry: () => new Map(),
+      }),
+    } as any;
+
+    const rows = await new SelectQueryBuilder(session).from(WideTable);
+
+    expect(rows[0]).toMatchObject({
+      id: 'row-1',
+      '@id': 'https://example.com/data/wide-execution/row-1.ttl',
+    });
+  });
+
   it('keeps single-id lookups on wide document tables as FILTER, not VALUES', () => {
     const query = converter.convertSimpleSelect(
       { table: WideTable, where: eq(WideTable.id, 'row-1') as any },

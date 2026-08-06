@@ -1331,9 +1331,9 @@ LIMIT 50`,
   }
 
   private extractIdFromIri(resource: GenericPodResource, iri: string): string | undefined {
-    const resourceId = parsePodResourceRef(resource, iri)?.resourceId;
-    if (resourceId) {
-      return resourceId;
+    const reference = parsePodResourceRef(resource, iri);
+    if (reference) {
+      return reference.templateValues.id ?? reference.resourceId;
     }
 
     try {
@@ -1432,8 +1432,6 @@ LIMIT 50`,
       const authenticatedFetch = this.dialect.getAuthenticatedFetch();
       const config: NotificationsClientConfig = {
         preferredChannels: this.dialect.config.preferredChannels ?? ['streaming-http', 'websocket'],
-        sessionId: this.dialect.config.session.info.sessionId,
-        webId: this.dialect.getWebId(),
       };
       this.notificationsClient = new NotificationsClient(authenticatedFetch, config);
     }
@@ -1746,8 +1744,6 @@ LIMIT 50`,
       const authenticatedFetch = this.dialect.getAuthenticatedFetch();
       const config: NotificationsClientConfig = {
         preferredChannels: this.dialect.config.preferredChannels ?? ['streaming-http', 'websocket'],
-        sessionId: this.dialect.config.session.info.sessionId,
-        webId: this.dialect.getWebId(),
       };
       this.notificationsClient = new NotificationsClient(authenticatedFetch, config);
     }
@@ -1798,7 +1794,6 @@ LIMIT 50`,
       },
       onError: options.onError,
       onClose: options.onClose,
-      onResyncRequired: options.onResyncRequired,
     };
 
     return this.notificationsClient.subscribe(topic, subscribeOptions);

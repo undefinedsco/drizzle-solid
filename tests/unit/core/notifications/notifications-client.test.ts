@@ -23,6 +23,50 @@ describe('NotificationsClient', () => {
   });
 
   describe('discovery', () => {
+    it('ignores legacy xpod multiplex metadata and uses a standard Solid channel', async () => {
+      mockFetch.mockResolvedValueOnce({
+        ok: true,
+        headers: {
+          get: (name: string) => {
+            if (name.toLowerCase() === 'x-xpod-notifications') {
+              return JSON.stringify({
+                protocol: 'xpod.notifications.v1',
+                ticketEndpoint: '/v1/notifications/tickets',
+                webSocketEndpoint: '/v1/notifications/ws',
+              });
+            }
+            if (name.toLowerCase() === 'link') {
+              return '<https://pod.example/.notifications/WebSocketChannel2023/>; rel="http://www.w3.org/ns/solid/terms#updatesViaWebSocketChannel2023"';
+            }
+            return null;
+          },
+        },
+      });
+      mockFetch.mockResolvedValueOnce({
+        ok: true,
+        json: async () => ({
+          type: 'http://www.w3.org/ns/solid/notifications#WebSocketChannel2023',
+          topic: 'https://pod.example/data/resource.ttl',
+          receiveFrom: 'wss://pod.example/.notifications/ws/standard',
+        }),
+      });
+
+      const client = new NotificationsClient(mockFetch as any);
+      await client.subscribe('https://pod.example/data/resource.ttl', {
+        channel: 'websocket',
+        onNotification: vi.fn(),
+      }).catch(() => undefined);
+
+      expect(mockFetch).not.toHaveBeenCalledWith(
+        'https://pod.example/v1/notifications/tickets',
+        expect.anything(),
+      );
+      expect(mockFetch).toHaveBeenCalledWith(
+        'https://pod.example/.notifications/WebSocketChannel2023/',
+        expect.objectContaining({ method: 'POST' }),
+      );
+    });
+
     it('should discover storage root from resource URL', async () => {
       // Mock HEAD request for finding storage root
       mockFetch.mockResolvedValueOnce({

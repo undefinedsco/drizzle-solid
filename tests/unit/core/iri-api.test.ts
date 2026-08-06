@@ -221,7 +221,7 @@ describe('IRI API', () => {
       } as unknown as PodDialect, { select } as unknown as PodAsyncSession);
 
       await expect(exactDb.findByIri(indexedResource, 'https://example.com/data/profiles/profile-1.ttl')).resolves.toMatchObject({
-        id: 'profile-1.ttl',
+        id: 'profile-1',
         name: 'Indexed exact',
       });
       expect(executeOnResource).toHaveBeenCalledWith(
@@ -1217,7 +1217,7 @@ describe('IRI API', () => {
         .from(messageTable)
         .whereByIri('https://example.com/messages/chat-1/messages.ttl#msg-123');
 
-      expect(rows[0]?.id).toBe('chat-1/messages.ttl#msg-123');
+      expect(rows[0]?.id).toBe('msg-123');
       expect(rows[0]?.['@id']).toBe('https://example.com/messages/chat-1/messages.ttl#msg-123');
     });
   });
