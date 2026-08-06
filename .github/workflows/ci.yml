@@ -89,10 +89,7 @@ jobs:
         id: creds
         run: |
           # Create test account and credentials via xpod CLI
-          cd $(npm root -g)/xpod
-
-          # Use xpod auth command to create credentials
-          CREDS=$(node dist/cli/index.js auth create-credentials \
+          CREDS=$(xpod auth create-credentials \
             --url http://localhost:4000 \
             --email test@example.com \
             --password test123456 \
