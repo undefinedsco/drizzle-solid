@@ -66,10 +66,10 @@ jobs:
         run: yarn build
 
       - name: Install xpod
-        run: npm install -g @undefineds.co/xpod@0.3.71 --legacy-peer-deps
+        run: npm install -g @undefineds.co/xpod@0.3.71 @undefineds.co/drizzle-solid@0.3.20 --legacy-peer-deps
 
       - name: Start xpod on port 4000
-        run: xpod start --port 4000 &
+        run: xpod start --port 4000 > /tmp/xpod.log 2>&1 &
         env:
           CSS_BASE_URL: http://localhost:4000/
 
@@ -84,7 +84,10 @@ jobs:
             echo "Attempt $i/30..."
             sleep 2
           done
-          curl -sf http://localhost:4000/.account/ > /dev/null
+          if ! curl -sf http://localhost:4000/.account/ > /dev/null; then
+            cat /tmp/xpod.log
+            exit 1
+          fi
 
       - name: Generate test credentials
         id: creds
