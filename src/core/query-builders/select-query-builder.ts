@@ -2146,9 +2146,9 @@ export class SelectQueryBuilder<TTable extends PodTable<any> = PodTable<any>> {
     }
 
     if (table) {
-      const resourceId = parsePodResourceRef(table, subject)?.resourceId;
-      if (resourceId) {
-        return resourceId;
+      const reference = parsePodResourceRef(table, subject);
+      if (reference) {
+        return reference.templateValues.id ?? reference.resourceId;
       }
     }
 

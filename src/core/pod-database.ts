@@ -1331,9 +1331,9 @@ LIMIT 50`,
   }
 
   private extractIdFromIri(resource: GenericPodResource, iri: string): string | undefined {
-    const resourceId = parsePodResourceRef(resource, iri)?.resourceId;
-    if (resourceId) {
-      return resourceId;
+    const reference = parsePodResourceRef(resource, iri);
+    if (reference) {
+      return reference.templateValues.id ?? reference.resourceId;
     }
 
     try {

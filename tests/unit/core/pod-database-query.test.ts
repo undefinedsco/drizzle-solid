@@ -120,7 +120,7 @@ describe('PodDatabase query facade', () => {
 
     const row = await dbWithLookup.query.bucketed.findById('1');
 
-    expect(row?.id).toBe('2026/05/14.ttl#1');
+    expect(row?.id).toBe('1');
     expect(row?.['@id']).toBe('https://pod.example/users/2026/05/14.ttl#1');
     expect(captured.shortIdQuery).toContain('CONTAINS(STR(?subject), "1")');
     expect(captured.shortIdQuery).not.toContain('STRENDS(');
