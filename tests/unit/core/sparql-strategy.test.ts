@@ -62,13 +62,51 @@ describe('SparqlStrategy document-mode sidecar select', () => {
       },
     };
 
-    await strategy.executeSelect(plan, `${podUrl}.data/chat/`, `${podUrl}.data/chat/-/sparql`);
+    await strategy.executeSelect(plan, `${podUrl}.data/chat/`, `${podUrl}.data/chat/thread-1/index.ttl`);
 
     expect(fetchMock).not.toHaveBeenCalled();
     expect(executeQueryWithSource).toHaveBeenCalledTimes(1);
     const [query, sourceUrl] = executeQueryWithSource.mock.calls[0];
     expect(sourceUrl).toBe(`${podUrl}.data/chat/-/sparql`);
+    expect(executeQueryWithSource.mock.calls[0][2]).toBe('sparql');
     expect(String(query.query)).not.toContain('GRAPH ?g');
     expect(String(query.query)).toContain('flow-1.0#participant');
+  });
+
+  it('uses an absolute configured endpoint instead of the physical RDF resource', async () => {
+    const podUrl = 'https://pod.example/alice/';
+    const executeQueryWithSource = vi.fn().mockResolvedValue([]);
+    const converter = new ASTToSPARQLConverter(podUrl, undefined, new UriResolverImpl(podUrl));
+    const strategy = new SparqlStrategy({
+      sparqlExecutor: { executeQueryWithSource } as any,
+      sparqlConverter: converter,
+      sessionFetch: vi.fn() as any,
+      podUrl,
+      uriResolver: new UriResolverImpl(podUrl),
+    });
+    const table = podTable('providers', {
+      id: id('id'),
+      name: string('name').notNull(),
+    }, {
+      base: '/settings/providers/',
+      type: 'https://undefineds.co/ns#AIProvider',
+      namespace: { uri: 'https://undefineds.co/ns#' },
+      subjectTemplate: '{id}.ttl#{id}',
+      sparqlEndpoint: 'https://pod.example/alice/settings/providers/query',
+    });
+    const plan: any = {
+      baseTable: table,
+      _simpleSelectOptions: { table, where: undefined },
+    };
+
+    await strategy.executeSelect(
+      plan,
+      `${podUrl}settings/providers/`,
+      `${podUrl}settings/providers/openai.ttl`,
+    );
+
+    expect(executeQueryWithSource).toHaveBeenCalledTimes(1);
+    expect(executeQueryWithSource.mock.calls[0][1]).toBe('https://pod.example/alice/settings/providers/query');
+    expect(executeQueryWithSource.mock.calls[0][2]).toBe('sparql');
   });
 });

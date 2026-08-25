@@ -77,6 +77,11 @@ export class SparqlStrategy implements ExecutionStrategy {
   ): Promise<any[]> {
     const table = plan.baseTable;
     const targetGraph = this.resolveTargetGraph(table, true);
+    const configuredEndpoint = table.getSparqlEndpoint?.();
+    const sourceUrl = this.resolvePodResourceIri(configuredEndpoint) ?? resourceUrl;
+    const sourceType = configuredEndpoint || sourceUrl.includes('/sparql')
+      ? 'sparql'
+      : 'auto';
 
     const extendedPlan = plan as SelectQueryPlan & {
       _sql?: unknown;
@@ -95,25 +100,25 @@ export class SparqlStrategy implements ExecutionStrategy {
       sparqlQuery = this.sparqlConverter.convertSelectPlan(plan, targetGraph, undefined, allowGraphVariable);
     }
 
-    if (isSameOrigin(resourceUrl, this.podUrl)) {
+    if (isSameOrigin(sourceUrl, this.podUrl)) {
       return await this.sparqlExecutor.executeQueryWithSource(
         sparqlQuery,
-        resourceUrl,
-        resourceUrl.includes('/sparql') ? 'sparql' : 'auto'
+        sourceUrl,
+        sourceType
       );
     }
 
     const { ComunicaSPARQLExecutor } = await import('../sparql-executor');
     const unauthExecutor = new ComunicaSPARQLExecutor({
-      sources: [resourceUrl],
+      sources: [sourceUrl],
       fetch: fetch,
       logging: false,
       createQueryEngine: this.createQueryEngine,
     });
     return await unauthExecutor.executeQueryWithSource(
       sparqlQuery,
-      resourceUrl,
-      resourceUrl.includes('/sparql') ? 'sparql' : 'auto'
+      sourceUrl,
+      sourceType
     );
   }
 
