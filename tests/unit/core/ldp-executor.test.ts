@@ -1,6 +1,6 @@
 import { describe, expect, it, vi } from 'vitest';
 import { LdpExecutor } from '@src/core/execution/ldp-executor';
-import { id, podTable, string } from '@src/core/schema';
+import { id, object, podTable, string, uri } from '@src/core/schema';
 import { UriResolverImpl } from '@src/core/uri';
 
 const sessionResource = podTable('session', {
@@ -30,9 +30,34 @@ const settingsResource = podTable('settings', {
   subjectTemplate: '#{id}',
 });
 
+const projectResource = podTable('project', {
+  id: id(),
+  owner: uri('owner').predicate('https://schema.org/owns').inverse(),
+}, {
+  base: 'https://example.com/.data/projects.ttl',
+  type: 'https://schema.org/Project',
+  subjectTemplate: '#{id}',
+});
+
+const profileResource = podTable('profile', {
+  id: id(),
+  name: string('name').predicate('https://schema.org/name'),
+  details: object('details').predicate('https://schema.org/details'),
+}, {
+  base: 'https://example.com/.data/profiles.ttl',
+  type: 'https://schema.org/Profile',
+  subjectTemplate: '#{id}',
+});
+
 function createExecutor(fetchFn: typeof fetch) {
+  const sparqlExecutor = {
+    invalidateHttpCache: vi.fn().mockResolvedValue(undefined),
+    queryBindings: vi.fn().mockRejectedValue(new Error('LDP document reads must not use SPARQL queryBindings')),
+    queryContainer: vi.fn().mockRejectedValue(new Error('LDP document reads must not use SPARQL queryContainer')),
+  };
+
   return new LdpExecutor(
-    { invalidateHttpCache: vi.fn().mockResolvedValue(undefined) } as any,
+    sparqlExecutor as any,
     fetchFn,
     new UriResolverImpl('https://example.com/'),
   );
@@ -218,6 +243,99 @@ describe('LdpExecutor', () => {
       4,
       'https://example.com/.data/settings.ttl',
       expect.objectContaining({ method: 'PATCH' }),
+    );
+  });
+
+  it('reads the LDP document with authenticated fetch before replacing existing values', async () => {
+    const fetchFn = vi.fn()
+      .mockResolvedValueOnce(new Response(`
+        <https://example.com/.data/settings.ttl#theme> a <https://undefineds.co/ns#Settings> ;
+          <https://undefineds.co/ns#value> "dark" .
+      `, { status: 200, headers: { 'Content-Type': 'text/turtle' } }))
+      .mockResolvedValueOnce(new Response(null, { status: 204 })) as unknown as typeof fetch;
+    const executor = createExecutor(fetchFn);
+
+    await executor.executeUpdate(
+      settingsResource,
+      { value: 'light' },
+      ['https://example.com/.data/settings.ttl#theme'],
+      'https://example.com/.data/settings.ttl',
+    );
+
+    expect(fetchFn).toHaveBeenNthCalledWith(
+      1,
+      'https://example.com/.data/settings.ttl',
+      expect.objectContaining({
+        method: 'GET',
+        headers: expect.objectContaining({ Accept: expect.stringContaining('text/turtle') }),
+      }),
+    );
+    expect(fetchFn).toHaveBeenNthCalledWith(
+      2,
+      'https://example.com/.data/settings.ttl',
+      expect.objectContaining({
+        method: 'PATCH',
+        body: expect.stringContaining('"dark"'),
+      }),
+    );
+  });
+
+  it('reads inverse links from the LDP document instead of querying it as a SPARQL endpoint', async () => {
+    const fetchFn = vi.fn()
+      .mockResolvedValueOnce(new Response(`
+        <https://example.com/people/alice#me> <https://schema.org/owns> <https://example.com/.data/projects.ttl#project-1> .
+      `, { status: 200, headers: { 'Content-Type': 'text/turtle' } }))
+      .mockResolvedValueOnce(new Response(null, { status: 204 })) as unknown as typeof fetch;
+    const executor = createExecutor(fetchFn);
+
+    await executor.executeUpdate(
+      projectResource,
+      { owner: 'https://example.com/people/bob#me' },
+      ['https://example.com/.data/projects.ttl#project-1'],
+      'https://example.com/.data/projects.ttl',
+    );
+
+    expect(fetchFn).toHaveBeenCalledWith(
+      'https://example.com/.data/projects.ttl',
+      expect.objectContaining({ method: 'GET' }),
+    );
+    expect(fetchFn).toHaveBeenLastCalledWith(
+      'https://example.com/.data/projects.ttl',
+      expect.objectContaining({
+        method: 'PATCH',
+        body: expect.stringContaining('<https://example.com/people/alice#me> <https://schema.org/owns> <https://example.com/.data/projects.ttl#project-1> .'),
+      }),
+    );
+  });
+
+  it('reads existing triples from the LDP document before recursive deletes', async () => {
+    const fetchFn = vi.fn()
+      .mockResolvedValueOnce(new Response(`
+        <https://example.com/.data/profiles.ttl#profile-1> a <https://schema.org/Profile> ;
+          <https://schema.org/name> "Alice" ;
+          <https://schema.org/details> <https://example.com/.data/profiles.ttl#profile-1-details> .
+        <https://example.com/.data/profiles.ttl#profile-1-details> <https://schema.org/name> "Detail" .
+      `, { status: 200, headers: { 'Content-Type': 'text/turtle' } }))
+      .mockResolvedValueOnce(new Response(null, { status: 204 })) as unknown as typeof fetch;
+    const executor = createExecutor(fetchFn);
+
+    await executor.executeDelete(
+      ['https://example.com/.data/profiles.ttl#profile-1'],
+      profileResource,
+      'https://example.com/.data/profiles.ttl',
+    );
+
+    expect(fetchFn).toHaveBeenNthCalledWith(
+      1,
+      'https://example.com/.data/profiles.ttl',
+      expect.objectContaining({ method: 'GET' }),
+    );
+    expect(fetchFn).toHaveBeenLastCalledWith(
+      'https://example.com/.data/profiles.ttl',
+      expect.objectContaining({
+        method: 'PATCH',
+        body: expect.stringContaining('<https://example.com/.data/profiles.ttl#profile-1-details> <https://schema.org/name> "Detail" .'),
+      }),
     );
   });
 });

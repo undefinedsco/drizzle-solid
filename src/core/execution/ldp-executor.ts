@@ -8,15 +8,14 @@ import type { PodTable } from '../schema';
 import type { ComunicaSPARQLExecutor } from '../sparql-executor';
 import { TripleBuilderImpl } from '../triple/builder';
 import type { UriResolver } from '../uri';
-
-type QueryBinding = {
-  get: (key: string) => unknown;
-};
+import { DataFactory, Parser, Store } from 'n3';
 
 type QueryTerm = {
   termType?: string;
   value?: string;
 };
+
+const { namedNode } = DataFactory;
 
 function getContainerUrl(resourceUrl: string): string | null {
   try {
@@ -388,7 +387,7 @@ export class LdpExecutor {
       // 这里需要特殊的逻辑来处理"更新"语义：先删旧的，再插新的
       
       // 额外的内联对象清理逻辑
-      const entries = Object.entries(data).filter(([_, value]) => value !== undefined);
+      const entries = Object.entries(data).filter(([, value]) => value !== undefined);
       for (const [key] of entries) {
         // 跳过系统字段
         if (key === '@id' || key === 'subject') continue;
@@ -408,7 +407,7 @@ export class LdpExecutor {
         const predicate = this.tripleBuilder.getPredicateUri(col, table);
 
         // A. 查找旧的内联对象
-        // 使用 SPARQL 查询找到旧的链接
+        // Read the LDP document directly; a .ttl resource is not a SPARQL endpoint.
         const childUris = await this.fetchExistingObjects(targetResourceUrl, subject, predicate);
 
         for (const childUriRaw of childUris) {
@@ -500,7 +499,7 @@ export class LdpExecutor {
    */
   private async retryWithBackoff<T>(
     fn: () => Promise<{ response: Response | null; result?: T; shouldRetry: boolean; fallback?: () => Promise<T> }>,
-    maxRetries: number = 3
+    maxRetries = 3
   ): Promise<{ response: Response | null; result?: T; lastError?: unknown }> {
     let response: Response | null = null;
     let lastError: unknown;
@@ -813,13 +812,17 @@ export class LdpExecutor {
     subject: string,
     table: PodTable,
     resourceUrl: string,
-    visited = new Set<string>()
+    visited = new Set<string>(),
+    store?: Store
   ): Promise<string[]> {
     if (visited.has(subject)) return [];
     visited.add(subject);
 
-    const query = `SELECT ?p ?o WHERE { <${subject}> ?p ?o . }`;
-    const bindings = await this.sparqlExecutor.queryBindings(query, resourceUrl) as QueryBinding[];
+    const documentStore = store ?? await this.fetchResourceStore(resourceUrl);
+    const subjectNode = namedNode(subject);
+    const bindings = documentStore.getQuads(subjectNode, null, null, null).map((quad) => ({
+      get: (key: string) => key === 'p' ? quad.predicate : key === 'o' ? quad.object : undefined,
+    }));
     
     const triples: string[] = [];
     const childSubjects: string[] = [];
@@ -849,7 +852,7 @@ export class LdpExecutor {
     });
     
     for (const childSubject of childSubjects) {
-      const childTriples = await this.fetchRecursiveTriplesToDelete(childSubject, table, resourceUrl, visited);
+      const childTriples = await this.fetchRecursiveTriplesToDelete(childSubject, table, resourceUrl, visited, documentStore);
       triples.push(...childTriples);
     }
 
@@ -861,8 +864,12 @@ export class LdpExecutor {
     subject: string,
     predicate: string
   ): Promise<string[]> {
-    const query = `SELECT ?o WHERE { <${subject}> <${predicate}> ?o . }`;
-    const bindings = await this.sparqlExecutor.queryBindings(query, resourceUrl) as QueryBinding[];
+    const store = await this.fetchResourceStore(resourceUrl);
+    const subjectNode = namedNode(subject);
+    const predicateNode = namedNode(predicate);
+    const bindings = store.getQuads(subjectNode, predicateNode, null, null).map((quad) => ({
+      get: (key: string) => key === 'o' ? quad.object : undefined,
+    }));
 
     return bindings
       .map((binding) => {
@@ -877,9 +884,47 @@ export class LdpExecutor {
     object: string,
     predicate: string
   ): Promise<string[]> {
-    const query = `SELECT ?s WHERE { ?s <${predicate}> <${object}> . }`;
-    const rows = await this.sparqlExecutor.queryContainer(resourceUrl, { type: 'SELECT', query });
-    
-    return rows.map((row: any) => row.s ?? row['?s']).filter(Boolean) as string[];
+    const store = await this.fetchResourceStore(resourceUrl);
+    const objectNode = namedNode(object);
+    const predicateNode = namedNode(predicate);
+
+    return store
+      .getQuads(null, predicateNode, objectNode, null)
+      .map((quad) => quad.subject.value)
+      .filter(Boolean);
+  }
+
+  private async fetchResourceStore(resourceUrl: string): Promise<Store> {
+    const res = await this.fetchFn(resourceUrl, {
+      method: 'GET',
+      headers: { Accept: 'text/turtle, text/n3;q=0.9, application/n-triples;q=0.8' },
+    });
+
+    if (res.status === 404) {
+      return new Store();
+    }
+
+    if (!res.ok) {
+      throw await this.buildPatchError(res, undefined, 'LDP document read');
+    }
+
+    const text = await res.text();
+    if (!text.trim()) {
+      return new Store();
+    }
+
+    const parser = new Parser({
+      baseIRI: resourceUrl,
+      format: this.getParserFormat(res.headers.get('content-type') ?? ''),
+    });
+
+    return new Store(parser.parse(text));
+  }
+
+  private getParserFormat(contentType: string): string {
+    const normalized = contentType.toLowerCase();
+    if (normalized.includes('text/n3')) return 'text/n3';
+    if (normalized.includes('application/n-triples')) return 'application/n-triples';
+    return 'text/turtle';
   }
 }
