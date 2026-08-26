@@ -49,11 +49,18 @@ const profileResource = podTable('profile', {
   subjectTemplate: '#{id}',
 });
 
-function createExecutor(fetchFn: typeof fetch) {
+function createExecutor(
+  fetchFn: typeof fetch,
+  overrides: Partial<{
+    queryBindings: ReturnType<typeof vi.fn>;
+    queryContainer: ReturnType<typeof vi.fn>;
+  }> = {},
+) {
   const sparqlExecutor = {
     invalidateHttpCache: vi.fn().mockResolvedValue(undefined),
-    queryBindings: vi.fn().mockRejectedValue(new Error('LDP document reads must not use SPARQL queryBindings')),
-    queryContainer: vi.fn().mockRejectedValue(new Error('LDP document reads must not use SPARQL queryContainer')),
+    queryBindings: vi.fn().mockResolvedValue([]),
+    queryContainer: vi.fn().mockResolvedValue([]),
+    ...overrides,
   };
 
   return new LdpExecutor(
@@ -246,14 +253,12 @@ describe('LdpExecutor', () => {
     );
   });
 
-  it('reads the LDP document with authenticated fetch before replacing existing values', async () => {
-    const fetchFn = vi.fn()
-      .mockResolvedValueOnce(new Response(`
-        <https://example.com/.data/settings.ttl#theme> a <https://undefineds.co/ns#Settings> ;
-          <https://undefineds.co/ns#value> "dark" .
-      `, { status: 200, headers: { 'Content-Type': 'text/turtle' } }))
-      .mockResolvedValueOnce(new Response(null, { status: 204 })) as unknown as typeof fetch;
-    const executor = createExecutor(fetchFn);
+  it('queries the LDP document as a Comunica RDF source before replacing existing values', async () => {
+    const fetchFn = vi.fn().mockResolvedValue(new Response(null, { status: 204 })) as unknown as typeof fetch;
+    const queryBindings = vi.fn().mockResolvedValue([{ get: (key: string) => key === 'o'
+      ? { termType: 'Literal', value: 'dark' }
+      : undefined }]);
+    const executor = createExecutor(fetchFn, { queryBindings });
 
     await executor.executeUpdate(
       settingsResource,
@@ -262,31 +267,42 @@ describe('LdpExecutor', () => {
       'https://example.com/.data/settings.ttl',
     );
 
-    expect(fetchFn).toHaveBeenNthCalledWith(
-      1,
+    expect(queryBindings).toHaveBeenCalledWith(
+      expect.stringContaining('SELECT ?o WHERE'),
       'https://example.com/.data/settings.ttl',
-      expect.objectContaining({
-        method: 'GET',
-        headers: expect.objectContaining({ Accept: expect.stringContaining('text/turtle') }),
-      }),
     );
-    expect(fetchFn).toHaveBeenNthCalledWith(
-      2,
+    expect(fetchFn).toHaveBeenCalledWith(
       'https://example.com/.data/settings.ttl',
       expect.objectContaining({
         method: 'PATCH',
         body: expect.stringContaining('"dark"'),
       }),
     );
+    expect((fetchFn as any).mock.calls[0][1].body).not.toContain('DELETE WHERE');
   });
 
-  it('reads inverse links from the LDP document instead of querying it as a SPARQL endpoint', async () => {
-    const fetchFn = vi.fn()
-      .mockResolvedValueOnce(new Response(`
-        <https://example.com/people/alice#me> <https://schema.org/owns> <https://example.com/.data/projects.ttl#project-1> .
-      `, { status: 200, headers: { 'Content-Type': 'text/turtle' } }))
-      .mockResolvedValueOnce(new Response(null, { status: 204 })) as unknown as typeof fetch;
-    const executor = createExecutor(fetchFn);
+  it('does not patch an LDP document when the requested value is already stored', async () => {
+    const fetchFn = vi.fn().mockResolvedValue(new Response(null, { status: 204 })) as unknown as typeof fetch;
+    const queryBindings = vi.fn().mockResolvedValue([{ get: (key: string) => key === 'o'
+      ? { termType: 'Literal', value: 'light' }
+      : undefined }]);
+    const executor = createExecutor(fetchFn, { queryBindings });
+
+    await executor.executeUpdate(
+      settingsResource,
+      { value: 'light' },
+      ['https://example.com/.data/settings.ttl#theme'],
+      'https://example.com/.data/settings.ttl',
+    );
+
+    expect(queryBindings).toHaveBeenCalledOnce();
+    expect(fetchFn).not.toHaveBeenCalled();
+  });
+
+  it('queries inverse links from the LDP document as an auto RDF source', async () => {
+    const fetchFn = vi.fn().mockResolvedValue(new Response(null, { status: 204 })) as unknown as typeof fetch;
+    const queryContainer = vi.fn().mockResolvedValue([{ s: 'https://example.com/people/alice#me' }]);
+    const executor = createExecutor(fetchFn, { queryContainer });
 
     await executor.executeUpdate(
       projectResource,
@@ -295,9 +311,9 @@ describe('LdpExecutor', () => {
       'https://example.com/.data/projects.ttl',
     );
 
-    expect(fetchFn).toHaveBeenCalledWith(
+    expect(queryContainer).toHaveBeenCalledWith(
       'https://example.com/.data/projects.ttl',
-      expect.objectContaining({ method: 'GET' }),
+      expect.objectContaining({ type: 'SELECT' }),
     );
     expect(fetchFn).toHaveBeenLastCalledWith(
       'https://example.com/.data/projects.ttl',
@@ -308,16 +324,26 @@ describe('LdpExecutor', () => {
     );
   });
 
-  it('reads existing triples from the LDP document before recursive deletes', async () => {
-    const fetchFn = vi.fn()
-      .mockResolvedValueOnce(new Response(`
-        <https://example.com/.data/profiles.ttl#profile-1> a <https://schema.org/Profile> ;
-          <https://schema.org/name> "Alice" ;
-          <https://schema.org/details> <https://example.com/.data/profiles.ttl#profile-1-details> .
-        <https://example.com/.data/profiles.ttl#profile-1-details> <https://schema.org/name> "Detail" .
-      `, { status: 200, headers: { 'Content-Type': 'text/turtle' } }))
-      .mockResolvedValueOnce(new Response(null, { status: 204 })) as unknown as typeof fetch;
-    const executor = createExecutor(fetchFn);
+  it('queries recursive delete triples from the LDP document source', async () => {
+    const fetchFn = vi.fn().mockResolvedValue(new Response(null, { status: 204 })) as unknown as typeof fetch;
+    const rdfType = { termType: 'NamedNode', value: 'http://www.w3.org/1999/02/22-rdf-syntax-ns#type' };
+    const name = { termType: 'NamedNode', value: 'https://schema.org/name' };
+    const details = { termType: 'NamedNode', value: 'https://schema.org/details' };
+    const profileType = { termType: 'NamedNode', value: 'https://schema.org/Profile' };
+    const detailSubject = { termType: 'NamedNode', value: 'https://example.com/.data/profiles.ttl#profile-1-details' };
+    const queryBindings = vi.fn(async (query: string) => {
+      const rows = query.includes('profile-1-details')
+        ? [[name, { termType: 'Literal', value: 'Detail' }]]
+        : [
+            [rdfType, profileType],
+            [name, { termType: 'Literal', value: 'Alice' }],
+            [details, detailSubject],
+          ];
+      return rows.map(([predicate, object]) => ({
+        get: (key: string) => key === 'p' ? predicate : key === 'o' ? object : undefined,
+      }));
+    });
+    const executor = createExecutor(fetchFn, { queryBindings });
 
     await executor.executeDelete(
       ['https://example.com/.data/profiles.ttl#profile-1'],
@@ -325,12 +351,12 @@ describe('LdpExecutor', () => {
       'https://example.com/.data/profiles.ttl',
     );
 
-    expect(fetchFn).toHaveBeenNthCalledWith(
-      1,
+    expect(queryBindings).toHaveBeenCalledTimes(2);
+    expect(queryBindings).toHaveBeenCalledWith(
+      expect.stringContaining('profile-1-details'),
       'https://example.com/.data/profiles.ttl',
-      expect.objectContaining({ method: 'GET' }),
     );
-    expect(fetchFn).toHaveBeenLastCalledWith(
+    expect(fetchFn).toHaveBeenCalledWith(
       'https://example.com/.data/profiles.ttl',
       expect.objectContaining({
         method: 'PATCH',

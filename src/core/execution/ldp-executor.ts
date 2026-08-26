@@ -8,14 +8,15 @@ import type { PodTable } from '../schema';
 import type { ComunicaSPARQLExecutor } from '../sparql-executor';
 import { TripleBuilderImpl } from '../triple/builder';
 import type { UriResolver } from '../uri';
-import { DataFactory, Parser, Store } from 'n3';
+
+type QueryBinding = {
+  get: (key: string) => unknown;
+};
 
 type QueryTerm = {
   termType?: string;
   value?: string;
 };
-
-const { namedNode } = DataFactory;
 
 function getContainerUrl(resourceUrl: string): string | null {
   try {
@@ -590,49 +591,48 @@ export class LdpExecutor {
 
       const predicate = this.tripleBuilder.getPredicateUri(col, table);
       const isInverse = Boolean(col.options?.inverse);
-      const safeKey = key.replace(/[^a-zA-Z0-9_]/g, '_');
 
       if (isInverse) {
-         // Delete all inverse links for this predicate to avoid stale values.
-         deleteWherePatterns.push(`?s_${safeKey} <${predicate}> <${subject}> .`);
-         // Inverse logic
-         const existingSubjects = await this.fetchInverseSubjects(resourceUrl, subject, predicate);
-         
-         existingSubjects.forEach(s => {
-           let sUri = s;
-           if (!sUri.startsWith('<') && !sUri.startsWith('_:')) sUri = `<${sUri}>`;
-           deleteTriples.push(`${sUri} <${predicate}> <${subject}> .`);
-         });
-
-         if (rawValue !== null) {
-             // 使用 TripleBuilder 构建插入
-             const result = this.tripleBuilder.buildInsert(subject, col, rawValue, table);
-             insertTriples.push(...this.tripleBuilder.toN3Strings(result.triples));
-         }
-         continue;
-      }
-
-      // Normal logic
-      // fetch existing values to build concrete delete triples
-      // Delete all existing predicate values to avoid stale literals (e.g. updatedAt duplication).
-      deleteWherePatterns.push(`<${subject}> <${predicate}> ?o_${safeKey} .`);
-
-      const existingValues = await this.fetchExistingObjects(resourceUrl, subject, predicate);
-      
-      existingValues.forEach((existing) => {
-        // existing is already formatted N3 term from formatTerm
-        deleteTriples.push(`<${subject}> <${predicate}> ${existing} .`);
-      });
-
-      if (rawValue === null) {
+        const existingSubjects = await this.fetchInverseSubjects(resourceUrl, subject, predicate);
+        const existingTriples = existingSubjects.map((existingSubject) => {
+          let subjectTerm = existingSubject;
+          if (!subjectTerm.startsWith('<') && !subjectTerm.startsWith('_:')) {
+            subjectTerm = `<${subjectTerm}>`;
+          }
+          return `${subjectTerm} <${predicate}> <${subject}> .`;
+        });
+        const nextTriples = rawValue === null
+          ? []
+          : this.tripleBuilder.toN3Strings(this.tripleBuilder.buildInsert(subject, col, rawValue, table).triples);
+        if (this.sameTripleSet(existingTriples, nextTriples)) {
+          continue;
+        }
+        deleteTriples.push(...existingTriples);
+        insertTriples.push(...nextTriples);
         continue;
       }
 
-      const result = this.tripleBuilder.buildInsert(subject, col, rawValue, table);
-      insertTriples.push(...this.tripleBuilder.toN3Strings(result.triples));
+      const existingValues = await this.fetchExistingObjects(resourceUrl, subject, predicate);
+      const existingTriples = existingValues.map((existing) => `<${subject}> <${predicate}> ${existing} .`);
+      const nextTriples = rawValue === null
+        ? []
+        : this.tripleBuilder.toN3Strings(this.tripleBuilder.buildInsert(subject, col, rawValue, table).triples);
+      if (this.sameTripleSet(existingTriples, nextTriples)) {
+        continue;
+      }
+      deleteTriples.push(...existingTriples);
+      insertTriples.push(...nextTriples);
     }
 
     return { deleteTriples, insertTriples, deleteWherePatterns };
+  }
+
+  private sameTripleSet(left: string[], right: string[]): boolean {
+    if (left.length !== right.length) {
+      return false;
+    }
+    const rightSet = new Set(right);
+    return left.every((triple) => rightSet.has(triple));
   }
 
   /**
@@ -812,17 +812,13 @@ export class LdpExecutor {
     subject: string,
     table: PodTable,
     resourceUrl: string,
-    visited = new Set<string>(),
-    store?: Store
+    visited = new Set<string>()
   ): Promise<string[]> {
     if (visited.has(subject)) return [];
     visited.add(subject);
 
-    const documentStore = store ?? await this.fetchResourceStore(resourceUrl);
-    const subjectNode = namedNode(subject);
-    const bindings = documentStore.getQuads(subjectNode, null, null, null).map((quad) => ({
-      get: (key: string) => key === 'p' ? quad.predicate : key === 'o' ? quad.object : undefined,
-    }));
+    const query = `SELECT ?p ?o WHERE { <${subject}> ?p ?o . }`;
+    const bindings = await this.sparqlExecutor.queryBindings(query, resourceUrl) as QueryBinding[];
     
     const triples: string[] = [];
     const childSubjects: string[] = [];
@@ -852,7 +848,7 @@ export class LdpExecutor {
     });
     
     for (const childSubject of childSubjects) {
-      const childTriples = await this.fetchRecursiveTriplesToDelete(childSubject, table, resourceUrl, visited, documentStore);
+      const childTriples = await this.fetchRecursiveTriplesToDelete(childSubject, table, resourceUrl, visited);
       triples.push(...childTriples);
     }
 
@@ -864,12 +860,8 @@ export class LdpExecutor {
     subject: string,
     predicate: string
   ): Promise<string[]> {
-    const store = await this.fetchResourceStore(resourceUrl);
-    const subjectNode = namedNode(subject);
-    const predicateNode = namedNode(predicate);
-    const bindings = store.getQuads(subjectNode, predicateNode, null, null).map((quad) => ({
-      get: (key: string) => key === 'o' ? quad.object : undefined,
-    }));
+    const query = `SELECT ?o WHERE { <${subject}> <${predicate}> ?o . }`;
+    const bindings = await this.sparqlExecutor.queryBindings(query, resourceUrl) as QueryBinding[];
 
     return bindings
       .map((binding) => {
@@ -884,47 +876,9 @@ export class LdpExecutor {
     object: string,
     predicate: string
   ): Promise<string[]> {
-    const store = await this.fetchResourceStore(resourceUrl);
-    const objectNode = namedNode(object);
-    const predicateNode = namedNode(predicate);
+    const query = `SELECT ?s WHERE { ?s <${predicate}> <${object}> . }`;
+    const rows = await this.sparqlExecutor.queryContainer(resourceUrl, { type: 'SELECT', query });
 
-    return store
-      .getQuads(null, predicateNode, objectNode, null)
-      .map((quad) => quad.subject.value)
-      .filter(Boolean);
-  }
-
-  private async fetchResourceStore(resourceUrl: string): Promise<Store> {
-    const res = await this.fetchFn(resourceUrl, {
-      method: 'GET',
-      headers: { Accept: 'text/turtle, text/n3;q=0.9, application/n-triples;q=0.8' },
-    });
-
-    if (res.status === 404) {
-      return new Store();
-    }
-
-    if (!res.ok) {
-      throw await this.buildPatchError(res, undefined, 'LDP document read');
-    }
-
-    const text = await res.text();
-    if (!text.trim()) {
-      return new Store();
-    }
-
-    const parser = new Parser({
-      baseIRI: resourceUrl,
-      format: this.getParserFormat(res.headers.get('content-type') ?? ''),
-    });
-
-    return new Store(parser.parse(text));
-  }
-
-  private getParserFormat(contentType: string): string {
-    const normalized = contentType.toLowerCase();
-    if (normalized.includes('text/n3')) return 'text/n3';
-    if (normalized.includes('application/n-triples')) return 'application/n-triples';
-    return 'text/turtle';
+    return rows.map((row: any) => row.s ?? row['?s']).filter(Boolean) as string[];
   }
 }
