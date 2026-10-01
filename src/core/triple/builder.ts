@@ -7,6 +7,7 @@
 import type { PodColumnBase, PodTable, NamespaceConfig } from '../schema';
 import type { UriResolver } from '../uri';
 import { UriResolverImpl } from '../uri';
+import { buildInlineChildUri } from '../uri/resolver';
 import type {
   TripleBuilder,
   Triple,
@@ -425,12 +426,7 @@ export class TripleBuilderImpl implements TripleBuilder {
       return explicit;
     }
 
-    // 生成 fragment URI
-    const hashIndex = parentSubject.indexOf('#');
-    const base = hashIndex >= 0 ? parentSubject.slice(0, hashIndex) : parentSubject;
-    const withFragment = base.endsWith('#') ? base : `${base}#`;
-
-    return `${withFragment}${columnName}-${index + 1}`;
+    return buildInlineChildUri(parentSubject, columnName, index);
   }
 
   /**

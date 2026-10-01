@@ -485,7 +485,7 @@ describe('SubjectResolver', () => {
         0
       );
 
-      expect(uri).toBe('https://pod.example/data/tags.ttl#metadata-1');
+      expect(uri).toBe('https://pod.example/data/tags.ttl#tag-1/metadata-1');
     });
   });
 

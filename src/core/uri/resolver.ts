@@ -176,9 +176,7 @@ export class UriResolverImpl implements UriResolver {
       return explicitId;
     }
 
-    // 生成 fragment URI
-    const resourceUrl = this.getResourceUrl(parentSubject);
-    return `${resourceUrl}#${columnName}-${index + 1}`;
+    return buildInlineChildUri(parentSubject, columnName, index);
   }
 
   isSingleton(table: PodTable): boolean {
@@ -953,3 +951,14 @@ export class UriResolverImpl implements UriResolver {
 }
 
 // 默认单例实例
+
+/** Build a document-local child identity scoped to the concrete parent subject. */
+export function buildInlineChildUri(parentSubject: string, columnName: string, index: number): string {
+  const hashIndex = parentSubject.indexOf('#');
+  const document = hashIndex >= 0 ? parentSubject.slice(0, hashIndex) : parentSubject;
+  const parentFragment = hashIndex >= 0 ? parentSubject.slice(hashIndex + 1) : '';
+  // Escaping prevents separators inside parent ids from aliasing child paths.
+  // Document subjects retain their existing #column-index child identifiers.
+  const ownerPrefix = parentFragment ? `${encodeURIComponent(parentFragment)}/` : '';
+  return `${document}#${ownerPrefix}${encodeURIComponent(columnName)}-${index + 1}`;
+}
