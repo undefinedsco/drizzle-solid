@@ -5,6 +5,7 @@
  */
 
 import type { PodTable } from '../schema';
+import { buildInlineChildUri } from '../uri/resolver';
 import type { SubjectResolver, ResourceMode, ParsedSubject, TimeContext } from './types';
 
 /**
@@ -215,9 +216,7 @@ export class SubjectResolverImpl implements SubjectResolver {
       return explicitId;
     }
 
-    // 生成 fragment URI
-    const resourceUrl = this.getResourceUrl(parentSubject);
-    return `${resourceUrl}#${columnName}-${index + 1}`;
+    return buildInlineChildUri(parentSubject, columnName, index);
   }
 
   /**
