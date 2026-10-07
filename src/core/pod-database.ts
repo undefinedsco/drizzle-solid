@@ -1,3 +1,4 @@
+import { readResourceSnapshot } from './conditional-writes/snapshot';
 import { entityKind } from 'drizzle-orm';
 import { PodDialect } from './pod-dialect';
 import {
@@ -255,6 +256,10 @@ export class PodDatabase<TSchema extends Record<string, unknown> = Record<string
     public session: PodAsyncSession,
     public schema?: TSchema
   ) {}
+
+  readResourceSnapshot<TTable extends PodTable<any>>(table: TTable, exactIri: string) {
+    return readResourceSnapshot(table, exactIri, this.dialect.config.session.fetch);
+  }
 
   /**
    * 获取最近一次联邦查询的错误

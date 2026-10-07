@@ -293,3 +293,5 @@ export {
   type DiscoveredLocation,
   type FederatedQueryContext
 } from './core/federated';
+
+export * from './core/conditional-writes';

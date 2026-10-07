@@ -226,6 +226,8 @@ The canonical examples in `examples/` are part of the integration verification f
 - `examples/08-schema-inheritance.ts`
 - `examples/09-multi-variable-templates.ts`
 
+Conditional exact resource writes use complete RDF snapshots and a qualified backend; see [conditional resource writes](docs/guides/conditional-resource-writes.md).
+
 ## Documentation
 
 Start here:

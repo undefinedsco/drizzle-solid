@@ -1,3 +1,5 @@
+import { executeConditional } from '../conditional-writes/execute';
+import type { ConditionalWriteOptions, ConditionalWriteResult } from '../conditional-writes/types';
 import { entityKind, SQL } from 'drizzle-orm';
 import { PodTable, HookContext } from '../schema';
 import { PodAsyncSession, PodOperation } from '../pod-session';
@@ -18,6 +20,7 @@ export class DeleteQueryBuilder<TTable extends PodTable<any> = PodTable<any>> {
   public whereConditions?: Record<string, any>;
   public sql?: SQL;
   private conditionTree?: QueryCondition;
+  private conditionalIri?: string;
   private returningFields?: SelectFieldMap | true;
 
   constructor(
@@ -26,6 +29,7 @@ export class DeleteQueryBuilder<TTable extends PodTable<any> = PodTable<any>> {
   ) {}
 
   where(conditions: PublicWhereObject | SQL | PublicQueryCondition) {
+    this.conditionalIri = undefined;
     if (conditions instanceof SQL) {
       this.sql = conditions;
     } else if (this.isQueryCondition(conditions)) {
@@ -47,9 +51,15 @@ export class DeleteQueryBuilder<TTable extends PodTable<any> = PodTable<any>> {
   }
 
   whereByIri(iri: string) {
+    this.conditionalIri = iri;
     this.whereConditions = { '@id': iri };
     this.conditionTree = undefined;
     return this;
+  }
+
+  async executeConditional(options: ConditionalWriteOptions<TTable>): Promise<ConditionalWriteResult> {
+    if (this.sql || this.returningFields || this.conditionTree) throw new Error('Conditional writes do not support SQL, broad conditions or returning');
+    return executeConditional(this.session.getDialect(), this.table, this.conditionalIri, options);
   }
 
   private isQueryCondition(obj: any): obj is QueryCondition {

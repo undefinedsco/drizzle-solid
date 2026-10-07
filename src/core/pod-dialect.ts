@@ -1,3 +1,4 @@
+import type { ConditionalWriteBackend } from './conditional-writes/types';
 import { entityKind } from 'drizzle-orm';
 import { SQL } from 'drizzle-orm';
 import { PodColumnBase, PodTable } from './schema';
@@ -48,6 +49,7 @@ export interface SolidAuthSession {
 import type { ChannelType } from './notifications';
 
 export interface PodDialectConfig {
+  conditionalWriteBackend?: ConditionalWriteBackend;
   session: SolidAuthSession;
   typeIndex?: TypeIndexConfig;
   createQueryEngine?: SPARQLQueryEngineFactory;

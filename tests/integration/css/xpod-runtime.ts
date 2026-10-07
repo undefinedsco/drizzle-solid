@@ -1,5 +1,6 @@
 import fs from 'node:fs';
 import path from 'node:path';
+import os from 'node:os';
 
 type RuntimeModule = {
   startXpodRuntime: (options?: Record<string, unknown>) => Promise<RuntimeHandle>;
@@ -9,6 +10,7 @@ export type RuntimeHandle = {
   baseUrl: string;
   fetch: typeof fetch;
   stop: () => Promise<void>;
+  sockets?: { gateway?: string; css?: string; api?: string };
 };
 
 export type NoAuthSession = {
@@ -206,11 +208,13 @@ export function buildTestPodUrl(relativePath: string, podId = 'test'): string {
 }
 
 async function loadPublishedRuntimeModule(): Promise<RuntimeModule> {
-  return await import('@undefineds.co/xpod/runtime');
+  const publishedRuntimeModule = '@undefineds.co/xpod/runtime';
+  return await import(publishedRuntimeModule);
 }
 
 async function loadLocalRuntimeModule(): Promise<RuntimeModule> {
-  return await import('../../../../xpod/src/runtime/index.ts');
+  const sourceRuntimeModule = '../../../../xpod/src/runtime/index.ts';
+  return await import(sourceRuntimeModule);
 }
 
 function getRuntimeSourcePreference(): 'package' | 'local' {
@@ -255,6 +259,19 @@ async function delay(ms: number): Promise<void> {
 
 export async function startNoAuthXpodRuntime(): Promise<RuntimeHandle> {
   const seedConfigPath = resolveSeedConfigPath();
+  fs.mkdirSync(path.resolve('.test-data'), { recursive: true });
+  const fixtureRoot = fs.mkdtempSync(path.resolve('.test-data/css-offline-'));
+  const socketRoot = fs.mkdtempSync(path.join(os.tmpdir(), 'ds-css-'));
+  const ownedRuntime = (runtime: RuntimeHandle): RuntimeHandle => {
+    runtime.stop = new Proxy(runtime.stop, {
+      apply: async (stop, receiver, args) => {
+        await Reflect.apply(stop, receiver, args);
+        fs.rmSync(socketRoot, { recursive: true, force: true });
+        fs.rmSync(fixtureRoot, { recursive: true, force: true });
+      },
+    });
+    return runtime;
+  };
   const runtimePorts = resolveExplicitRuntimePorts();
   const hasExplicitRuntimePorts = Object.keys(runtimePorts).length > 0;
   const runtimeLogLevel = process.env.XPOD_RUNTIME_LOG_LEVEL ?? 'error';
@@ -262,12 +279,25 @@ export async function startNoAuthXpodRuntime(): Promise<RuntimeHandle> {
   const options = {
     mode: 'local',
     open: true,
+    // Preserve virtual-origin transport while using supported short, owned socket paths.
     transport: 'socket',
+    gatewaySocketPath: path.join(socketRoot, 'gateway.sock'),
+    cssSocketPath: path.join(socketRoot, 'css.sock'),
+    apiSocketPath: path.join(socketRoot, 'api.sock'),
+    edgeNodesEnabled: false,
+    centerRegistrationEnabled: false,
     bindHost: '127.0.0.1',
     baseUrl: DEFAULT_INPROCESS_BASE_URL,
     logLevel: runtimeLogLevel,
     ...runtimePorts,
-    env: seedConfigPath ? { CSS_SEED_CONFIG: seedConfigPath } : undefined,
+    env: {
+      ...(seedConfigPath ? { CSS_SEED_CONFIG: seedConfigPath } : {}),
+      XPOD_LOCAL_AUTO_PROVISION: 'false',
+      XPOD_LOCAL_SETUP_PATH: path.join(fixtureRoot, 'local-setup.json'),
+      XPOD_NODE_TOKEN: '',
+      XPOD_SERVICE_TOKEN: '',
+      XPOD_EDGE_NODES_ENABLED: 'false',
+    },
   };
 
   process.env.CSS_LOGGING_LEVEL = runtimeLogLevel;
@@ -277,7 +307,7 @@ export async function startNoAuthXpodRuntime(): Promise<RuntimeHandle> {
       const runtimeModule = await loadLocalRuntimeModule();
       for (let attempt = 1; attempt <= 3; attempt += 1) {
         try {
-          return await runtimeModule.startXpodRuntime(options);
+          return ownedRuntime(await runtimeModule.startXpodRuntime(options));
         } catch (error) {
           if (hasExplicitRuntimePorts || !isAddressInUseError(error) || attempt === 3) {
             throw error;
@@ -291,7 +321,7 @@ export async function startNoAuthXpodRuntime(): Promise<RuntimeHandle> {
       const runtimeModule = await loadPublishedRuntimeModule();
       for (let attempt = 1; attempt <= 3; attempt += 1) {
         try {
-          return await runtimeModule.startXpodRuntime(options);
+          return ownedRuntime(await runtimeModule.startXpodRuntime(options));
         } catch (error) {
           if (hasExplicitRuntimePorts || !isAddressInUseError(error) || attempt === 3) {
             throw error;

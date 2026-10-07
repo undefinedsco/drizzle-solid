@@ -1,3 +1,4 @@
+import type { ConditionalWriteBackend } from './core/conditional-writes/types';
 import { type DrizzleConfig } from 'drizzle-orm/utils';
 import { PodDatabase } from './core/pod-database';
 import { PodAsyncSession } from './core/pod-session';
@@ -16,6 +17,7 @@ export interface SolidDrizzleConfig<TSchema extends Record<string, unknown> = Re
    * on the imported utility type, so we declare it explicitly here.
    */
   schema?: TSchema;
+  conditionalWriteBackend?: ConditionalWriteBackend;
   /**
    * Backward-compatible alias for legacy drizzle-solid callers.
    * Prefer `debug`, but keep `logger` accepted to avoid needless breakage.
@@ -69,6 +71,7 @@ export function drizzle<TSchema extends Record<string, unknown> = Record<string,
   }
 
   const dialectConfig: PodDialectConfig = {
+    conditionalWriteBackend: config?.conditionalWriteBackend,
     session,
     preferredChannels: config?.notifications?.preferredChannels,
     createQueryEngine: config?.sparql?.createQueryEngine,

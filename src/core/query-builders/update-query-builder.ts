@@ -1,3 +1,5 @@
+import { executeConditional } from '../conditional-writes/execute';
+import type { ConditionalPropertyPatch, ConditionalWriteOptions, ConditionalWriteResult } from '../conditional-writes/types';
 import { entityKind, SQL } from 'drizzle-orm';
 import { PodTable, InferUpdateData, HookContext } from '../schema';
 import { PodAsyncSession, PodOperation } from '../pod-session';
@@ -19,6 +21,7 @@ export class UpdateQueryBuilder<TTable extends PodTable<any> = PodTable<any>> {
   public whereConditions?: Record<string, any>;
   public sql?: SQL;
   private conditionTree?: QueryCondition;
+  private conditionalIri?: string;
   private returningFields?: SelectFieldMap | true;
 
   constructor(
@@ -26,11 +29,11 @@ export class UpdateQueryBuilder<TTable extends PodTable<any> = PodTable<any>> {
     public table: TTable
   ) {}
 
-  set(data: InferUpdateData<TTable> | SQL) {
+  set(data: InferUpdateData<TTable> | ConditionalPropertyPatch<TTable> | SQL) {
     if (data instanceof SQL) {
       this.sql = data;
     } else {
-      this.updateData = data;
+      this.updateData = data as InferUpdateData<TTable>;
     }
     return this;
   }
@@ -41,6 +44,7 @@ export class UpdateQueryBuilder<TTable extends PodTable<any> = PodTable<any>> {
   }
 
   where(conditions: PublicWhereObject | SQL | PublicQueryCondition) {
+    this.conditionalIri = undefined;
     if (conditions instanceof SQL) {
       if (!this.sql) {
         this.sql = conditions;
@@ -59,9 +63,16 @@ export class UpdateQueryBuilder<TTable extends PodTable<any> = PodTable<any>> {
   }
 
   whereByIri(iri: string) {
+    this.conditionalIri = iri;
     this.whereConditions = { '@id': iri };
     this.conditionTree = undefined;
     return this;
+  }
+
+  async executeConditional(options: ConditionalWriteOptions<TTable>): Promise<ConditionalWriteResult> {
+    if (this.sql || this.returningFields || this.conditionTree) throw new Error('Conditional writes do not support SQL, broad conditions or returning');
+    if (!this.updateData) throw new Error('Conditional update requires selected properties');
+    return executeConditional(this.session.getDialect(), this.table, this.conditionalIri, options, this.updateData as Record<string, unknown>);
   }
 
   private isQueryCondition(obj: any): obj is QueryCondition {
