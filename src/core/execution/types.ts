@@ -61,6 +61,36 @@ export interface ExecutionContext {
  * SELECT is required; write operations are optional since SPARQL mode
  * only supports SELECT (writes are routed to LDP for Solid Notifications compatibility).
  */
+/**
+ * Optional per-call SELECT controls supplied by the executor.
+ *
+ * `boundEndpoint` is an explicit, per-database scoped SPARQL endpoint. It is
+ * authoritative for collection SELECT: when present, strategies must not fall
+ * back to the table-level/global endpoint.
+ */
+/**
+ * Per-operation result of evaluating a database's collection-SELECT binding.
+ *
+ * - `applicable: true` carries the outcome of the single evaluation for this
+ *   SELECT (`endpoint` absent means the binding declined this table).
+ * - `applicable: false` means the binding does not apply to this operation at
+ *   all (INSERT/UPDATE/DELETE). The resolver must never be evaluated for those,
+ *   so write-time discovery keeps its baseline behavior.
+ */
+export type BoundSelectEndpointResolution =
+  | { applicable: true; endpoint?: string }
+  | { applicable: false };
+
+export interface SelectExecutionOptions {
+  /** Per-database scoped endpoint for a collection SELECT. */
+  boundEndpoint?: string;
+  /**
+   * Concrete Pod document for an exact-by-IRI SELECT. When present it wins over
+   * any collection endpoint: exact targets must never be widened.
+   */
+  exactResource?: string;
+}
+
 export interface ExecutionStrategy {
   /** Mode identifier */
   readonly mode: 'ldp' | 'sparql';
@@ -71,7 +101,8 @@ export interface ExecutionStrategy {
   executeSelect(
     plan: SelectQueryPlan,
     containerUrl: string,
-    resourceUrl: string
+    resourceUrl: string,
+    options?: SelectExecutionOptions
   ): Promise<any[]>;
 
   /**

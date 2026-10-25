@@ -12,7 +12,9 @@ export type {
   ExecutionContext,
   InsertQueryPlan,
   UpdateQueryPlan,
-  DeleteQueryPlan
+  DeleteQueryPlan,
+  SelectExecutionOptions,
+  BoundSelectEndpointResolution
 } from './types';
 
 // Strategies

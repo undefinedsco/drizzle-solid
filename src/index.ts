@@ -1,6 +1,8 @@
 // 主要公开入口
 export { pod, PodClient, PodCollection, PodEntity, type PodCollectionQueryOptions } from './pod';
 export { drizzle, type SolidDatabase, type SolidAuthSession } from './driver';
+export type { SolidDrizzleConfig } from './driver';
+export type { SparqlEndpointResolver } from './core/pod-dialect';
 export * from './solid';
 
 // 公共工具

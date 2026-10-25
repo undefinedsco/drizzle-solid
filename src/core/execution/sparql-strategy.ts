@@ -4,7 +4,7 @@ import type { ComunicaSPARQLExecutor } from '../sparql-executor';
 import type { SPARQLQueryEngineFactory } from '../sparql-engine';
 import type { UriResolver } from '../uri';
 import { isSameOrigin } from '../utils/origin-auth';
-import type { ExecutionStrategy } from './types';
+import type { ExecutionStrategy, SelectExecutionOptions } from './types';
 
 export interface SparqlStrategyDependencies {
   sparqlExecutor: ComunicaSPARQLExecutor;
@@ -73,13 +73,25 @@ export class SparqlStrategy implements ExecutionStrategy {
   async executeSelect(
     plan: SelectQueryPlan,
     _containerUrl: string,
-    resourceUrl: string
+    resourceUrl: string,
+    options?: SelectExecutionOptions
   ): Promise<any[]> {
     const table = plan.baseTable;
     const targetGraph = this.resolveTargetGraph(table, true);
-    const configuredEndpoint = table.getSparqlEndpoint?.();
-    const sourceUrl = this.resolvePodResourceIri(configuredEndpoint) ?? resourceUrl;
-    const sourceType = configuredEndpoint || sourceUrl.includes('/sparql')
+    // An exact-by-IRI select goes to the concrete document and never to a
+    // collection endpoint, bound or table-level.
+    const exactSourceUrl = options?.exactResource
+      ? this.resolvePodResourceIri(options.exactResource)
+      : undefined;
+    // A per-database bound endpoint is authoritative for collection SELECT.
+    // Never fall back to the (potentially broader) table-level endpoint.
+    const configuredEndpoint = options?.boundEndpoint ?? table.getSparqlEndpoint?.();
+    const sourceUrl = exactSourceUrl
+      ?? this.resolvePodResourceIri(configuredEndpoint)
+      ?? resourceUrl;
+    const sourceType = exactSourceUrl
+      ? 'auto'
+      : options?.boundEndpoint || configuredEndpoint || sourceUrl.includes('/sparql')
       ? 'sparql'
       : 'auto';
 

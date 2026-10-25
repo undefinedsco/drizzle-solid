@@ -259,6 +259,11 @@ export async function startNoAuthXpodRuntime(): Promise<RuntimeHandle> {
   const hasExplicitRuntimePorts = Object.keys(runtimePorts).length > 0;
   const runtimeLogLevel = process.env.XPOD_RUNTIME_LOG_LEVEL ?? 'error';
   const previousCssLoggingLevel = process.env.CSS_LOGGING_LEVEL;
+  // Unix socket paths are limited to ~104 bytes on macOS. Deep checkouts
+  // (long worktree paths) overflow that; allow redirecting only the test
+  // runtime's state/socket root to a short directory. Library behavior is
+  // unaffected.
+  const runtimeRoot = process.env.XPOD_RUNTIME_ROOT;
   const options = {
     mode: 'local',
     open: true,
@@ -266,6 +271,7 @@ export async function startNoAuthXpodRuntime(): Promise<RuntimeHandle> {
     bindHost: '127.0.0.1',
     baseUrl: DEFAULT_INPROCESS_BASE_URL,
     logLevel: runtimeLogLevel,
+    ...(runtimeRoot ? { runtimeRoot } : {}),
     ...runtimePorts,
     env: seedConfigPath ? { CSS_SEED_CONFIG: seedConfigPath } : undefined,
   };
