@@ -48,6 +48,20 @@ export interface SolidDrizzleConfig<TSchema extends Record<string, unknown> = Re
   /** Explicit Pod base URL for IdP/SP split deployments. */
   podUrl?: string;
   /**
+   * Scoped SPARQL endpoint for collection SELECT on this database instance.
+   *
+   * Use this to read an existing shared table through a narrower room/container
+   * endpoint without mutating the table or copying its schema. A string binds
+   * every table on this database; a resolver may return `undefined` to leave a
+   * table's own endpoint/LDP behavior unchanged.
+   *
+   * Only collection SELECT is affected: exact-by-IRI reads keep the concrete
+   * document, and INSERT/UPDATE/DELETE keep their canonical LDP paths. If the
+   * bound endpoint is denied or unavailable the query fails; it never falls
+   * back to the broader table-level endpoint.
+   */
+  sparqlEndpoint?: PodDialectConfig['sparqlEndpoint'];
+  /**
    * Controls implicit LDP container/resource probes before ORM operations.
    * Use `off` when the Pod runtime or sidecar owns path creation and direct writes
    * should not be blocked by HEAD/container preparation probes.
@@ -74,6 +88,7 @@ export function drizzle<TSchema extends Record<string, unknown> = Record<string,
     createQueryEngine: config?.sparql?.createQueryEngine,
     disableInteropDiscovery: config?.disableInteropDiscovery,
     podUrl: config?.podUrl ?? session.info.podUrl,
+    sparqlEndpoint: config?.sparqlEndpoint,
     resourcePreparation: config?.resourcePreparation,
     storageTTL: config?.storageTTL,
     debug: config?.debug ?? config?.logger,

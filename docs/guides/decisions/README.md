@@ -63,6 +63,8 @@
 
 - `0001-keep-exact-target-paths-exact.md` — exact-target 路径必须保持精确，或显式失败
 - `0002-require-complete-join-locator-for-multi-variable-templates.md` — 多变量 join 是上面原则在 join 场景下的具体化
+- `0003-scope-inline-object-identities-to-the-parent.md` — inline object 身份必须限定在父实体范围内
+- `0004-per-database-select-endpoint-binding.md` — collection SELECT 端点按 DB 实例绑定，缺省行为不变
 
 ## 建模类决策的额外要求
 

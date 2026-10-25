@@ -5,13 +5,22 @@ import type { SelectQueryPlan } from '../select-plan';
 import type { InsertQueryPlan, UpdateQueryPlan, DeleteQueryPlan } from '../pod-session';
 import type { ASTToSPARQLConverter } from '../ast-to-sparql';
 import type { ComunicaSPARQLExecutor } from '../sparql-executor';
-import type { ExecutionStrategy } from './types';
+import type { BoundSelectEndpointResolution, ExecutionStrategy } from './types';
 import type { TableResourceDescriptor } from './pod-executor-types';
 
 export interface PodExecutorDeps {
   ensureConnected: () => Promise<void>;
-  ensureTableResourcePath: (table: PodTable) => Promise<void>;
+  ensureTableResourcePath: (
+    table: PodTable,
+    boundSelect: BoundSelectEndpointResolution
+  ) => Promise<void>;
   resolveTableResource: (table: PodTable) => TableResourceDescriptor;
+  /**
+   * Per-database collection SELECT endpoint, if one is bound. May throw when
+   * the binding is invalid so callers fail closed instead of using a broader
+   * table/global endpoint.
+   */
+  resolveBoundSelectEndpoint?: (table: PodTable) => string | undefined;
   resolveTableUrls: (table: PodTable) => { containerUrl: string; resourceUrl: string };
   normalizeResourceUrl: (resourceUrl: string) => string;
   normalizeContainerKey: (containerUrl: string) => string;
@@ -33,6 +42,7 @@ export interface PodExecutorDeps {
   resourceExists: (resourceUrl: string) => Promise<boolean>;
   getStrategy: (table: PodTable) => ExecutionStrategy;
   getLdpStrategy: () => ExecutionStrategy;
+  getSparqlStrategy?: () => ExecutionStrategy;
   preparedContainers: Set<string>;
   preparedResources: Set<string>;
   sparqlConverter: ASTToSPARQLConverter;
@@ -53,8 +63,21 @@ export class PodExecutor {
   async query(operation: PodOperation): Promise<unknown[]> {
     await this.deps.ensureConnected();
 
+    // Per-database collection SELECT endpoint binding. Evaluated exactly once
+    // per SELECT operation, before any table preparation, so an invalid binding
+    // fails closed without probing broader containers first. The resolution is
+    // carried as a sentinel so "resolved to nothing" is not re-evaluated as
+    // "never resolved".
+    // INSERT/UPDATE/DELETE are `applicable: false`: they never evaluate the
+    // collection-SELECT resolver, so write-time discovery keeps baseline
+    // behavior even when the resolver would throw.
+    const boundSelect: BoundSelectEndpointResolution = operation.type === 'select'
+      ? { applicable: true, endpoint: this.resolveBoundSelectEndpoint(operation.table) }
+      : { applicable: false };
+    const boundSelectEndpoint = boundSelect.applicable ? boundSelect.endpoint : undefined;
+
     // 如果表没有指定 resourcePath，尝试从 TypeIndex 自动发现
-    await this.deps.ensureTableResourcePath(operation.table);
+    await this.deps.ensureTableResourcePath(operation.table, boundSelect);
 
     const descriptor = this.deps.resolveTableResource(operation.table);
 
@@ -62,7 +85,7 @@ export class PodExecutor {
     // - SELECT: 使用表配置的策略（可能是 SPARQL 或 LDP）
     // - INSERT/UPDATE/DELETE: 强制使用 LDP 策略（SPARQL mode 仅用于查询增强）
     const strategy = operation.type === 'select'
-      ? this.getSelectStrategy(operation, descriptor)
+      ? this.getSelectStrategy(operation, descriptor, boundSelectEndpoint)
       : this.deps.getLdpStrategy();
 
     // LDP container/resource URLs（物理存储位置）
@@ -75,14 +98,23 @@ export class PodExecutor {
       ? this.getExactSelectResourceUrl(operation)
       : undefined;
     const selectResourceUrl = exactSelectResourceUrl
-      ?? (operation.type === 'select' && descriptor.mode === 'sparql'
+      ?? (operation.type === 'select' && boundSelectEndpoint
+      ? boundSelectEndpoint
+      : operation.type === 'select' && descriptor.mode === 'sparql'
       ? descriptor.endpoint
       : normalizedResourceUrl);
 
     try {
       switch (operation.type) {
         case 'select':
-          return await this.executeSelect(operation, strategy, containerUrl, selectResourceUrl);
+          return await this.executeSelect(
+            operation,
+            strategy,
+            containerUrl,
+            selectResourceUrl,
+            boundSelectEndpoint,
+            exactSelectResourceUrl
+          );
 
         case 'insert':
           return await this.executeInsert(operation, strategy, containerUrl, normalizedResourceUrl, descriptor);
@@ -140,7 +172,9 @@ export class PodExecutor {
     operation: PodOperation,
     strategy: ExecutionStrategy,
     containerUrl: string,
-    resourceUrl: string
+    resourceUrl: string,
+    boundSelectEndpoint?: string,
+    exactSelectResourceUrl?: string
   ): Promise<unknown[]> {
     // Build SelectQueryPlan
     let plan: SelectQueryPlan;
@@ -179,28 +213,152 @@ export class PodExecutor {
       plan = basePlan;
     }
 
-    const results = await strategy.executeSelect(plan, containerUrl, resourceUrl);
-    return results;
+    // Exact-by-IRI selects target one concrete document and are never bound to
+    // the collection endpoint.
+    if (exactSelectResourceUrl) {
+      return await strategy.executeSelect(
+        plan,
+        containerUrl,
+        resourceUrl,
+        { exactResource: exactSelectResourceUrl }
+      );
+    }
+
+    if (!boundSelectEndpoint) {
+      return await strategy.executeSelect(plan, containerUrl, resourceUrl);
+    }
+
+    return await strategy.executeSelect(
+      plan,
+      containerUrl,
+      resourceUrl,
+      { boundEndpoint: boundSelectEndpoint }
+    );
   }
 
-  private getSelectStrategy(operation: PodOperation, descriptor: TableResourceDescriptor): ExecutionStrategy {
+  private getSelectStrategy(
+    operation: PodOperation,
+    descriptor: TableResourceDescriptor,
+    boundSelectEndpoint?: string
+  ): ExecutionStrategy {
+    if (boundSelectEndpoint) {
+      if (!this.deps.getSparqlStrategy) {
+        throw new Error(
+          'A per-database sparqlEndpoint binding was provided, but SPARQL execution is not available for this database.'
+        );
+      }
+      return this.deps.getSparqlStrategy();
+    }
     return this.deps.getStrategy(operation.table);
   }
 
-  private isExactIriSelect(operation: PodOperation): boolean {
-    const condition = operation.where;
-    if (!condition || typeof condition !== 'object' || 'type' in condition) {
-      return false;
+  private resolveBoundSelectEndpoint(table: PodTable): string | undefined {
+    if (!this.deps.resolveBoundSelectEndpoint) {
+      return undefined;
     }
-    const value = (condition as Record<string, unknown>)['@id'];
-    return typeof value === 'string' && value.startsWith('http');
+    return this.deps.resolveBoundSelectEndpoint(table);
+  }
+
+  /**
+   * Extract the exact subject IRI when the operation targets one concrete Pod
+   * document.
+   *
+   * Accepts both shapes the public API really produces:
+   * - a plain `{ '@id': iri }` where payload, and
+   * - the `BinaryExpression` (`type: 'binary_expr'`, left `@id`, operator `=`)
+   *   built by `db.select().from(t).whereByIri(iri)` and by the update/delete
+   *   exact preflight selects.
+   *
+   * Only a single equality on `@id` counts; `IN`, ranges, or any condition
+   * combined with another predicate is a collection query.
+   */
+  private getExactSelectIri(operation: PodOperation): string | undefined {
+    const candidates: unknown[] = [operation.where];
+
+    const planCondition = (operation.plan as { conditionTree?: unknown } | undefined)
+      ?.conditionTree;
+    if (planCondition !== undefined) {
+      candidates.push(planCondition);
+    }
+
+    for (const condition of candidates) {
+      const iri = this.extractSingleIdIri(condition, operation);
+      if (iri) {
+        return iri;
+      }
+    }
+
+    return undefined;
+  }
+
+  private extractSingleIdIri(
+    condition: unknown,
+    operation: PodOperation
+  ): string | undefined {
+    if (!condition || typeof condition !== 'object') {
+      return undefined;
+    }
+
+    const record = condition as Record<string, unknown>;
+
+    if (!('type' in record)) {
+      // A bare where object is exact only when '@id' is its ONLY key. An extra
+      // predicate makes it a collection query.
+      const keys = Object.keys(record);
+      if (keys.length !== 1 || keys[0] !== '@id') {
+        return undefined;
+      }
+      const value = record['@id'];
+      return this.isExactDocumentIri(value) ? value : undefined;
+    }
+
+    if (record.type !== 'binary_expr') {
+      return undefined;
+    }
+    if (record.operator !== '=') {
+      return undefined;
+    }
+
+    const left = record.left as { name?: unknown } | string | undefined;
+    const columnName = typeof left === 'string' ? left : left?.name;
+    if (typeof columnName !== 'string' || !this.isSubjectOperand(columnName, operation)) {
+      return undefined;
+    }
+
+    const right = record.right;
+    return this.isExactDocumentIri(right) ? right : undefined;
+  }
+
+  /**
+   * Only the RDF subject operand is exact:
+   * - canonical `@id`, or
+   * - the base table's own qualification, `<baseAlias>.@id`.
+   *
+   * Ordinary columns may legitimately be named like `external@id` or
+   * `note@id`; those are filters, never the subject. A foreign join's `<x>.@id`
+   * is not the base subject either.
+   */
+  private isSubjectOperand(columnName: string, operation: PodOperation): boolean {
+    if (columnName === '@id') {
+      return true;
+    }
+    const plan = operation.plan as { baseAlias?: unknown } | undefined;
+    const baseAlias = typeof plan?.baseAlias === 'string'
+      ? plan.baseAlias
+      : operation.table.config.name;
+    return baseAlias !== undefined && columnName === `${baseAlias}.@id`;
+  }
+
+  /** Exact documents are http(s) resource URLs (Solid Pod storage). */
+  private isExactDocumentIri(value: unknown): value is string {
+    return typeof value === 'string' && /^https?:\/\//i.test(value);
   }
 
   private getExactSelectResourceUrl(operation: PodOperation): string | undefined {
-    if (!this.isExactIriSelect(operation)) {
+    const iri = this.getExactSelectIri(operation);
+    if (!iri) {
       return undefined;
     }
-    const iri = (operation.where as Record<string, string>)['@id'];
     const hashIndex = iri.indexOf('#');
     return hashIndex >= 0 ? iri.slice(0, hashIndex) : iri;
   }

@@ -8,6 +8,7 @@ import { ComunicaSPARQLExecutor } from './sparql-executor';
 import { TypeIndexManager, TypeIndexEntry, TypeIndexConfig, DiscoveredTable } from './typeindex-manager';
 import { DataDiscovery } from './discovery';
 import type { ExecutionStrategy, ExecutionStrategyFactoryImpl, LdpExecutor } from './execution';
+import type { BoundSelectEndpointResolution } from './execution/types';
 import { PodExecutor } from './execution/pod-executor';
 import type { TableResourceDescriptor } from './execution/pod-executor-types';
 import { UriResolverImpl } from './uri';
@@ -47,12 +48,30 @@ export interface SolidAuthSession {
 
 import type { ChannelType } from './notifications';
 
+/**
+ * Resolver for a per-database collection SELECT endpoint binding.
+ *
+ * Returning `undefined`/`null` for a table keeps that table's own
+ * `sparqlEndpoint` (or LDP) behavior unchanged.
+ */
+export type SparqlEndpointResolver = (table: PodTable) => string | undefined | null;
+
 export interface PodDialectConfig {
   session: SolidAuthSession;
   typeIndex?: TypeIndexConfig;
   createQueryEngine?: SPARQLQueryEngineFactory;
   /** Explicit Pod base URL for IdP/SP split deployments. */
   podUrl?: string;
+  /**
+   * Scoped SPARQL endpoint for collection SELECT on this database instance.
+   *
+   * - Absolute URL, or a path resolved against this database's Pod URL.
+   * - Takes precedence over `table.getSparqlEndpoint()` for collection SELECT.
+   * - Does not apply to exact-by-IRI reads (those keep the concrete document),
+   *   nor to INSERT/UPDATE/DELETE (those keep their canonical LDP targets).
+   * - `undefined` keeps the previous behavior; the shared table is never mutated.
+   */
+  sparqlEndpoint?: string | SparqlEndpointResolver;
   disableInteropDiscovery?: boolean;
   /**
    * Controls implicit LDP container/resource probes before ORM operations.
@@ -185,8 +204,10 @@ export class PodDialect {
           await this.connect();
         }
       },
-      ensureTableResourcePath: (table) => this.ensureTableResourcePath(table),
+      ensureTableResourcePath: (table, boundSelect) =>
+        this.ensureTableResourcePath(table, boundSelect),
       resolveTableResource: (table) => this.resolveTableResource(table),
+      resolveBoundSelectEndpoint: (table) => this.resolveBoundSelectEndpoint(table),
       resolveTableUrls: (table) => this.resolveTableUrls(table),
       normalizeResourceUrl: (resourceUrl) => this.normalizeResourceUrl(resourceUrl),
       normalizeContainerKey: (containerUrl) => this.normalizeContainerKey(containerUrl),
@@ -205,6 +226,7 @@ export class PodDialect {
       resourceExists: (resourceUrl) => this.resourceExists(resourceUrl),
       getStrategy: (table) => this.getStrategy(table),
       getLdpStrategy: () => this.strategyFactory.getLdpStrategy(),
+      getSparqlStrategy: () => this.strategyFactory.getSparqlStrategy(),
       preparedContainers: this.preparedContainers,
       preparedResources: this.preparedResources,
       sparqlConverter: this.sparqlConverter,
@@ -431,6 +453,65 @@ export class PodDialect {
 
     const { containerUrl, resourceUrl } = this.resolveLdpResource(table);
     return { mode: 'ldp', containerUrl, resourceUrl };
+  }
+
+  /**
+   * Resolve this database's scoped collection SELECT endpoint, if configured.
+   *
+   * Returns `undefined` when no binding is configured or the resolver declines
+   * the table, so table-level endpoints and LDP defaults stay untouched.
+   * The returned endpoint is always absolute; a relative binding is resolved
+   * against this database's Pod URL. An empty or unresolvable binding throws
+   * instead of silently widening to the table/global endpoint.
+   */
+  resolveBoundSelectEndpoint(table: PodTable): string | undefined {
+    const binding = this.config.sparqlEndpoint;
+    if (binding === undefined || binding === null) {
+      return undefined;
+    }
+
+    const resolved = typeof binding === 'function' ? binding(table) : binding;
+    if (resolved === undefined || resolved === null) {
+      return undefined;
+    }
+    if (typeof resolved !== 'string' || resolved.trim().length === 0) {
+      throw new Error(
+        `Invalid sparqlEndpoint binding for table '${table.config.name}': expected a non-empty string or undefined.`
+      );
+    }
+
+    const trimmed = resolved.trim();
+    if (trimmed.startsWith('//')) {
+      throw new Error(
+        `Invalid sparqlEndpoint binding for table '${table.config.name}': ` +
+        `'${trimmed}' is protocol-relative; use an absolute http(s) URL or a Pod-relative path.`
+      );
+    }
+    if (/^[a-z][a-z0-9+.-]*:/i.test(trimmed) && !this.isAbsoluteUrl(trimmed)) {
+      throw new Error(
+        `Invalid sparqlEndpoint binding for table '${table.config.name}': '${trimmed}' must be http(s) or Pod-relative.`
+      );
+    }
+
+    return this.isAbsoluteUrl(trimmed) ? trimmed : this.resolveAbsoluteUrl(trimmed);
+  }
+
+  /**
+   * Whether an explicit per-database collection-SELECT binding applies to the
+   * table for this operation.
+   *
+   * `boundSelect` is the per-operation sentinel: `applicable: false` (writes)
+   * never applies, `applicable: true` uses its single evaluation, and absence
+   * of a sentinel means this call did not come from a SELECT operation.
+   */
+  private bindingAppliesToSelect(
+    boundSelect: BoundSelectEndpointResolution | undefined,
+    table: PodTable
+  ): boolean {
+    if (boundSelect) {
+      return boundSelect.applicable && Boolean(boundSelect.endpoint);
+    }
+    return Boolean(this.resolveBoundSelectEndpoint(table));
   }
 
   /**
@@ -806,7 +887,10 @@ export class PodDialect {
    * 确保表有 resourcePath，如果没有则从 TypeIndex 自动发现
    * 如果设置了 typeIndex，优先使用发现的位置（覆盖配置的 base）
    */
-  private async ensureTableResourcePath(table: PodTable): Promise<void> {
+  private async ensureTableResourcePath(
+    table: PodTable,
+    boundSelect?: BoundSelectEndpointResolution
+  ): Promise<void> {
     const rdfClass = typeof table.config.type === 'string'
       ? table.config.type
       : String(table.config.type);
@@ -836,6 +920,14 @@ export class PodDialect {
       const location = locations[0]; // 使用第一个发现的位置
 
       if (location) {
+        // A collection SELECT with an explicit per-database binding must not
+        // mutate ANY shared table state (endpoint, base, subjectTemplate).
+        // Skip table-mutating discovery for that operation; baseline behavior
+        // for unbound/declined tables is untouched.
+        if (this.bindingAppliesToSelect(boundSelect, table)) {
+          return;
+        }
+
         // 动态设置 containerPath 和 resourcePath
         // 假设 location.container 是 containerPath 或 URL
         let containerPath = location.container;
@@ -875,7 +967,7 @@ export class PodDialect {
         table.setBase(resourcePath);
 
         // 尝试自动发现 SPARQL endpoint
-        await this.tryDiscoverSparqlEndpoint(table, containerPath);
+        await this.tryDiscoverSparqlEndpoint(table, containerPath, boundSelect);
       } else {
         // Discovery 没有找到位置
         if (configuredResourcePath && configuredResourcePath.trim().length > 0) {
@@ -903,9 +995,26 @@ export class PodDialect {
    * 按约定：${base}/-/sparql
    * 使用 OPTIONS 做能力探测，因为 xpod sidecar 不接受 HEAD。
    */
-  private async tryDiscoverSparqlEndpoint(table: PodTable, base: string): Promise<void> {
+  private async tryDiscoverSparqlEndpoint(
+    table: PodTable,
+    base: string,
+    boundSelect?: BoundSelectEndpointResolution
+  ): Promise<void> {
     // 如果表已经配置了 sparqlEndpoint，跳过
     if (table.getSparqlEndpoint()) {
+      return;
+    }
+
+    // A binding that actually applies to THIS table is authoritative for this
+    // database's collection SELECT, so do not mutate the shared table's global
+    // endpoint during discovery. A resolver that returns undefined for this
+    // table must keep the old table behavior, including discovery.
+    const effectiveBoundEndpoint = boundSelect
+      ? boundSelect.applicable
+        ? boundSelect.endpoint
+        : undefined
+      : this.resolveBoundSelectEndpoint(table);
+    if (effectiveBoundEndpoint) {
       return;
     }
 

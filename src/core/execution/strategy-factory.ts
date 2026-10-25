@@ -80,7 +80,7 @@ export class ExecutionStrategyFactoryImpl implements ExecutionStrategyFactory {
     return this.ldpStrategy;
   }
 
-  private getSparqlStrategy(): SparqlStrategy {
+  getSparqlStrategy(): SparqlStrategy {
     if (!this.sparqlStrategy) {
       const sparqlDeps: SparqlStrategyDependencies = {
         sparqlExecutor: this.deps.sparqlExecutor,

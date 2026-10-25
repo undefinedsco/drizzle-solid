@@ -91,6 +91,7 @@ describe('PodExecutor', () => {
       expect.any(Object),
       'https://example.com/',
       'https://example.com/users.ttl',
+      { exactResource: 'https://example.com/users.ttl' },
     );
     expect(ldpStrategy.executeSelect).not.toHaveBeenCalled();
   });

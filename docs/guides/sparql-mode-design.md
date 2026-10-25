@@ -132,6 +132,72 @@ sparqlEndpoint 解析流程：
    └─ 跨源 → 标准 fetch（无认证）
 ```
 
+### 3.2.1 Per-database 房间级 SELECT 绑定
+
+表级 `sparqlEndpoint` 是**共享表的可变状态**。当同一份共享模型需要按房间/容器读取时
+（例如 LinX/Xpod Matrix 房间：调用方只被授权某个房间容器），不要修改共享表，改用
+DB 级绑定：
+
+```typescript
+import { drizzle } from '@undefineds.co/drizzle-solid';
+import { chatResource } from '@undefineds.co/models';
+
+// 每个 DB 实例绑定自己的房间端点；chatResource 不被修改
+const roomDb = drizzle(bobSession, {
+  schema: { chat: chatResource },
+  podUrl: 'https://pods.example/alice/',
+  sparqlEndpoint: 'https://pods.example/alice/.data/chat/matrix-abc/-/sparql',
+});
+
+const chats = await roomDb.select().from(chatResource);
+// → GET .../.data/chat/matrix-abc/-/sparql
+```
+
+也可以是 resolver，按表决定：
+
+```typescript
+const roomDb = drizzle(session, {
+  sparqlEndpoint: (table) =>
+    table.config.name === 'chat' ? `${roomBase}.data/chat/-/sparql` : undefined,
+});
+```
+
+语义边界：
+
+- **仅**作用于该 DB 实例的 collection SELECT，优先于表级 `sparqlEndpoint`
+- 相对路径按该 DB 的 Pod URL 解析
+- **不改变** exact-by-IRI 读取：`findById` / `findByIri` 仍读取具体文档
+- **不改变** INSERT/UPDATE/DELETE：写入仍走规范 LDP 路径
+- 绑定为空、非 http(s)、协议相对（`//host/...`）或端点被拒绝时直接失败，**不会**回退到表级/全局端点
+- 只有 SELECT 会求值 resolver；INSERT/UPDATE/DELETE 从不求值，写入路由保持基线行为
+- 多个 DB 实例并发使用同一个导入的 `podTable` 时彼此隔离；带显式绑定的读取不会修改共享表的
+  **任何**状态（endpoint / base / subjectTemplate），因此该操作会跳过会改动表的自动发现
+- resolver 对某张表返回 `undefined` 时，该表**保留原来的行为**（自己的表级端点、或 LDP 默认，
+  以及原有的端点发现），不会被其它表的绑定影响
+- 启用绑定时，自动发现不会把发现的端点写回共享表
+- resolver 每个 SELECT 操作只求值一次；解析结果以不可变值传递，不会把“已解析为 undefined”
+  重新当成“未解析”而二次求值
+
+**exact-target 不受绑定影响：** `db.select().from(t).whereByIri(iri)`、`findByIri` 的精确回退、
+以及 update/delete 的 `returning()` 预读都会走**具体文档 URL**，即使该 DB 绑定了房间端点。
+collection 绑定只作用于集合读取。
+
+“精确”只认 RDF **主语**操作数：canonical `@id` 或**本表**别名限定 `<baseAlias>.@id`。
+普通列即使名字以 `@id` 结尾（例如 `external@id`、`note@id`）也只是过滤条件，仍走集合端点；
+外来 join 别名限定的 `@id` 也不算本表主语。裸 where 对象只有**恰好一个** `@id` 键时才算精确，
+带额外谓词的一律按集合查询处理。
+
+**混合 join 的绑定范围：** join 的两侧各自按本表的 resolver 结果路由，不引入多源框架。
+
+| base | joined | 实际行为 |
+|------|--------|----------|
+| 已绑定 A | 已绑定 B | base 走 A 端点，join 走 B 端点 |
+| 未绑定/被拒绝 | 已绑定 B | base 用自己的表级端点/LDP 默认，join 走 B 端点 |
+| 已绑定 A | 未绑定/被拒绝 | base 走 A 端点，join 用自己的表级端点/LDP 默认 |
+
+> 注：库只负责路由，不验证房间成员资格。调用方（应用适配层）必须先确认调用者对该房间
+> 的授权，再为这个 DB 绑定端点。
+
 ### 3.3 完整配置示例
 
 **Fragment Mode：**
