@@ -79,6 +79,8 @@ function normalizeUrl(value: string, baseUrl: string): string {
 
 function resolveSeedConfigPath(): string | undefined {
   const candidates = [
+    // Test-only joint mode may point at an externally owned fixture's seed file.
+    process.env.XPOD_JOINT_SEED_CONFIG,
     process.env.CSS_SEED_CONFIG,
     path.resolve(process.cwd(), '../xpod/config/seed.dev.json'),
     path.resolve(process.cwd(), '../xpod/config/seeds/test.json'),
@@ -118,7 +120,10 @@ function loadSeedAccounts(): SeedAccount[] {
 
     cachedSeedAccounts = accounts.length > 0 ? accounts : DEFAULT_SEED_ACCOUNTS;
     return cachedSeedAccounts;
-  } catch {
+  } catch (error) {
+    if (process.env.XPOD_JOINT_SEED_CONFIG) {
+      throw new Error(`Unable to load XPOD_JOINT_SEED_CONFIG ${configPath}: ${error instanceof Error ? error.message : String(error)}`);
+    }
     cachedSeedAccounts = DEFAULT_SEED_ACCOUNTS;
     return cachedSeedAccounts;
   }
@@ -170,7 +175,48 @@ export function getSolidIntegrationMode(): 'disabled' | 'remote' | 'in-process' 
   return isInProcessXpodEnabled() ? 'in-process' : 'remote';
 }
 
+/**
+ * Test-only split-runtime mode: the server is owned and started by another
+ * process (joint-interop partner) and described by RUNTIME.json. This harness
+ * only needs its base URL; the client session is created here.
+ */
+export type JointRuntimeDescriptor = {
+  baseUrl: string;
+  gatewayUrl?: string;
+  authFile?: string;
+};
+
+export function readJointRuntimeDescriptor(): JointRuntimeDescriptor | null {
+  const file = process.env.XPOD_JOINT_RUNTIME_FILE?.trim();
+  if (!file) {
+    return null;
+  }
+  let parsed: unknown;
+  try {
+    parsed = JSON.parse(fs.readFileSync(file, 'utf8'));
+  } catch (error) {
+    throw new Error(`Unable to read XPOD_JOINT_RUNTIME_FILE ${file}: ${error instanceof Error ? error.message : String(error)}`);
+  }
+  const record = parsed as Record<string, unknown>;
+  if (record.status !== 'ready' || typeof record.baseUrl !== 'string' || record.baseUrl.length === 0) {
+    throw new Error(`Joint runtime descriptor ${file} is not ready or lacks baseUrl`);
+  }
+  return {
+    baseUrl: record.baseUrl,
+    ...(typeof record.gatewayUrl === 'string' ? { gatewayUrl: record.gatewayUrl } : {}),
+    ...(typeof record.authFile === 'string' ? { authFile: record.authFile } : {}),
+  };
+}
+
+export function isJointRuntimeEnabled(): boolean {
+  return Boolean(process.env.XPOD_JOINT_RUNTIME_FILE?.trim());
+}
+
 export function isInProcessXpodEnabled(): boolean {
+  if (isJointRuntimeEnabled()) {
+    return false;
+  }
+
   if (process.env.XPOD_ENABLE_INPROCESS_TESTS === 'true') {
     return true;
   }
@@ -213,7 +259,30 @@ async function loadLocalRuntimeModule(): Promise<RuntimeModule> {
   return await import('../../../../xpod/src/runtime/index.ts');
 }
 
-function getRuntimeSourcePreference(): 'package' | 'local' {
+/**
+ * Explicit test-only runtime module override.
+ *
+ * Points the harness at a locally built/patched Xpod runtime entry (for example
+ * a modified `dist/runtime/index.js`) without touching package.json, the
+ * lockfile, or node_modules. Used for joint interop against in-progress source;
+ * unset means the published package remains authoritative.
+ */
+async function loadOverrideRuntimeModule(): Promise<RuntimeModule> {
+  const overridePath = process.env.XPOD_RUNTIME_MODULE?.trim();
+  if (!overridePath) {
+    throw new Error('XPOD_RUNTIME_MODULE is empty');
+  }
+  // The override is a built CommonJS runtime entry, not a Vite module graph
+  // member; require it directly so the built package resolves its own deps.
+  const { createRequire } = await import('node:module');
+  const requireFromHere = createRequire(import.meta.url);
+  return requireFromHere(overridePath) as RuntimeModule;
+}
+
+function getRuntimeSourcePreference(): 'package' | 'local' | 'override' {
+  if (process.env.XPOD_RUNTIME_MODULE?.trim()) {
+    return 'override';
+  }
   return process.env.XPOD_RUNTIME_SOURCE === 'local' ? 'local' : 'package';
 }
 
@@ -279,6 +348,20 @@ export async function startNoAuthXpodRuntime(): Promise<RuntimeHandle> {
   process.env.CSS_LOGGING_LEVEL = runtimeLogLevel;
 
   try {
+    if (getRuntimeSourcePreference() === 'override') {
+      const runtimeModule = await loadOverrideRuntimeModule();
+      for (let attempt = 1; attempt <= 3; attempt += 1) {
+        try {
+          return await runtimeModule.startXpodRuntime(options);
+        } catch (error) {
+          if (hasExplicitRuntimePorts || !isAddressInUseError(error) || attempt === 3) {
+            throw error;
+          }
+          await delay(attempt * 100);
+        }
+      }
+    }
+
     if (getRuntimeSourcePreference() === 'local') {
       const runtimeModule = await loadLocalRuntimeModule();
       for (let attempt = 1; attempt <= 3; attempt += 1) {
@@ -548,6 +631,40 @@ async function createClientCredentials(runtime: RuntimeHandle, createUrl: string
   });
 }
 
+/**
+ * Resolve the account's ACTUAL linked WebID through the account protocol.
+ *
+ * Normal CLOUD fixtures do not necessarily link `{pod}/profile/card#me`; the
+ * authoritative value comes from the account's `webId` control endpoint. This
+ * avoids inventing a WebID shape and keeps the client on the same protocol the
+ * server exposes.
+ */
+async function resolveAccountWebId(
+  runtime: RuntimeHandle,
+  controls: any,
+  token: string,
+  fallbackPodBase: string,
+): Promise<string> {
+  const webIdUrl = controls?.controls?.account?.webId as string | undefined;
+  if (webIdUrl) {
+    const baseUrl = ensureTrailingSlash(runtime.baseUrl);
+    const payload = await requestJson(runtime, normalizeUrl(webIdUrl, baseUrl), {
+      headers: {
+        Accept: 'application/json',
+        Authorization: `CSS-Account-Token ${token}`,
+      },
+    }) as { webIdLinks?: Record<string, unknown> };
+    const linked = Object.keys(payload?.webIdLinks ?? {});
+    if (linked.length === 1) {
+      return linked[0];
+    }
+    if (linked.length > 1) {
+      throw new Error(`Account exposes multiple WebIDs (${linked.length}); cannot pick one implicitly`);
+    }
+  }
+  return `${fallbackPodBase}profile/card#me`;
+}
+
 async function getSeededPod(runtime: RuntimeHandle, podId: string): Promise<SeededPod> {
   const account = getSeedAccount(podId);
   const { token, controls } = await getSeedAccountToken(runtime, account);
@@ -558,7 +675,7 @@ async function getSeededPod(runtime: RuntimeHandle, podId: string): Promise<Seed
   }
 
   const podBase = getTestPodBase(account.podName);
-  const webId = `${podBase}profile/card#me`;
+  const webId = await resolveAccountWebId(runtime, controls, token, podBase);
   const credentials = await createClientCredentials(runtime, clientCredentialsUrl, token, webId);
 
   return {
@@ -618,6 +735,72 @@ async function ensureContainerForSession(session: NoAuthSession, containerPath: 
   }
 
   return containerUrl;
+}
+
+/**
+ * Real normal-auth client session for a split joint-interop runtime.
+ *
+ * The Gateway is owned elsewhere and runs the normal CLOUD/OIDC stack, so a
+ * fetch-bound pseudo session is not enough. This performs the ordinary
+ * account password bootstrap the fixture's own seed config describes, mints
+ * client credentials through the account API, and then logs in with the same
+ * OIDC client-credential flow the library uses in production. No secret is
+ * logged, echoed, or written anywhere.
+ */
+export async function createJointRuntimeSession(podId?: string): Promise<NoAuthSession> {
+  const descriptor = readJointRuntimeDescriptor();
+  if (!descriptor) {
+    throw new Error('Joint runtime mode requested without XPOD_JOINT_RUNTIME_FILE');
+  }
+  const runtime: RuntimeHandle = {
+    baseUrl: descriptor.baseUrl,
+    fetch: ((input: any, init?: RequestInit) => {
+      const target = typeof input === 'string' || input instanceof URL
+        ? new URL(String(input), ensureTrailingSlash(descriptor.baseUrl)).toString()
+        : input;
+      return fetch(target, init);
+    }) as typeof fetch,
+    stop: async () => undefined,
+  };
+
+  const requestedPod = podId
+    ?? (descriptor.authFile ? readJointAuthPod(descriptor.authFile) : undefined)
+    ?? 'joint';
+  const account = getSeedAccount(requestedPod);
+  const seeded = await getSeededPod(runtime, account.podName);
+
+  const { Session } = await import('@inrupt/solid-client-authn-node');
+  const session = new Session();
+  await session.login({
+    clientId: seeded.clientId!,
+    clientSecret: seeded.clientSecret!,
+    oidcIssuer: ensureTrailingSlash(descriptor.baseUrl),
+    tokenType: 'DPoP',
+  });
+  if (!session.info.isLoggedIn) {
+    throw new Error('Joint runtime OIDC login did not establish a session');
+  }
+
+  return {
+    fetch: session.fetch.bind(session) as typeof fetch,
+    info: {
+      isLoggedIn: true,
+      webId: session.info.webId ?? seeded.webId,
+      clientId: seeded.clientId,
+      clientSecret: seeded.clientSecret,
+      oidcIssuer: ensureTrailingSlash(descriptor.baseUrl),
+    },
+  };
+}
+
+function readJointAuthPod(authFile: string): string | undefined {
+  try {
+    const parsed = JSON.parse(fs.readFileSync(authFile, 'utf8')) as { accounts?: Array<{ pod?: unknown }> };
+    const pod = parsed.accounts?.find((entry) => typeof entry?.pod === 'string')?.pod;
+    return typeof pod === 'string' ? pod : undefined;
+  } catch {
+    return undefined;
+  }
 }
 
 export async function createNoAuthPodSession(runtime: RuntimeHandle, podId = 'test'): Promise<NoAuthSession> {

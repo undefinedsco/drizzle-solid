@@ -10,6 +10,7 @@ import type { UriResolver } from '../../uri';
 import { UriResolverImpl } from '../../uri';
 import { ExpressionBuilder } from './expression-builder';
 import type { TableRegistryContext } from '../../ast-to-sparql';
+import type { ExplicitMetadataGraphSpec } from '../../resource-resolver/directory-layout';
 
 export class SelectBuilder {
   private generator: any;
@@ -33,14 +34,59 @@ export class SelectBuilder {
     this.expressionBuilder.setTableContext(context);
   }
 
-  convertSelect(ast: any, table: PodTable, targetGraph?: string, fromSources?: string[], allowGraphVariable = true): SPARQLQuery {
+  /**
+   * True when the plan aggregates. Such plans must keep the metadata binding in
+   * WHERE (own-facet correlation) but must NOT project the graph variable:
+   * SPARQL rejects a projected variable that is neither grouped nor aggregated.
+   *
+   * Grouping by the graph variable is deliberately not an option: it would
+   * split otherwise-identical rows into per-graph partitions and change public
+   * aggregate results.
+   */
+  private planHasGrouping(ast: any): boolean {
+    if (Array.isArray(ast.groupBy) && ast.groupBy.length > 0) {
+      return true;
+    }
+    const selectFields = ast.select;
+    if (selectFields && typeof selectFields === 'object') {
+      const fields = Object.values(selectFields);
+      if (fields.length > 0 && fields.every((field) => isAggregateExpression(field))) {
+        return true;
+      }
+      if (fields.some((field) => isAggregateExpression(field))) {
+        return true;
+      }
+    }
+    return false;
+  }
+
+  convertSelect(ast: any, table: PodTable, targetGraph?: string, fromSources?: string[], allowGraphVariable = true, metadataGraph?: ExplicitMetadataGraphSpec): SPARQLQuery {
+    const wherePatterns = metadataGraph
+      ? this.bindExplicitMetadataGraph(
+          this.buildWherePatterns(ast, table, targetGraph, fromSources, allowGraphVariable),
+          metadataGraph,
+        )
+      : this.buildWherePatterns(ast, table, targetGraph, fromSources, allowGraphVariable);
+
     const selectQuery: any = {
       queryType: 'SELECT',
       variables: this.buildSelectVariables(ast, table),
-      where: this.buildWherePatterns(ast, table, targetGraph, fromSources, allowGraphVariable), // Pass fromSources here
+      where: wherePatterns,
       type: 'query',
       prefixes: this.prefixes
     };
+
+    // The graph binding stays in WHERE for grouped plans; only ungrouped
+    // collection reads project it (see planHasGrouping).
+    const projectMetadataGraph = Boolean(metadataGraph) && !this.planHasGrouping(ast);
+    if (metadataGraph && projectMetadataGraph) {
+      // The graph binding is part of the result contract: callers use it to
+      // prove a row came from this resource's own facet.
+      selectQuery.variables = [
+        ...selectQuery.variables,
+        { termType: 'Variable', value: metadataGraph.graphVariable },
+      ];
+    }
 
     // Add FROM clauses if fromSources are provided and no explicit targetGraph
     // If targetGraph is defined, it will be handled in buildWherePatterns using GRAPH <targetGraph> { ... }
@@ -86,11 +132,14 @@ export class SelectBuilder {
     return {
       type: 'SELECT',
       query,
-      prefixes: this.prefixes
+      prefixes: this.prefixes,
+      ...(projectMetadataGraph && metadataGraph
+        ? { metadataGraphVariable: metadataGraph.graphVariable }
+        : {}),
     };
   }
 
-  convertSelectPlan(plan: SelectQueryPlan, targetGraph?: string, fromSources?: string[], allowGraphVariable = true): SPARQLQuery {
+  convertSelectPlan(plan: SelectQueryPlan, targetGraph?: string, fromSources?: string[], allowGraphVariable = true, metadataGraph?: ExplicitMetadataGraphSpec): SPARQLQuery {
     const orderByDescriptors = plan.orderBy
       ?.map((descriptor) => {
         const columnName = descriptor.reference?.column ?? descriptor.rawColumn;
@@ -119,7 +168,78 @@ export class SelectBuilder {
       distinct: plan.distinct
     };
 
-    return this.convertSelect(ast, plan.baseTable, targetGraph, fromSources, allowGraphVariable);
+    return this.convertSelect(ast, plan.baseTable, targetGraph, fromSources, allowGraphVariable, metadataGraph);
+  }
+
+  /**
+   * Bind generated collection patterns to this resource's explicit metadata
+   * facet graph and bound its namespace.
+   *
+   * The binding never relies on the endpoint default dataset: the metadata
+   * graph is named explicitly, constrained to the table's canonical metadata
+   * namespace, and returned so callers can prove graph === 'meta:'+subject.
+   *
+   * Graph<->subject ownership is enforced IN THE QUERY, before any
+   * orderBy/limit/offset is applied. A post-execution row filter alone would
+   * let a foreign-subject triple sort ahead of a valid row and truncate the
+   * collection incorrectly. The client-side row guard remains as a second
+   * correctness boundary.
+   *
+   * Canonical shape (single wire contract, see
+   * `docs/guides/decisions/0005-directory-resource-collection-reads-metadata-facet.md`):
+   *
+   *   GRAPH ?metadataGraph { <generated BGP> }
+   *   FILTER(STRSTARTS(STR(?metadataGraph), "meta:<collectionBase>"))
+   *   FILTER(STR(?subject) = STRAFTER(STR(?metadataGraph), "meta:"))
+   *
+   * The filters are query-level and use no client-specific variable renames;
+   * graph and subject variables are structural, so a server-side reader can
+   * derive ownership from the shape rather than from literal names.
+   *
+   * The previous BIND(IRI(CONCAT(...))) + term-equality form existed only as a
+   * workaround for the old 0.3.71 public router, which rejected STR/STRAFTER on
+   * a GRAPH variable; the fixed native backend supports this canonical form.
+   */
+  private bindExplicitMetadataGraph(
+    patterns: any[],
+    metadataGraph: ExplicitMetadataGraphSpec,
+  ): any[] {
+    const graphNode = { termType: 'Variable', value: metadataGraph.graphVariable } as any;
+    const subjectNode = { termType: 'Variable', value: 'subject' } as any;
+    const str = (term: any) => ({ type: 'operation', operator: 'str', args: [term] });
+    const namespaceFilter = {
+      type: 'filter',
+      expression: {
+        type: 'operation',
+        operator: 'strstarts',
+        args: [str(graphNode), { termType: 'Literal', value: metadataGraph.namespacePrefix }],
+      },
+    };
+    const ownershipFilter = {
+      type: 'filter',
+      expression: {
+        type: 'operation',
+        operator: '=',
+        args: [
+          str(subjectNode),
+          {
+            type: 'operation',
+            operator: 'strafter',
+            args: [str(graphNode), { termType: 'Literal', value: 'meta:' }],
+          },
+        ],
+      },
+    };
+
+    return [
+      {
+        type: 'graph',
+        name: graphNode,
+        patterns,
+      },
+      namespaceFilter,
+      ownershipFilter,
+    ];
   }
 
   private buildHavingExpressions(plan: SelectQueryPlan): any[] | undefined {
@@ -322,14 +442,18 @@ export class SelectBuilder {
     offset?: number;
     orderBy?: Array<{ column: string; direction: 'asc' | 'desc' }>;
     distinct?: boolean;
-  }, targetGraph?: string, fromSources?: string[], allowGraphVariable = true): SPARQLQuery {
+  }, targetGraph?: string, fromSources?: string[], allowGraphVariable = true, metadataGraph?: ExplicitMetadataGraphSpec): SPARQLQuery {
     const table = operation.table;
     const rdfClass = table.config.type || 'http://example.org/Entity';
+
+    const basePatterns = this.buildWherePatterns(operation, table, targetGraph, fromSources, allowGraphVariable);
 
     const selectQuery: any = {
       queryType: 'SELECT',
       variables: [{ termType: 'Variable', value: 'subject' }],
-      where: this.buildWherePatterns(operation, table, targetGraph, fromSources, allowGraphVariable),
+      where: metadataGraph
+        ? this.bindExplicitMetadataGraph(basePatterns, metadataGraph)
+        : basePatterns,
       type: 'query',
       prefixes: this.prefixes
     };
@@ -367,10 +491,18 @@ export class SelectBuilder {
       selectQuery.distinct = true;
     }
 
+    const projectMetadataGraph = Boolean(metadataGraph) && !this.planHasGrouping(operation);
+    if (metadataGraph && projectMetadataGraph) {
+      selectQuery.variables.push({ termType: 'Variable', value: metadataGraph.graphVariable });
+    }
+
     return {
       type: 'SELECT',
       query: this.generator.stringify(selectQuery),
-      prefixes: this.prefixes
+      prefixes: this.prefixes,
+      ...(projectMetadataGraph && metadataGraph
+        ? { metadataGraphVariable: metadataGraph.graphVariable }
+        : {}),
     };
   }
 

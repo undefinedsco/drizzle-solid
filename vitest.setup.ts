@@ -1,6 +1,6 @@
 import { beforeAll } from 'vitest';
 import { config as loadEnv } from 'dotenv';
-import { getSolidIntegrationMode, getTestPodBase } from './tests/integration/css/xpod-runtime';
+import { getSolidIntegrationMode, getTestPodBase, isJointRuntimeEnabled } from './tests/integration/css/xpod-runtime';
 
 type TestSetupState = {
   envBootstrapped: boolean;
@@ -196,6 +196,16 @@ beforeAll(async () => {
   if (mode === 'in-process') {
     if (verbose && !state.modeAnnounced) {
       console.log(`🧪 Using in-process xpod runtime for tests: ${getTestPodBase()}`);
+      state.modeAnnounced = true;
+    }
+    return;
+  }
+
+  // Split joint-interop mode: the Gateway is owned by the counterpart process
+  // and described by RUNTIME.json. Credentials are never required here.
+  if (isJointRuntimeEnabled()) {
+    if (verbose && !state.modeAnnounced) {
+      console.log('🧪 Using split joint-interop xpod runtime from RUNTIME.json');
       state.modeAnnounced = true;
     }
     return;

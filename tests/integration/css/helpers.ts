@@ -1,7 +1,8 @@
+import { readFileSync } from 'node:fs';
 import { Session } from '@inrupt/solid-client-authn-node';
 import { config as loadEnv } from 'dotenv';
 import { resolvePodBase } from '@src/core/utils/pod-root';
-import { buildTestPodUrl, createNoAuthPodSession, getSharedNoAuthXpodRuntime, isInProcessXpodEnabled, stopSharedNoAuthXpodRuntime } from './xpod-runtime';
+import { buildTestPodUrl, createJointRuntimeSession, createNoAuthPodSession, getSharedNoAuthXpodRuntime, isInProcessXpodEnabled, isJointRuntimeEnabled, stopSharedNoAuthXpodRuntime } from './xpod-runtime';
 
 type FetchLike = typeof fetch;
 
@@ -20,6 +21,15 @@ function bootstrapEnv(): void {
   loadEnv({ override: false, quiet: true });
   loadEnv({ path: '.env.local', override: true, quiet: true });
   globalState[HELPERS_ENV_STATE_KEY] = true;
+}
+
+/**
+ * Client session for the split joint-interop runtime. Normal-auth Gateways
+ * need a real OIDC login; the harness does that against the fixture's own
+ * seed config without exposing any credential.
+ */
+async function createJointSession(): Promise<Session> {
+  return await createJointRuntimeSession() as unknown as Session;
 }
 
 export function getSessionPodBase(session: Pick<Session, 'info'> | { info?: { webId?: string } }): string {
@@ -110,6 +120,9 @@ export async function resetSharedSession(): Promise<void> {
 }
 
 export async function createTestSession(options?: { shared?: boolean; skipTypeIndex?: boolean }): Promise<Session> {
+  if (isJointRuntimeEnabled()) {
+    return await createJointSession();
+  }
   const useShared = options?.shared !== false;
   if (useShared) {
     return await getSharedSession();

@@ -29,6 +29,7 @@ Chinese version: [`README.zh-CN.md`](README.zh-CN.md)
 - `docs/guides/decisions/README.md` — decision record index
 - `docs/guides/decisions/0001-keep-exact-target-paths-exact.md` — exact-target rule
 - `docs/guides/decisions/0002-require-complete-join-locator-for-multi-variable-templates.md` — join locator rule
+- `docs/guides/decisions/0005-directory-resource-collection-reads-metadata-facet.md` — directory-resource collection reads the explicit metadata facet
 - `ACTION-PLAN.md` — testing / parity backlog and execution log
 - `PROGRESS.md` — current progress snapshot
 

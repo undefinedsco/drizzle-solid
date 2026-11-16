@@ -11,6 +11,10 @@
 import type { PodTable } from '../schema';
 import type { QueryCondition } from '../query-conditions';
 import type { ResourceResolver } from './types';
+import {
+  resolveDirectoryResourceMetadataLayout,
+  type DirectoryResourceMetadataLayout,
+} from './directory-layout';
 
 interface TemplateVariable {
   raw: string;
@@ -30,6 +34,18 @@ export abstract class BaseResourceResolver implements ResourceResolver {
   abstract getContainerUrl(table: PodTable): string;
   abstract getResourceUrl(table: PodTable): string;
   abstract getResourceUrlForSubject(subjectUri: string): string;
+
+  /**
+   * Directory-resource layout for a collection read. The canonical collection
+   * base is the table's container; callers that already resolved a scoped
+   * collection endpoint pass it explicitly.
+   */
+  resolveDirectoryMetadataLayout(
+    table: PodTable,
+    collectionBaseIri: string = this.getContainerUrl(table),
+  ): DirectoryResourceMetadataLayout | null {
+    return resolveDirectoryResourceMetadataLayout(table, collectionBaseIri);
+  }
 
   abstract resolveSelectSources(
     table: PodTable,

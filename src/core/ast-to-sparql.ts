@@ -9,6 +9,7 @@ import { ExpressionBuilder } from './sparql/builder/expression-builder';
 import { QueryCondition } from './query-conditions';
 import type { UriResolver } from './uri';
 import { UriResolverImpl } from './uri';
+import type { ExplicitMetadataGraphSpec } from './resource-resolver/directory-layout';
 
 export type { SPARQLQuery };
 
@@ -75,20 +76,20 @@ export class ASTToSPARQLConverter {
     this.updateBuilder.setTableContext(this.tableContext);
   }
 
-  convertSelect(ast: Record<string, unknown>, table: PodTable, targetGraph?: string, fromSources?: string[], allowGraphVariable = true): SPARQLQuery {
-    return this.selectBuilder.convertSelect(ast, table, targetGraph, fromSources, allowGraphVariable);
+  convertSelect(ast: Record<string, unknown>, table: PodTable, targetGraph?: string, fromSources?: string[], allowGraphVariable = true, metadataGraph?: ExplicitMetadataGraphSpec): SPARQLQuery {
+    return this.selectBuilder.convertSelect(ast, table, targetGraph, fromSources, allowGraphVariable, metadataGraph);
   }
 
   buildWhereClauseForCondition(whereAst: QueryCondition, table: PodTable): string {
     return this.expressionBuilder.buildWhereClause(whereAst as QueryCondition, table);
   }
 
-  convertSelectPlan(plan: SelectQueryPlan, targetGraph?: string, fromSources?: string[], allowGraphVariable = true): SPARQLQuery {
-    return this.selectBuilder.convertSelectPlan(plan, targetGraph, fromSources, allowGraphVariable);
+  convertSelectPlan(plan: SelectQueryPlan, targetGraph?: string, fromSources?: string[], allowGraphVariable = true, metadataGraph?: ExplicitMetadataGraphSpec): SPARQLQuery {
+    return this.selectBuilder.convertSelectPlan(plan, targetGraph, fromSources, allowGraphVariable, metadataGraph);
   }
 
-  convertSimpleSelect(operation: SimpleSelectOperation, targetGraph?: string, fromSources?: string[], allowGraphVariable = true): SPARQLQuery {
-    return this.selectBuilder.convertSimpleSelect(operation, targetGraph, fromSources, allowGraphVariable);
+  convertSimpleSelect(operation: SimpleSelectOperation, targetGraph?: string, fromSources?: string[], allowGraphVariable = true, metadataGraph?: ExplicitMetadataGraphSpec): SPARQLQuery {
+    return this.selectBuilder.convertSimpleSelect(operation, targetGraph, fromSources, allowGraphVariable, metadataGraph);
   }
 
   convertInsert(valuesOrPlan: Array<Record<string, unknown>> | InsertPlanInput, table?: PodTable, targetGraph?: string): SPARQLQuery {
