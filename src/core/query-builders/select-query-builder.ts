@@ -13,6 +13,7 @@ import { isOrderByExpression, type OrderByExpression } from '../order-by';
 import { SelectionAliasExpression } from '../expressions';
 import { assertPublicCursorCondition, assertPublicWhereCondition, assertPublicWhereObject, conditionTargetsReservedIdentifier } from '../query-where-policy';
 import { parsePodResourceRef } from '../resource-reference';
+import { resolveDirectoryResourceMetadataLayout } from '../resource-resolver/directory-layout';
 
 export class SelectQueryBuilder<TTable extends PodTable<any> = PodTable<any>> {
   static readonly [entityKind] = 'SelectQueryBuilder';
@@ -861,9 +862,44 @@ export class SelectQueryBuilder<TTable extends PodTable<any> = PodTable<any>> {
     return Object.values(this.selectedFields).some((field) => containsStructuredField(field));
   }
 
+  /**
+   * Directory-resource tables bind their metadata facet graph in WHERE, and the
+   * Pod-side reader requires that graph variable to be projected. A projected
+   * graph variable is illegal in a grouped SPARQL query, and grouping by it
+   * would change public partitions, so such plans must be aggregated on the
+   * client from the correlated (own-facet) rows instead.
+   *
+   * Only affects tables whose id layout is a directory resource; ordinary
+   * tables keep their existing SPARQL GROUP BY path.
+   */
+  private isDirectoryResourceTable(): boolean {
+    if (!this.selectedTable) {
+      return false;
+    }
+    const podUrl = this.session.getDialect?.()?.getPodUrl?.() ?? '';
+    const base = this.selectedTable.config?.base ?? '';
+    let collectionBase = base;
+    if (podUrl && !/^https?:\/\//i.test(base)) {
+      try {
+        collectionBase = new URL(base.replace(/^\/+/, ''), podUrl.endsWith('/') ? podUrl : `${podUrl}/`).toString();
+      } catch {
+        collectionBase = base;
+      }
+    }
+    return resolveDirectoryResourceMetadataLayout(this.selectedTable, collectionBase) !== null;
+  }
+
   private shouldUseAggregateFallback(): boolean {
     if (this.havingCondition) {
       return true;
+    }
+
+    // Grouped/aggregate reads over directory resources cannot project the
+    // metadata graph inside SPARQL GROUP BY, so aggregate them client-side.
+    if (this.groupByColumns.length > 0 || this.hasAggregateSelection()) {
+      if (this.isDirectoryResourceTable()) {
+        return true;
+      }
     }
 
     if (this.joins.length > 0) {

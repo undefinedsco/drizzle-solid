@@ -89,6 +89,7 @@ export class ExecutionStrategyFactoryImpl implements ExecutionStrategyFactory {
         podUrl: this.deps.podUrl,
         uriResolver: this.deps.uriResolver,
         createQueryEngine: this.deps.createQueryEngine,
+        getResolver: this.deps.getResolver,
       };
       this.sparqlStrategy = new SparqlStrategy(sparqlDeps);
     }

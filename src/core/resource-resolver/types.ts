@@ -7,12 +7,25 @@
 
 import type { PodTable } from '../schema';
 import type { QueryCondition } from '../query-conditions';
+import type { DirectoryResourceMetadataLayout } from './directory-layout';
 
 export interface ResourceResolver {
   /**
    * Get the mode this resolver handles
    */
   readonly mode: 'fragment' | 'document';
+
+  /**
+   * Describe the directory-resource metadata layout for a collection read, or
+   * null when this table stores ordinary document/fragment resources.
+   *
+   * Derived from the existing id template contract only; this never branches
+   * on a model/type/provider identity.
+   */
+  resolveDirectoryMetadataLayout(
+    table: PodTable,
+    collectionBaseIri?: string,
+  ): DirectoryResourceMetadataLayout | null;
 
   /**
    * Get the container URL for a table
